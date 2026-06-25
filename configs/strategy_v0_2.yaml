@@ -1,0 +1,39 @@
+strategy:
+  name: divergence_support_v0_2
+  universe: A_share_main_board
+  timeframe:
+    daily: true
+    minute: 5m
+
+scores:
+  graph_quality_weight: 0.35
+  active_money_weight: 0.25
+  support_weight: 0.25
+  theme_weight: 0.15
+
+thresholds:
+  min_graph_quality_trade: 60
+  min_graph_quality_watch: 50
+  min_active_money: 55
+  min_support_trade: 60
+  weak_support_min: 45
+  close_position_strong: 0.70
+  close_position_weak: 0.30
+  open_close_anchor_strong: 0.01
+  open_close_anchor_normal: 0.02
+  high_volume_fail_close_pos: 0.20
+  high_volume_fail_vwap_dev: -0.03
+  key_zone_reclaim_minutes: 30
+
+execution:
+  allow_chase: false
+  prefer_low_absorb: true
+  require_d2_validation: true
+  weak_support_position_size: small
+  strong_support_position_size: normal
+  ugly_graph_position_size: zero
+
+exit:
+  sell_if_limit_up_next_day_not_stronger: true
+  sell_if_below_key_zone_no_reclaim: true
+  sell_if_high_volume_fail_after_repair: true
