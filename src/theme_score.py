@@ -10,7 +10,8 @@ def score_theme(limit_up_pool: pd.DataFrame, code: str) -> tuple[float, list[str
     current = limit_up_pool[limit_up_pool["code"].astype(str) == str(code)]
     industry = ""
     if not current.empty and "industry" in current.columns:
-        industry = str(current.iloc[-1].get("industry") or "")
+        raw_ind = current.iloc[-1].get("industry")
+        industry = str(raw_ind) if pd.notna(raw_ind) else ""
 
     score = 50.0
     reasons: list[str] = []

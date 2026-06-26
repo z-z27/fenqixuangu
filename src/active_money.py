@@ -11,8 +11,10 @@ def score_active_money(daily: pd.DataFrame, minute: pd.DataFrame) -> tuple[float
     score = 40.0
     reasons: list[str] = []
 
-    amount_ratio = float(d1.get("amount_ratio", 0) or 0)
-    amplitude = float(d1.get("amplitude_calc", d1.get("amplitude", 0)) or 0)
+    raw_ar = d1.get("amount_ratio")
+    amount_ratio = float(raw_ar) if pd.notna(raw_ar) else 0.0
+    raw_amp = d1.get("amplitude_calc", d1.get("amplitude"))
+    amplitude = float(raw_amp) if pd.notna(raw_amp) else 0.0
 
     if amount_ratio >= 2.0:
         score += 22

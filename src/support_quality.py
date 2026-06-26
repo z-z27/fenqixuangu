@@ -12,7 +12,8 @@ def score_support_quality(daily: pd.DataFrame, minute: pd.DataFrame) -> tuple[fl
     support_type = "B"
     reasons: list[str] = []
 
-    close_position = float(d1.get("close_position", 0) or 0)
+    raw_cp = d1.get("close_position")
+    close_position = float(raw_cp) if pd.notna(raw_cp) else 0.0
     vwap = d1.get("vwap_daily")
     close = d1.get("close")
     low = d1.get("low")

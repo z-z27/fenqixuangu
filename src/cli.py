@@ -5,9 +5,12 @@ import sys
 
 import pandas as pd
 
+from .backtester import run_top3_signal_backtest
 from .config import get_data_config
-from .loaders import MarketDataService, load_limitup_file
-from .report import write_signal_reports
+from .data_acceptance import run_data_acceptance
+from .failure_review import review_failed_data
+from .loaders import DataQualityError, MarketDataService, load_limitup_file
+from .report import write_data_quality_reports, write_signal_reports
 from .signal_engine import generate_signal
 
 
@@ -21,6 +24,12 @@ def main(argv: list[str] | None = None) -> int:
             return collect_bars(args)
         if args.command == "generate-signals":
             return generate_signals(args)
+        if args.command == "validate-data":
+            return validate_data(args)
+        if args.command == "review-failed-data":
+            return review_failed_data_command(args)
+        if args.command == "backtest-top3":
+            return backtest_top3(args)
         if args.command == "run-daily":
             return run_daily(args)
     except Exception as exc:
@@ -50,6 +59,27 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--days", type=int, default=None)
     p.add_argument("--max-codes", type=int, default=None)
     p.add_argument("--force-refresh", action="store_true")
+
+    p = sub.add_parser("validate-data", help="validate cached daily/5m data and MA calculations")
+    p.add_argument("--limitup-file", default="data/processed/recent_limitups.csv")
+    p.add_argument("--days", type=int, default=None)
+    p.add_argument("--max-codes", type=int, default=None)
+    p.add_argument("--reference-root", default=r"F:\dataaccept")
+
+    p = sub.add_parser("review-failed-data", help="review failed data-quality rows and write exclusion list")
+    p.add_argument("--quality-file", default=None)
+    p.add_argument("--days", type=int, default=None)
+    p.add_argument("--force-refresh", action="store_true")
+
+    p = sub.add_parser("backtest-top3", help="backtest daily top 3 ranked tradable signals")
+    p.add_argument("--signals-file", default="reports/daily_signals/signals_2026-06-25.csv")
+    p.add_argument("--top-n", type=int, default=3)
+    p.add_argument("--target-return-pct", type=float, default=7.0)
+    p.add_argument("--include-small", action="store_true")
+    p.add_argument("--fetch-through-date", default=None)
+    p.add_argument("--days", type=int, default=None)
+    p.add_argument("--force-refresh", action="store_true")
+    p.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default="zone_max")
 
     p = sub.add_parser("run-daily", help="涨停池、补数、信号一键执行")
     p.add_argument("--date", default=None)
@@ -88,13 +118,21 @@ def collect_bars(args) -> int:
 def generate_signals(args) -> int:
     service = MarketDataService()
     pool = load_limitup_file(args.limitup_file)
-    signals = _build_signals(service, pool, args.days, args.max_codes, args.force_refresh)
+    signals, quality_rows = _build_signals(service, pool, args.days, args.max_codes, args.force_refresh)
     output_dir = get_data_config().reports_dir / "daily_signals"
     trade_date = _latest_trade_date(pool)
     csv_path, md_path = write_signal_reports(signals, output_dir, trade_date=trade_date)
+    quality_csv_path, quality_md_path = write_data_quality_reports(
+        quality_rows,
+        get_data_config().reports_dir / "data_quality",
+        trade_date=trade_date,
+    )
     print(f"signals: {len(signals)}")
+    print(f"data quality rows: {len(quality_rows)}")
     print(f"csv: {csv_path}")
     print(f"markdown: {md_path}")
+    print(f"quality csv: {quality_csv_path}")
+    print(f"quality markdown: {quality_md_path}")
     return 0
 
 
@@ -105,12 +143,75 @@ def run_daily(args) -> int:
         lookback_days=args.lookback_days,
         force_refresh=args.force_refresh,
     )
-    signals = _build_signals(service, pool, args.days, args.max_codes, args.force_refresh)
+    signals, quality_rows = _build_signals(service, pool, args.days, args.max_codes, args.force_refresh)
     output_dir = get_data_config().reports_dir / "daily_signals"
     trade_date = _latest_trade_date(pool)
     csv_path, md_path = write_signal_reports(signals, output_dir, trade_date=trade_date)
+    quality_csv_path, quality_md_path = write_data_quality_reports(
+        quality_rows,
+        get_data_config().reports_dir / "data_quality",
+        trade_date=trade_date,
+    )
     print(f"limit-up rows: {len(pool)}")
     print(f"signals: {len(signals)}")
+    print(f"data quality rows: {len(quality_rows)}")
+    print(f"csv: {csv_path}")
+    print(f"markdown: {md_path}")
+    print(f"quality csv: {quality_csv_path}")
+    print(f"quality markdown: {quality_md_path}")
+    return 0
+
+
+def validate_data(args) -> int:
+    frame, csv_path, md_path = run_data_acceptance(
+        limitup_file=args.limitup_file,
+        days=args.days,
+        max_codes=args.max_codes,
+        reference_root=args.reference_root,
+    )
+    accepted = int((frame["status"] == "accepted").sum()) if not frame.empty else 0
+    failed = int((frame["status"] == "failed").sum()) if not frame.empty else 0
+    print(f"data acceptance rows: {len(frame)}")
+    print(f"accepted: {accepted}")
+    print(f"failed: {failed}")
+    print(f"csv: {csv_path}")
+    print(f"markdown: {md_path}")
+    return 0
+
+
+def review_failed_data_command(args) -> int:
+    frame, csv_path, md_path, exclusion_path = review_failed_data(
+        quality_file=args.quality_file,
+        days=args.days,
+        force_refresh=args.force_refresh,
+    )
+    print(f"failed rows reviewed: {len(frame)}")
+    if not frame.empty and "repair_status" in frame.columns:
+        counts = frame["repair_status"].value_counts(dropna=False)
+        for status, count in counts.items():
+            print(f"{status}: {int(count)}")
+    print(f"csv: {csv_path}")
+    print(f"markdown: {md_path}")
+    print(f"exclusions: {exclusion_path}")
+    return 0
+
+
+def backtest_top3(args) -> int:
+    trades, summary, csv_path, md_path = run_top3_signal_backtest(
+        signals_file=args.signals_file,
+        top_n=args.top_n,
+        target_return_pct=args.target_return_pct,
+        include_small=args.include_small,
+        fetch_through_date=args.fetch_through_date,
+        days=args.days,
+        force_refresh=args.force_refresh,
+        entry_price_mode=args.entry_price_mode,
+    )
+    item = summary.iloc[0] if not summary.empty else {}
+    print(f"selected: {len(trades)}")
+    print(f"evaluable: {int(item.get('evaluable_count', 0)) if len(summary) else 0}")
+    print(f"executed: {int(item.get('executed_count', 0)) if len(summary) else 0}")
+    print(f"target hit rate: {item.get('target_hit_rate', '') if len(summary) else ''}")
     print(f"csv: {csv_path}")
     print(f"markdown: {md_path}")
     return 0
@@ -126,20 +227,74 @@ def _build_signals(
     codes = pool["code"].dropna().astype(str).drop_duplicates().tolist()
     if max_codes:
         codes = codes[: int(max_codes)]
+    as_of_date = _latest_trade_date(pool)
     signals = []
+    quality_rows = []
     for code in codes:
-        current = pool[pool["code"].astype(str) == code].tail(1)
-        name = str(current.iloc[0].get("name") or "") if not current.empty else ""
-        bars = service.get_stock_bars(code, days=days, force_refresh=force_refresh)
-        signal = generate_signal(code, name, bars.daily, bars.minute_5m, pool)
-        signals.append(signal)
-    return signals
+        code_pool = pool[pool["code"].astype(str) == code].sort_values("trade_date")
+        if code_pool.empty:
+            continue
+        d0_date = str(code_pool["trade_date"].iloc[-1])
+        if d0_date > as_of_date:
+            continue
+        name = str(code_pool.iloc[-1].get("name") or "")
+        try:
+            bars = service.get_stock_bars(code, days=days, end_date=as_of_date, force_refresh=force_refresh)
+            quality = dict(bars.quality)
+            quality.update({"name": name, "trade_date": as_of_date, "d0_date": d0_date})
+            quality_rows.append(quality)
+            signal = generate_signal(code, name, bars.daily, bars.minute_5m, pool, d0_date=d0_date)
+            signals.append(signal)
+        except Exception as exc:
+            if isinstance(exc, DataQualityError):
+                quality = dict(exc.quality)
+                quality.update({"name": name, "trade_date": as_of_date, "d0_date": d0_date, "error": str(exc)})
+                quality_rows.append(quality)
+            else:
+                quality_rows.append(_failed_quality_row(code, name, as_of_date, d0_date, exc))
+            print(f"WARN: skip {code} {name}: {exc}", file=sys.stderr)
+    return signals, quality_rows
 
 
 def _latest_trade_date(pool: pd.DataFrame) -> str:
     if pool is None or pool.empty or "trade_date" not in pool.columns:
         return pd.Timestamp.now().strftime("%Y-%m-%d")
     return str(pool["trade_date"].dropna().max())
+
+
+def _failed_quality_row(code: str, name: str, trade_date: str, d0_date: str, exc: Exception) -> dict:
+    return {
+        "code": code,
+        "name": name,
+        "trade_date": trade_date,
+        "d0_date": d0_date,
+        "status": "failed",
+        "daily_source": "",
+        "minute_source": "",
+        "from_cache": False,
+        "daily_rows": 0,
+        "daily_history_rows": 0,
+        "daily_required_days": 0,
+        "minute_rows": 0,
+        "minute_trade_days": 0,
+        "minute_required_days": 0,
+        "daily_start": "",
+        "daily_end": "",
+        "minute_start": "",
+        "minute_end": "",
+        "daily_ma_coverage_ok": False,
+        "missing_latest_daily_ma": "",
+        "missing_daily_amount_count": 0,
+        "missing_daily_volume_count": 0,
+        "missing_minute_amount_count": 0,
+        "missing_minute_volume_count": 0,
+        "zero_minute_volume_count": 0,
+        "daily_minute_close_matched_days": 0,
+        "daily_minute_close_max_abs_diff": None,
+        "daily_minute_close_check_ok": False,
+        "warnings": "",
+        "error": str(exc),
+    }
 
 
 if __name__ == "__main__":

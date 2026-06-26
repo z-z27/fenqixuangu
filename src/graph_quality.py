@@ -34,10 +34,12 @@ def score_graph_quality(daily: pd.DataFrame) -> tuple[float, list[str]]:
         score -= 12
         reasons.append("收盘跌破短期均线")
 
-    if float(last.get("close_position", 0)) >= 0.7:
+    raw_cp = last.get("close_position")
+    close_position = float(raw_cp) if pd.notna(raw_cp) else 0.0
+    if close_position >= 0.7:
         score += 8
         reasons.append("D1 收盘位置强")
-    elif float(last.get("close_position", 0)) <= 0.3:
+    elif close_position <= 0.3:
         score -= 12
         reasons.append("D1 收盘接近低位")
 
@@ -46,10 +48,9 @@ def score_graph_quality(daily: pd.DataFrame) -> tuple[float, list[str]]:
         score -= 10
         reasons.append("近期上影线压力偏重")
 
-    high_volume_fail = (
-        float(last.get("amount_ratio", 0) or 0) >= 2.0
-        and float(last.get("close_position", 0) or 0) <= 0.25
-    )
+    raw_ar = last.get("amount_ratio")
+    amount_ratio = float(raw_ar) if pd.notna(raw_ar) else 0.0
+    high_volume_fail = amount_ratio >= 2.0 and close_position <= 0.25
     if high_volume_fail:
         score -= 18
         reasons.append("D1 有高位巨量失败风险")

@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import json
 import os
+import random
 import time
 from typing import Any
 
-import requests
+from curl_cffi import requests
 
 from .config import DataConfig
 
@@ -20,9 +22,19 @@ class RequestClient:
         "Referer": "https://quote.eastmoney.com/",
     }
 
+    _JITTER = 0.3
+    _BACKOFF_BASE = 1.5
+
     def __init__(self, config: DataConfig):
         self.config = config
         self._last_request_at = 0.0
+        self._session: requests.Session | None = None
+
+    def _get_session(self) -> requests.Session:
+        if self._session is None:
+            self._session = requests.Session()
+            self._session.impersonate = "chrome124"
+        return self._session
 
     def get_json(
         self,
@@ -32,7 +44,9 @@ class RequestClient:
         trust_env: bool = False,
     ) -> Any:
         text = self.get_text(url, params=params, headers=headers, trust_env=trust_env)
-        return requests.models.complexjson.loads(text)
+        if text.startswith("﻿"):
+            text = text[1:]
+        return json.loads(text)
 
     def get_text(
         self,
@@ -42,33 +56,38 @@ class RequestClient:
         trust_env: bool = False,
     ) -> str:
         errors: list[str] = []
-        for _ in range(self.config.retries + 1):
+        for attempt in range(self.config.retries + 1):
             self._throttle()
             try:
                 with self._proxy_context(disable=(self.config.disable_proxy and not trust_env)):
-                    with requests.Session() as session:
-                        session.trust_env = trust_env
-                        response = session.get(
-                            url,
-                            params=params,
-                            headers=headers or self.headers,
-                            timeout=self.config.timeout,
-                        )
-                        response.raise_for_status()
-                        text = response.text.lstrip()
-                        if text.startswith("<"):
-                            raise RuntimeError("upstream returned HTML")
-                        self._last_request_at = time.monotonic()
-                        return response.text
+                    session = self._get_session()
+                    session.trust_env = trust_env
+                    response = session.get(
+                        url,
+                        params=params,
+                        headers=headers or self.headers,
+                        timeout=self.config.timeout,
+                    )
+                    response.raise_for_status()
+                    text = response.text.lstrip()
+                    if text.startswith("<"):
+                        raise RuntimeError("upstream returned HTML")
+                    self._last_request_at = time.monotonic()
+                    return response.text
             except Exception as exc:
                 errors.append(str(exc))
-                time.sleep(self.config.min_interval)
+                if attempt < self.config.retries:
+                    backoff = self._BACKOFF_BASE ** attempt
+                    jitter = random.uniform(-self._JITTER, self._JITTER)
+                    time.sleep(backoff + jitter)
         raise RuntimeError("request failed: " + " | ".join(errors))
 
     def _throttle(self) -> None:
         elapsed = time.monotonic() - self._last_request_at
-        if elapsed < self.config.min_interval:
-            time.sleep(self.config.min_interval - elapsed)
+        base = max(0.0, self.config.min_interval - elapsed)
+        jitter = random.uniform(0, self.config.min_interval * self._JITTER)
+        if base > 0 or jitter > 0:
+            time.sleep(base + jitter)
 
     @contextmanager
     def _proxy_context(self, disable: bool):

@@ -18,6 +18,9 @@ class Signal:
     trade_date: str
     code: str
     name: str
+    d0_date: str
+    days_since_d0: int
+    consecutive_boards: int
     signal_type: str
     allowed: bool
     position_level: str
@@ -44,8 +47,17 @@ def generate_signal(
     minute: pd.DataFrame,
     limit_up_pool: pd.DataFrame,
     config: StrategyConfig | None = None,
+    d0_date: str = "",
 ) -> Signal:
     cfg = config or get_strategy_config()
+    trade_date = str(daily.iloc[-1]["date"]) if daily is not None and not daily.empty else ""
+
+    days_since_d0 = 0
+    if d0_date and trade_date:
+        days_since_d0 = (pd.Timestamp(trade_date) - pd.Timestamp(d0_date)).days
+
+    consecutive_boards = _count_consecutive_boards(limit_up_pool, code, d0_date)
+
     graph_score, graph_reasons = score_graph_quality(daily)
     active_score, active_reasons = score_active_money(daily, minute)
     support_score, support_type, support_reasons = score_support_quality(daily, minute)
@@ -59,6 +71,10 @@ def generate_signal(
     zones = build_key_zones(daily, minute)
 
     hard_blocks = []
+    if days_since_d0 <= 0 and d0_date:
+        hard_blocks.append("今日仍涨停，等待分歧日")
+    if days_since_d0 > 3:
+        hard_blocks.append(f"涨停后 {days_since_d0} 天，分歧时效已过")
     if graph_score < cfg.min_graph_quality_trade:
         hard_blocks.append("图形趋势分不足")
     if active_score < cfg.min_active_money:
@@ -72,17 +88,21 @@ def generate_signal(
     if high_volume_fail:
         hard_blocks.append("高位巨量失败风险")
 
-    allowed = not hard_blocks and support_score >= cfg.min_support_trade
-    if allowed and support_type == "A" and total >= 70:
+    allowed = False
+    if hard_blocks:
+        position = "zero"
+        signal_type = "WATCH_ONLY"
+    elif support_type == "A" and support_score >= cfg.min_support_trade and total >= 70:
+        allowed = True
         position = "normal"
         signal_type = "D2_LOW_ABSORB"
-    elif not hard_blocks and support_type == "B":
+    elif support_score >= cfg.weak_support_min:
+        allowed = True
         position = "small"
         signal_type = "D2_WATCH_OR_SMALL"
     else:
         position = "zero"
         signal_type = "WATCH_ONLY"
-        allowed = False
 
     all_reasons = []
     for label, items in (
@@ -94,12 +114,14 @@ def generate_signal(
         all_reasons.extend([f"{label}: {item}" for item in items])
     all_reasons.extend([f"hard_filter: {item}" for item in hard_blocks])
 
-    trade_date = str(daily.iloc[-1]["date"]) if daily is not None and not daily.empty else ""
-    invalid_price = zones.get("d1_low") or zones.get("ma5")
+    invalid_price = zones.get("invalid_price") or zones.get("d1_low") or zones.get("ma5")
     return Signal(
         trade_date=trade_date,
         code=code,
         name=name,
+        d0_date=d0_date,
+        days_since_d0=days_since_d0,
+        consecutive_boards=consecutive_boards,
         signal_type=signal_type,
         allowed=allowed,
         position_level=position,
@@ -117,12 +139,32 @@ def generate_signal(
     )
 
 
+def _count_consecutive_boards(limit_up_pool: pd.DataFrame, code: str, d0_date: str) -> int:
+    if not d0_date or limit_up_pool is None or limit_up_pool.empty:
+        return 0
+    code_pool = limit_up_pool[limit_up_pool["code"].astype(str) == code]
+    dates = sorted(code_pool["trade_date"].dropna().astype(str).unique().tolist())
+    if not dates or d0_date not in dates:
+        return 0
+    d0_idx = dates.index(d0_date)
+    count = 1
+    for i in range(d0_idx - 1, -1, -1):
+        gap = (pd.Timestamp(dates[i + 1]) - pd.Timestamp(dates[i])).days
+        if gap <= 2:
+            count += 1
+        else:
+            break
+    return count
+
+
 def _is_high_volume_fail(daily: pd.DataFrame, cfg: StrategyConfig) -> bool:
     if daily is None or daily.empty:
         return False
     d1 = daily.iloc[-1]
-    amount_ratio = float(d1.get("amount_ratio", 0) or 0)
-    close_position = float(d1.get("close_position", 0) or 0)
+    raw_ar = d1.get("amount_ratio")
+    amount_ratio = float(raw_ar) if pd.notna(raw_ar) else 0.0
+    raw_cp = d1.get("close_position")
+    close_position = float(raw_cp) if pd.notna(raw_cp) else 0.0
     vwap = d1.get("vwap_daily")
     close = d1.get("close")
     vwap_dev = 0.0

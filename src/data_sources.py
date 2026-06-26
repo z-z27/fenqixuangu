@@ -12,7 +12,6 @@ from .code_utils import (
     is_excluded_name,
     is_main_board_code,
     normalize_stock_code,
-    to_eastmoney_secid,
     to_market_symbol,
 )
 from .config import DataConfig
@@ -55,8 +54,8 @@ class MarketDataProvider:
     ) -> tuple[pd.DataFrame, str]:
         normalized = normalize_stock_code(code)
         source_attempts = [
-            ("eastmoney_daily", lambda: self._fetch_daily_eastmoney(normalized, start_date, end_date, adjust)),
-            ("akshare_daily", lambda: self._fetch_daily_akshare(normalized, start_date, end_date, adjust)),
+            ("tencent_daily", lambda: self._fetch_daily_tencent(normalized, start_date, end_date, adjust)),
+            ("sina_daily", lambda: self._fetch_daily_sina(normalized, start_date, end_date, adjust)),
         ]
         errors: list[str] = []
         for source, fetcher in source_attempts:
@@ -79,9 +78,7 @@ class MarketDataProvider:
     ) -> tuple[pd.DataFrame, str]:
         normalized = normalize_stock_code(code)
         source_attempts = [
-            ("eastmoney_5m", lambda: self._fetch_5min_eastmoney(normalized, start_datetime, end_datetime, adjust)),
             ("sina_5m", lambda: self._fetch_5min_sina(normalized, start_datetime, end_datetime, adjust)),
-            ("akshare_eastmoney_5m", lambda: self._fetch_5min_akshare(normalized, start_datetime, end_datetime, adjust)),
         ]
         errors: list[str] = []
         for source, fetcher in source_attempts:
@@ -166,117 +163,76 @@ class MarketDataProvider:
             }
         )
 
-    def _fetch_daily_eastmoney(
+    def _fetch_daily_tencent(
         self,
         code: str,
         start_date: str,
         end_date: str,
         adjust: str,
     ) -> pd.DataFrame:
-        adjust_map = {"none": "0", "": "0", "qfq": "1", "hfq": "2"}
-        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-        params = {
-            "fields1": "f1,f2,f3,f4,f5,f6",
-            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-            "ut": "7eea3edcaed734bea9cbfc24409ed989",
-            "klt": "101",
-            "fqt": adjust_map.get(adjust, "0"),
-            "secid": to_eastmoney_secid(code),
-            "beg": start_date.replace("-", ""),
-            "end": end_date.replace("-", ""),
-        }
-        payload = self.client.get_json(url, params=params)
+        market_symbol = to_market_symbol(code)
+        adjust_map = {"none": "", "": "", "qfq": "qfq", "hfq": "hfq"}
+        adjust_suffix = adjust_map.get(adjust, "")
+        param = f"{market_symbol},day,,,500,{adjust_suffix}"
+        url = "https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+        payload = self.client.get_json(url, params={"param": param})
         data = payload.get("data") if isinstance(payload, dict) else None
-        klines = data.get("klines") if isinstance(data, dict) else None
-        if not klines:
-            raise RuntimeError("Eastmoney daily response contains no klines")
-        columns = [
-            "date",
-            "open",
-            "close",
-            "high",
-            "low",
-            "volume",
-            "amount",
-            "amplitude",
-            "pct_chg",
-            "change",
-            "turnover_rate",
-        ]
-        return pd.DataFrame([row.split(",") for row in klines], columns=columns)
+        if not isinstance(data, dict):
+            raise RuntimeError("Tencent daily response missing data")
+        stock = data.get(market_symbol)
+        if not isinstance(stock, dict):
+            raise RuntimeError("Tencent daily response missing stock data")
+        key_map = {"qfq": "qfqday", "hfq": "hfqday"}
+        key = key_map.get(adjust, "day")
+        rows = stock.get(key) or stock.get("day") or []
+        if not rows:
+            raise RuntimeError("Tencent daily response contains no klines")
+        rows = [row[:6] for row in rows]
+        frame = pd.DataFrame(rows, columns=["date", "open", "close", "high", "low", "volume"])
+        frame = frame[(frame["date"] >= start_date) & (frame["date"] <= end_date)]
+        if frame.empty:
+            raise RuntimeError("Tencent daily frame is empty after date filter")
+        for col in ("open", "high", "low", "close", "volume"):
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+        return _attach_derived_fields(frame)
 
-    def _fetch_daily_akshare(
+    def _fetch_daily_sina(
         self,
         code: str,
         start_date: str,
         end_date: str,
         adjust: str,
     ) -> pd.DataFrame:
-        ak = load_akshare()
-        raw = ak.stock_zh_a_hist(
-            symbol=code,
-            period="daily",
-            start_date=start_date.replace("-", ""),
-            end_date=end_date.replace("-", ""),
-            adjust="" if adjust == "none" else adjust,
+        if adjust not in ("", "none"):
+            raise RuntimeError("Sina daily endpoint does not provide adjusted data")
+        market_symbol = to_market_symbol(code)
+        url = "https://quotes.sina.cn/cn/api/jsonp_v2.php/data/CN_MarketDataService.getKLineData"
+        params = {"symbol": market_symbol, "scale": "240", "ma": "no", "datalen": "500"}
+        headers = {
+            "User-Agent": self.client.headers["User-Agent"],
+            "Referer": "https://finance.sina.com.cn/",
+        }
+        text = self.client.get_text(url, params=params, headers=headers)
+        payload = extract_sina_json_payload(text)
+        raw = pd.DataFrame(json.loads(payload))
+        if raw.empty:
+            raise RuntimeError("Sina daily response is empty")
+        frame = pd.DataFrame(
+            {
+                "date": raw["day"],
+                "open": raw["open"],
+                "high": raw["high"],
+                "low": raw["low"],
+                "close": raw["close"],
+                "volume": raw["volume"],
+            }
         )
-        if raw is None or raw.empty:
-            raise RuntimeError("AkShare daily response is empty")
-        rename = {
-            "日期": "date",
-            "开盘": "open",
-            "收盘": "close",
-            "最高": "high",
-            "最低": "low",
-            "成交量": "volume",
-            "成交额": "amount",
-            "振幅": "amplitude",
-            "涨跌幅": "pct_chg",
-            "涨跌额": "change",
-            "换手率": "turnover_rate",
-        }
-        return raw.rename(columns=rename)
-
-    def _fetch_5min_eastmoney(
-        self,
-        code: str,
-        start_datetime: str,
-        end_datetime: str,
-        adjust: str,
-    ) -> pd.DataFrame:
-        adjust_map = {"none": "0", "": "0", "qfq": "1", "hfq": "2"}
-        url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-        params = {
-            "fields1": "f1,f2,f3,f4,f5,f6",
-            "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-            "ut": "7eea3edcaed734bea9cbfc24409ed989",
-            "klt": "5",
-            "fqt": adjust_map.get(adjust, "0"),
-            "secid": to_eastmoney_secid(code),
-            "beg": "0",
-            "end": "20500000",
-        }
-        payload = self.client.get_json(url, params=params)
-        data = payload.get("data") if isinstance(payload, dict) else None
-        klines = data.get("klines") if isinstance(data, dict) else None
-        if not klines:
-            raise RuntimeError("Eastmoney 5m response contains no klines")
-        columns = [
-            "datetime",
-            "open",
-            "close",
-            "high",
-            "low",
-            "volume",
-            "amount",
-            "amplitude",
-            "pct_chg",
-            "change",
-            "turnover_rate",
-        ]
-        frame = pd.DataFrame([row.split(",") for row in klines], columns=columns)
-        frame["datetime"] = pd.to_datetime(frame["datetime"], errors="coerce")
-        return frame[(frame["datetime"] >= pd.Timestamp(start_datetime)) & (frame["datetime"] <= pd.Timestamp(end_datetime))]
+        frame = frame[(frame["date"] >= start_date) & (frame["date"] <= end_date)]
+        if frame.empty:
+            raise RuntimeError("Sina daily frame is empty after date filter")
+        for col in ("open", "high", "low", "close", "volume"):
+            frame[col] = pd.to_numeric(frame[col], errors="coerce")
+        return _attach_derived_fields(frame)
 
     def _fetch_5min_sina(
         self,
@@ -317,39 +273,6 @@ class MarketDataProvider:
         )
         frame["datetime"] = pd.to_datetime(frame["datetime"], errors="coerce")
         return frame[(frame["datetime"] >= pd.Timestamp(start_datetime)) & (frame["datetime"] <= pd.Timestamp(end_datetime))]
-
-    def _fetch_5min_akshare(
-        self,
-        code: str,
-        start_datetime: str,
-        end_datetime: str,
-        adjust: str,
-    ) -> pd.DataFrame:
-        ak = load_akshare()
-        raw = ak.stock_zh_a_hist_min_em(
-            symbol=code,
-            start_date=start_datetime,
-            end_date=end_datetime,
-            period="5",
-            adjust="" if adjust == "none" else adjust,
-        )
-        if raw is None or raw.empty:
-            raise RuntimeError("AkShare 5m response is empty")
-        rename = {
-            "时间": "datetime",
-            "开盘": "open",
-            "收盘": "close",
-            "最高": "high",
-            "最低": "low",
-            "成交量": "volume",
-            "成交额": "amount",
-            "振幅": "amplitude",
-            "涨跌幅": "pct_chg",
-            "涨跌额": "change",
-            "换手率": "turnover_rate",
-        }
-        return raw.rename(columns=rename)
-
 
 def normalize_limit_up_pool(frame: pd.DataFrame, trade_date: str, source: str) -> pd.DataFrame:
     result = frame.copy()
@@ -502,16 +425,16 @@ def normalize_date_text(value: str) -> str:
 
 
 def extract_sina_json_payload(text: str) -> str:
-    marker = "=("
-    start = text.find(marker)
-    if start < 0:
-        raise RuntimeError("Sina response format is not JSONP")
-    payload = text[start + len(marker) :].strip()
-    if payload.endswith(");"):
-        payload = payload[:-2]
-    elif payload.endswith(")"):
-        payload = payload[:-1]
-    return payload.strip()
+    for marker in ("=(", "data("):
+        start = text.find(marker)
+        if start >= 0:
+            payload = text[start + len(marker):].strip()
+            if payload.endswith(");"):
+                payload = payload[:-2]
+            elif payload.endswith(")"):
+                payload = payload[:-1]
+            return payload.strip()
+    raise RuntimeError("Sina response format is not JSONP")
 
 
 def load_akshare():
@@ -519,3 +442,14 @@ def load_akshare():
         return import_module("akshare")
     except ModuleNotFoundError as exc:
         raise RuntimeError("missing dependency akshare; run python -m pip install -r requirements.txt") from exc
+
+
+def _attach_derived_fields(frame: pd.DataFrame) -> pd.DataFrame:
+    result = frame.sort_values("date").reset_index(drop=True)
+    prev_close = result["close"].shift(1)
+    result["change"] = result["close"] - prev_close
+    result["pct_chg"] = (result["close"] - prev_close) / prev_close * 100
+    result["amplitude"] = (result["high"] - result["low"]) / prev_close * 100
+    result["amount"] = None
+    result["turnover_rate"] = None
+    return result
