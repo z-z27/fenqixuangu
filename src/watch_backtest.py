@@ -29,10 +29,16 @@ def main(argv: list[str] | None = None) -> int:
         "--lookback-days",
         str(args.lookback_days),
     ]
-    if args.signal_days is not None:
-        command.extend(["--signal-days", str(args.signal_days)])
-    if args.eval_days is not None:
-        command.extend(["--eval-days", str(args.eval_days)])
+
+    # always explicitly pass 5m window to avoid config ambiguity
+    if args.signal_days is None:
+        args.signal_days = 20
+    if args.eval_days is None:
+        args.eval_days = 20
+
+    command.extend(["--signal-days", str(args.signal_days)])
+    command.extend(["--eval-days", str(args.eval_days)])
+
     if args.max_codes is not None:
         command.extend(["--max-codes", str(args.max_codes)])
     if args.force_refresh:
@@ -41,14 +47,17 @@ def main(argv: list[str] | None = None) -> int:
         command.append("--include-all-allowed")
     if args.include_small:
         command.append("--include-small")
+
     command.extend(["--entry-price-mode", args.entry_price_mode])
 
     run_root = Path("reports") / "backtest_runs" / f"{args.start_date}_{args.end_date}"
     print("[watch] starting:", " ".join(command), flush=True)
     print(f"[watch] run root: {run_root}", flush=True)
+
     process = subprocess.Popen(command)
     last_snapshot = ""
     started_at = time.time()
+
     try:
         while process.poll() is None:
             snapshot = build_snapshot(run_root, started_at)
@@ -64,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
     snapshot = build_snapshot(run_root, started_at)
     if snapshot != last_snapshot:
         print(snapshot, flush=True)
+
     print(f"[watch] child process exited with code {process.returncode}", flush=True)
     return int(process.returncode or 0)
 
@@ -73,16 +83,21 @@ def build_snapshot(run_root: Path, started_at: float) -> str:
     signals_dir = run_root / "daily_signals"
     quality_dir = run_root / "data_quality"
     result_dir = run_root / "backtest_results"
+
     signal_files = sorted(signals_dir.glob("signals_*.csv")) if signals_dir.exists() else []
     quality_files = sorted(quality_dir.glob("data_quality_*.csv")) if quality_dir.exists() else []
     result_files = sorted(result_dir.glob("*.csv")) if result_dir.exists() else []
+
     latest = latest_files(run_root, limit=5)
+
     lines = [
         f"[watch] elapsed={elapsed}s signal_files={len(signal_files)} quality_files={len(quality_files)} result_csv={len(result_files)}",
     ]
+
     if latest:
         lines.append("[watch] latest files:")
         lines.extend(f"  - {path}" for path in latest)
+
     return "\n".join(lines)
 
 
