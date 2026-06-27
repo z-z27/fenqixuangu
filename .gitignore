@@ -9,5 +9,9 @@ venv/
 data/cache/
 data/raw/
 data/processed/*.csv
+data/research/
 reports/daily_signals/
 reports/backtest_results/
+reports/backtest_runs/
+reports/data_quality/
+reports/data_acceptance/
