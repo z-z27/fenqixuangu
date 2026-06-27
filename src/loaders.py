@@ -88,16 +88,16 @@ class MarketDataService:
         force_refresh: bool = False,
     ) -> StockBars:
         normalized = normalize_stock_code(code)
-        day_count = int(days or self.config.default_5min_days)
+        target_5min_days = int(days or self.config.default_5min_days)
+        min_5min_days = min(target_5min_days, max(1, int(getattr(self.config, "min_5min_trade_days", 20))))
         warmup_days = max(int(self.config.indicator_warmup_trading_days), 120)
-        daily_required_days = max(int(self.config.daily_history_days), day_count + warmup_days)
-        minute_required_days = day_count
+        daily_required_days = max(int(self.config.daily_history_days), target_5min_days + warmup_days)
         cached_daily = None if force_refresh else self.daily_cache.read(normalized)
         cached_minute = None if force_refresh else self.minute_cache.read(normalized)
         end_ts = pd.Timestamp(end_date or datetime.now().strftime("%Y-%m-%d"))
         end_date_text = end_ts.strftime("%Y-%m-%d")
         daily_start_ts = end_ts - pd.Timedelta(days=max(365, int(daily_required_days * 2.4)))
-        minute_start_ts = end_ts - pd.Timedelta(days=max(90, int((minute_required_days + 5) * 2.8)))
+        minute_start_ts = end_ts - pd.Timedelta(days=max(90, int((target_5min_days + 5) * 2.8)))
         daily_source = "cache"
         minute_source = "cache"
         from_cache = True
@@ -121,7 +121,7 @@ class MarketDataService:
         if cached_minute is None or cached_minute.empty or not _cache_covers(
             cached_minute,
             "trade_date",
-            minute_required_days,
+            target_5min_days,
             end_date=end_date_text,
         ):
             minute_start = minute_start_ts.strftime("%Y-%m-%d 09:30:00")
@@ -140,8 +140,8 @@ class MarketDataService:
         minute_until_end = _filter_to_end_date(cached_minute, "trade_date", end_date_text)
         cached_daily = _merge_minute_amount(daily_until_end, minute_until_end)
         daily_history = _keep_recent_trade_days(cached_daily, "date", daily_required_days)
-        daily_recent = _keep_recent_trade_days(cached_daily, "date", day_count)
-        minute_recent = _keep_recent_trade_days(minute_until_end, "trade_date", day_count)
+        daily_recent = _keep_recent_trade_days(cached_daily, "date", target_5min_days)
+        minute_recent = _keep_recent_trade_days(minute_until_end, "trade_date", target_5min_days)
         daily_recent = enrich_daily_indicators(daily_recent, full_daily=daily_history)
         minute_recent = enrich_5min_indicators(minute_recent)
         _ensure_daily_ma_coverage(daily_recent, normalized)
@@ -154,7 +154,8 @@ class MarketDataService:
             minute_source=minute_source,
             from_cache=from_cache,
             daily_required_days=daily_required_days,
-            minute_required_days=minute_required_days,
+            minute_target_days=target_5min_days,
+            minute_required_days=min_5min_days,
         )
         if quality["status"] != "ok":
             raise DataQualityError(f"{normalized} data quality check failed: {quality['warnings']}", quality)
@@ -260,6 +261,7 @@ def _build_quality_report(
     minute_source: str,
     from_cache: bool,
     daily_required_days: int,
+    minute_target_days: int,
     minute_required_days: int,
 ) -> dict[str, Any]:
     ma_columns = ("ma5", "ma10", "ma20", "ma30")
@@ -302,6 +304,7 @@ def _build_quality_report(
         "daily_required_days": int(daily_required_days),
         "minute_rows": int(len(minute)),
         "minute_trade_days": minute_trade_days,
+        "minute_target_days": int(minute_target_days),
         "minute_required_days": int(minute_required_days),
         "daily_start": _date_min(daily, "date"),
         "daily_end": _date_max(daily, "date"),
