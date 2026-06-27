@@ -12,6 +12,7 @@ from .research_analysis import (
     DEFAULT_TARGET_MIN_RETURN_PCT,
     run_research_analysis,
 )
+from .return_distribution import run_return_distribution_analysis
 
 
 DEFAULT_RESEARCH_TOP_N = 999
@@ -26,7 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     research_root = unique_run_dir(output_root / run_name)
 
     command = build_backtest_command(args)
-    print("[research] mode: full candidate research", flush=True)
+    print("[research] mode: full candidate return-distribution research", flush=True)
     print("[research] starting backtest:", " ".join(command), flush=True)
     print(f"[research] temporary backtest root: {source_run_root}", flush=True)
     print(f"[research] final research root: {research_root}", flush=True)
@@ -49,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     research_results_dir = research_root / "research_results"
-    print("[research] building success/failed/missed samples...", flush=True)
+    print("[research] building full research samples...", flush=True)
     samples, factor_compare, samples_csv, factor_csv, markdown_path = run_research_analysis(
         history_trades_file=history_trades_file,
         output_dir=research_results_dir,
@@ -57,12 +58,34 @@ def main(argv: list[str] | None = None) -> int:
         target_max_return_pct=args.target_max_return_pct,
     )
 
-    print("[research] building factor discovery reports...", flush=True)
-    group_compare, discovery, group_csv, discovery_csv, discovery_markdown = run_factor_discovery(
+    print("[research] building all-sample return distribution reports...", flush=True)
+    (
+        return_samples,
+        bucket_compare,
+        factor_quantiles,
+        profit_loss_compare,
+        return_samples_csv,
+        bucket_csv,
+        quantile_csv,
+        profit_loss_csv,
+        return_markdown_path,
+    ) = run_return_distribution_analysis(
         samples_file=samples_csv,
         output_dir=research_results_dir,
-        min_group_size=args.discovery_min_group_size,
+        target_return_pct=args.target_return_pct,
+        loss_cutoff_pct=args.return_loss_cutoff_pct,
+        quantiles=args.return_quantiles,
     )
+    daily_return_csv = research_results_dir / f"daily_return_summary_{date_suffix}.csv"
+
+    discovery_outputs: tuple[object, ...] | None = None
+    if args.with_factor_discovery:
+        print("[research] building legacy sample-group factor discovery reports...", flush=True)
+        discovery_outputs = run_factor_discovery(
+            samples_file=samples_csv,
+            output_dir=research_results_dir,
+            min_group_size=args.discovery_min_group_size,
+        )
 
     write_manifest(
         path=research_root / "research_manifest.md",
@@ -74,24 +97,43 @@ def main(argv: list[str] | None = None) -> int:
         samples_csv=samples_csv,
         factor_csv=factor_csv,
         markdown_path=markdown_path,
+        return_samples_csv=return_samples_csv,
+        bucket_csv=bucket_csv,
+        quantile_csv=quantile_csv,
+        profit_loss_csv=profit_loss_csv,
+        daily_return_csv=daily_return_csv,
+        return_markdown_path=return_markdown_path,
+        discovery_outputs=discovery_outputs,
         sample_count=len(samples),
         factor_count=len(factor_compare),
+        return_bucket_count=len(bucket_compare),
+        factor_quantile_count=len(factor_quantiles),
+        profit_loss_group_count=len(profit_loss_compare),
     )
 
     print("[research] done", flush=True)
     print(f"research root: {research_root}", flush=True)
     print(f"history trades: {history_trades_file}", flush=True)
-    print(f"samples csv: {samples_csv}", flush=True)
-    print(f"factor csv: {factor_csv}", flush=True)
-    print(f"markdown: {markdown_path}", flush=True)
-    print(f"group compare csv: {group_csv}", flush=True)
-    print(f"factor discovery csv: {discovery_csv}", flush=True)
-    print(f"factor discovery markdown: {discovery_markdown}", flush=True)
+    print(f"research samples csv: {samples_csv}", flush=True)
+    print(f"research review markdown: {markdown_path}", flush=True)
+    print(f"return samples csv: {return_samples_csv}", flush=True)
+    print(f"return bucket csv: {bucket_csv}", flush=True)
+    print(f"factor quantile csv: {quantile_csv}", flush=True)
+    print(f"profit/loss csv: {profit_loss_csv}", flush=True)
+    print(f"daily return csv: {daily_return_csv}", flush=True)
+    print(f"return distribution markdown: {return_markdown_path}", flush=True)
+    if discovery_outputs is not None:
+        _, discovery, group_csv, discovery_csv, discovery_markdown = discovery_outputs
+        print(f"legacy group compare csv: {group_csv}", flush=True)
+        print(f"legacy factor discovery csv: {discovery_csv}", flush=True)
+        print(f"legacy factor discovery markdown: {discovery_markdown}", flush=True)
+        print(f"legacy discovery rows: {len(discovery)}", flush=True)
     print(f"manifest: {research_root / 'research_manifest.md'}", flush=True)
     print(f"samples: {len(samples)}", flush=True)
-    print(f"factor rows: {len(factor_compare)}", flush=True)
-    print(f"group rows: {len(group_compare)}", flush=True)
-    print(f"discovery rows: {len(discovery)}", flush=True)
+    print(f"return samples: {len(return_samples)}", flush=True)
+    print(f"return bucket rows: {len(bucket_compare)}", flush=True)
+    print(f"factor quantile rows: {len(factor_quantiles)}", flush=True)
+    print(f"profit/loss groups: {len(profit_loss_compare)}", flush=True)
     return 0
 
 
@@ -158,8 +200,18 @@ def write_manifest(
     samples_csv: Path,
     factor_csv: Path,
     markdown_path: Path,
+    return_samples_csv: Path,
+    bucket_csv: Path,
+    quantile_csv: Path,
+    profit_loss_csv: Path,
+    daily_return_csv: Path,
+    return_markdown_path: Path,
+    discovery_outputs: tuple[object, ...] | None,
     sample_count: int,
     factor_count: int,
+    return_bucket_count: int,
+    factor_quantile_count: int,
+    profit_loss_group_count: int,
 ) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
@@ -167,8 +219,9 @@ def write_manifest(
         "",
         "## Purpose",
         "",
-        "This run is for factor discovery, not final TopN live-trading simulation.",
-        "It keeps success, failed, missed, ordinary, and data-issue samples for later comparison.",
+        "This run is for all-candidate return-distribution research, not final TopN live-trading simulation.",
+        "It keeps all useful rows and treats realized trade state, TopN, and execution fields as metadata rather than primary labels.",
+        "The main research target is profit/loss and opportunity distribution across the full sample universe.",
         "",
         "## Parameters",
         "",
@@ -181,7 +234,10 @@ def write_manifest(
         f"- stop_loss_pct: `{args.stop_loss_pct}`",
         f"- target_min_return_pct: `{args.target_min_return_pct}`",
         f"- target_max_return_pct: `{args.target_max_return_pct}`",
+        f"- return_loss_cutoff_pct: `{args.return_loss_cutoff_pct}`",
+        f"- return_quantiles: `{args.return_quantiles}`",
         f"- entry_price_mode: `{args.entry_price_mode}`",
+        f"- with_factor_discovery: `{args.with_factor_discovery}`",
         "",
         "## Command",
         "",
@@ -195,20 +251,45 @@ def write_manifest(
         f"- research root: `{research_root}`",
         f"- history trades: `{history_trades_file}`",
         f"- research samples: `{samples_csv}`",
-        f"- factor compare: `{factor_csv}`",
-        f"- research review: `{markdown_path}`",
-        "",
-        "## Counts",
-        "",
-        f"- samples: **{sample_count}**",
-        f"- factor rows: **{factor_count}**",
+        f"- legacy factor compare: `{factor_csv}`",
+        f"- legacy research review: `{markdown_path}`",
+        f"- return samples: `{return_samples_csv}`",
+        f"- return bucket compare: `{bucket_csv}`",
+        f"- factor quantile report: `{quantile_csv}`",
+        f"- profit/loss compare: `{profit_loss_csv}`",
+        f"- daily return summary: `{daily_return_csv}`",
+        f"- return distribution report: `{return_markdown_path}`",
         "",
     ]
+    if discovery_outputs is not None:
+        _, _, group_csv, discovery_csv, discovery_markdown = discovery_outputs
+        lines.extend(
+            [
+                "## Optional Legacy Factor Discovery Outputs",
+                "",
+                f"- group compare: `{group_csv}`",
+                f"- factor discovery csv: `{discovery_csv}`",
+                f"- factor discovery markdown: `{discovery_markdown}`",
+                "",
+            ]
+        )
+    lines.extend(
+        [
+            "## Counts",
+            "",
+            f"- samples: **{sample_count}**",
+            f"- legacy factor rows: **{factor_count}**",
+            f"- return bucket rows: **{return_bucket_count}**",
+            f"- factor quantile rows: **{factor_quantile_count}**",
+            f"- profit/loss groups: **{profit_loss_group_count}**",
+            "",
+        ]
+    )
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Run full-candidate historical research and store outputs in reports/research_runs")
+    parser = argparse.ArgumentParser(description="Run full-candidate historical research and store return-distribution outputs")
     parser.add_argument("--start-date", required=True)
     parser.add_argument("--end-date", required=True)
     parser.add_argument("--top-n", type=int, default=DEFAULT_RESEARCH_TOP_N, help="Research default selects nearly all ranked candidates")
@@ -217,6 +298,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stop-loss-pct", type=float, default=3.0)
     parser.add_argument("--target-min-return-pct", type=float, default=DEFAULT_TARGET_MIN_RETURN_PCT)
     parser.add_argument("--target-max-return-pct", type=float, default=DEFAULT_TARGET_MAX_RETURN_PCT)
+    parser.add_argument("--return-loss-cutoff-pct", type=float, default=-3.0)
+    parser.add_argument("--return-quantiles", type=int, default=5)
+    parser.add_argument("--with-factor-discovery", action="store_true", help="Also build legacy sample-group discovery reports")
     parser.add_argument("--discovery-min-group-size", type=int, default=3)
     parser.add_argument("--lookback-days", type=int, default=5)
     parser.add_argument("--signal-days", type=int, default=None)
