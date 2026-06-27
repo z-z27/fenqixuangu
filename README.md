@@ -29,7 +29,7 @@
 
 3. **因子调节**
    - 分析图形质量、承接质量、活跃资金、题材联动等因子。
-   - 比较因子分位数、收益均值、目标收益率、亏损率和因子稳定性。
+   - 比较因子分位数、收益均值、目标收益率和亏损率。
    - 根据数据调整评分权重、过滤阈值和执行规则。
 
 4. **回测验证**
@@ -193,9 +193,311 @@ python -m src.cli run-daily --lookback-days 5 --days 40
 
 ---
 
-## 六、历史回测
+## 六、命令参数说明
 
-### 1. 一次性历史回测
+### 1. `collect-limitups`
+
+用途：收集涨停池，并按主板规则过滤。
+
+```powershell
+python -m src.cli collect-limitups --date 2026-06-25 --lookback-days 5 --force-refresh
+```
+
+| 参数 | 默认值 | 含义 | 使用建议 |
+|---|---:|---|---|
+| `--date` | 今天 | 指定锚定日期，例如 `2026-06-25`。 | 复盘历史日期时填写；日常盘后可不填。 |
+| `--lookback-days` | `1` | 从锚定日期向前扫描多少个自然日。 | 日常建议用 `5`，可以覆盖周末和短假期。 |
+| `--force-refresh` | `False` | 忽略本地缓存，重新请求涨停池接口。 | 接口异常、缓存怀疑过期或数据明显不对时使用。 |
+
+输出：
+
+```text
+data/processed/recent_limitups.csv
+```
+
+---
+
+### 2. `collect-bars`
+
+用途：读取涨停池，为候选股票补充日线和 5 分钟线。
+
+```powershell
+python -m src.cli collect-bars --limitup-file data/processed/recent_limitups.csv --days 40 --max-codes 200 --force-refresh
+```
+
+| 参数 | 默认值 | 含义 | 使用建议 |
+|---|---:|---|---|
+| `--limitup-file` | `data/processed/recent_limitups.csv` | 候选涨停池文件。 | 通常使用默认值。 |
+| `--days` | 配置默认值 | 目标获取多少个交易日的 5 分钟线。 | 建议 `40`；最终 5 分钟线满足 20 个交易日即可合格。 |
+| `--max-codes` | 不限制 | 最多处理多少只股票。 | 调试时可设 `20` 或 `50`；正式研究建议不限制或设较大值。 |
+| `--force-refresh` | `False` | 忽略本地缓存，重新拉日线和 5 分钟线。 | 缓存异常或数据质量异常时使用；会明显增加请求时间。 |
+
+输出：
+
+```text
+data/raw/daily/
+data/raw/minute_5m/
+data/cache/daily/
+data/cache/minute_5m/
+```
+
+---
+
+### 3. `generate-signals`
+
+用途：基于候选池和行情数据生成 D2 交易预案。
+
+```powershell
+python -m src.cli generate-signals --limitup-file data/processed/recent_limitups.csv --days 40 --max-codes 200 --force-refresh
+```
+
+| 参数 | 默认值 | 含义 | 使用建议 |
+|---|---:|---|---|
+| `--limitup-file` | `data/processed/recent_limitups.csv` | 候选涨停池文件。 | 通常使用默认值。 |
+| `--days` | 配置默认值 | 目标使用多少个交易日的 5 分钟线构建信号。 | 建议 `40`。 |
+| `--max-codes` | 不限制 | 最多生成多少只股票的信号。 | 调试时使用；正式运行尽量不限制。 |
+| `--force-refresh` | `False` | 重新拉取行情数据再生成信号。 | 数据异常时使用。 |
+
+输出：
+
+```text
+reports/daily_signals/signals_<date>.csv
+reports/daily_signals/signals_<date>.md
+reports/data_quality/data_quality_<date>.csv
+reports/data_quality/data_quality_<date>.md
+```
+
+---
+
+### 4. `run-daily`
+
+用途：日常盘后一键执行“涨停池 -> 补行情 -> 生成预案”。
+
+```powershell
+python -m src.cli run-daily --date 2026-06-25 --lookback-days 5 --days 40 --max-codes 300 --force-refresh
+```
+
+| 参数 | 默认值 | 含义 | 使用建议 |
+|---|---:|---|---|
+| `--date` | 今天 | 指定盘后处理日期。 | 日常盘后通常不填；复盘时填写。 |
+| `--lookback-days` | `5` | 向前扫描多少个自然日的涨停池。 | 保持 `5` 比较稳。 |
+| `--days` | 配置默认值 | 目标获取多少个交易日的 5 分钟线。 | 建议 `40`。 |
+| `--max-codes` | 不限制 | 最多处理多少只候选股票。 | 正式使用不建议限制；测试时可限制。 |
+| `--force-refresh` | `False` | 忽略缓存重新拉数据。 | 数据源异常、缓存异常或回测复核时使用。 |
+
+这是日常正式使用的主命令。
+
+---
+
+### 5. `backtest-run`
+
+用途：从历史涨停池开始，完整执行“收集数据 -> 生成每日信号 -> 回测评估”。
+
+```powershell
+python -m src.cli backtest-run `
+  --start-date 2026-06-01 `
+  --end-date 2026-06-25 `
+  --top-n 3 `
+  --hold-days 10 `
+  --target-return-pct 7 `
+  --stop-loss-pct 3 `
+  --lookback-days 5 `
+  --signal-days 40 `
+  --eval-days 40 `
+  --include-all-allowed `
+  --include-small `
+  --entry-price-mode zone_max
+```
+
+| 参数 | 默认值 | 含义 | 使用建议 |
+|---|---:|---|---|
+| `--start-date` | 必填 | 回测开始日期。 | 建议覆盖完整市场阶段，不要只跑单日。 |
+| `--end-date` | 必填 | 回测结束日期。 | 结束日期后需要有足够未来行情用于评估。 |
+| `--top-n` | `3` | 每日按排序选前 N 只作为执行候选。 | 执行回测可用 `3`；研究全候选可用 `999`。 |
+| `--hold-days` | `10` | 单笔最多观察多少个交易日。 | 当前短线研究常用 `10`。 |
+| `--target-return-pct` | `7.0` | 目标收益率，例如 `7` 表示 7%。 | 用于成功/机会判断。 |
+| `--stop-loss-pct` | `3.0` | 止损阈值，例如 `3` 表示 -3%。 | 用于回测风险判断。 |
+| `--lookback-days` | `5` | 每个信号日向前看多少自然日涨停池。 | 建议 `5`。 |
+| `--signal-days` | 配置默认值 | 生成信号时目标使用多少个交易日的 5 分钟线。 | 建议 `40`。 |
+| `--eval-days` | 配置默认值 | 评估未来收益时目标获取多少个交易日的 5 分钟线。 | 建议 `40`。 |
+| `--max-codes` | 不限制 | 每天最多处理多少只股票。 | 调试时限制；正式研究尽量不限制。 |
+| `--force-refresh` | `False` | 忽略缓存，重新请求数据。 | 数据异常时使用。 |
+| `--include-all-allowed` | `False` | 回测时纳入所有 allowed 候选，而不仅 TopN。 | 做研究时建议开启。 |
+| `--include-small` | `False` | 是否纳入小仓试探信号。 | 想研究边缘候选时开启。 |
+| `--entry-price-mode` | `zone_max` | 入场价模式。`zone_max` 使用低吸区间上沿；`confirmation_close` 使用确认收盘价。 | 默认 `zone_max` 更贴近低吸预案。 |
+
+输出目录：
+
+```text
+reports/backtest_runs/<start>_<end>/
+```
+
+---
+
+### 6. `watch_backtest`
+
+用途：包装 `backtest-run`，一边跑历史回测，一边输出文件级进度。
+
+```powershell
+python -m src.watch_backtest `
+  --start-date 2026-06-01 `
+  --end-date 2026-06-25 `
+  --top-n 3 `
+  --signal-days 40 `
+  --eval-days 40 `
+  --interval-seconds 5
+```
+
+| 参数 | 默认值 | 含义 | 使用建议 |
+|---|---:|---|---|
+| `--start-date` | 必填 | 回测开始日期。 | 同 `backtest-run`。 |
+| `--end-date` | 必填 | 回测结束日期。 | 同 `backtest-run`。 |
+| `--top-n` | `3` | 每日执行候选数量。 | 执行回测用 `3`，研究用更大值。 |
+| `--hold-days` | `10` | 最大观察天数。 | 同 `backtest-run`。 |
+| `--target-return-pct` | `7.0` | 目标收益率。 | 同 `backtest-run`。 |
+| `--stop-loss-pct` | `3.0` | 止损阈值。 | 同 `backtest-run`。 |
+| `--lookback-days` | `5` | 涨停池回看自然日。 | 建议 `5`。 |
+| `--signal-days` | `40` | 信号生成目标 5 分钟线窗口。 | 默认已经是 `40`。 |
+| `--eval-days` | `40` | 未来评估目标 5 分钟线窗口。 | 默认已经是 `40`。 |
+| `--max-codes` | 不限制 | 每天最多处理多少只股票。 | 调试时可限制。 |
+| `--force-refresh` | `False` | 忽略缓存重新拉取。 | 数据异常时使用。 |
+| `--include-all-allowed` | `False` | 纳入全部 allowed 候选。 | 研究时建议开启。 |
+| `--include-small` | `False` | 纳入小仓试探候选。 | 研究边缘信号时开启。 |
+| `--entry-price-mode` | `zone_max` | 入场价模式。 | 默认即可。 |
+| `--interval-seconds` | `5` | 进度输出间隔秒数。 | 数据多时可调成 `10` 或 `30`。 |
+
+---
+
+### 7. `watch_research`
+
+用途：完整运行历史回测后，自动复制结果并生成全候选研究报告。
+
+```powershell
+python -m src.watch_research `
+  --start-date 2026-06-01 `
+  --end-date 2026-06-25 `
+  --top-n 999 `
+  --signal-days 40 `
+  --eval-days 40 `
+  --include-all-allowed
+```
+
+| 参数 | 默认值 | 含义 | 使用建议 |
+|---|---:|---|---|
+| `--start-date` | 必填 | 研究区间开始日期。 | 样本越完整越有价值。 |
+| `--end-date` | 必填 | 研究区间结束日期。 | 确保之后有未来行情可评估。 |
+| `--top-n` | `999` | 研究默认尽量保留大量候选。 | 保持 `999`，不要过早只看 Top3。 |
+| `--hold-days` | `10` | 最大观察天数。 | 默认即可。 |
+| `--target-return-pct` | `7.0` | 目标收益率。 | 用于成功/机会判断。 |
+| `--stop-loss-pct` | `3.0` | 止损阈值。 | 用于回测风险判断。 |
+| `--target-min-return-pct` | 代码默认 | 研究样本中“较好收益”的下限。 | 默认即可。 |
+| `--target-max-return-pct` | 代码默认 | 研究样本中“机会收益”的上限或参考阈值。 | 默认即可。 |
+| `--return-loss-cutoff-pct` | `-3.0` | 收益分布中亏损组阈值。 | 默认用 -3%。 |
+| `--return-quantiles` | `5` | 因子分位数数量。 | 默认五分位。 |
+| `--with-factor-discovery` | `False` | 是否额外生成旧版因子发现报告。 | 需要兼容旧报告时开启。 |
+| `--discovery-min-group-size` | `3` | 旧版因子分组最小样本数。 | 默认即可。 |
+| `--lookback-days` | `5` | 涨停池回看自然日。 | 建议 `5`。 |
+| `--signal-days` | 配置默认值 | 生成信号目标 5 分钟线窗口。 | 建议 `40`。 |
+| `--eval-days` | 配置默认值 | 未来评估目标 5 分钟线窗口。 | 建议 `40`。 |
+| `--max-codes` | 不限制 | 每天最多处理多少只股票。 | 调试时限制；正式研究不限制。 |
+| `--force-refresh` | `False` | 忽略缓存重新拉数据。 | 数据异常时使用。 |
+| `--include-all-allowed` | `False` | 纳入所有 allowed 候选。 | 做全候选研究时建议开启。 |
+| `--include-small` | `False` | 纳入小仓试探候选。 | 研究边缘信号时开启。 |
+| `--entry-price-mode` | `zone_max` | 入场价模式。 | 默认即可。 |
+| `--interval-seconds` | `5` | 子回测进度输出间隔。 | 数据多时可调大。 |
+| `--output-root` | `reports/research_runs` | 研究输出根目录。 | 默认即可。 |
+| `--run-name` | 自动生成 | 指定研究目录名称。 | 对重要实验建议手动命名。 |
+
+---
+
+### 8. `backtest-history`
+
+用途：读取已经存在的每日 `signals_*.csv`，不重新生成信号，只做历史回测。
+
+```powershell
+python -m src.cli backtest-history `
+  --signals-dir reports/daily_signals `
+  --start-date 2026-06-01 `
+  --end-date 2026-06-25 `
+  --top-n 3 `
+  --include-all-allowed
+```
+
+| 参数 | 默认值 | 含义 | 使用建议 |
+|---|---:|---|---|
+| `--signals-dir` | `reports/daily_signals` | 已生成信号文件所在目录。 | 默认即可。 |
+| `--start-date` | 必填 | 回测开始日期。 | 必填。 |
+| `--end-date` | 必填 | 回测结束日期。 | 必填。 |
+| `--top-n` | `3` | 每天选前 N 只。 | 执行验证用 `3`。 |
+| `--hold-days` | `10` | 最大观察天数。 | 默认即可。 |
+| `--target-return-pct` | `7.0` | 目标收益率。 | 默认即可。 |
+| `--stop-loss-pct` | `3.0` | 止损阈值。 | 默认即可。 |
+| `--include-all-allowed` | `False` | 是否纳入所有 allowed 候选。 | 研究时建议开启。 |
+| `--include-small` | `False` | 是否纳入小仓试探候选。 | 研究边缘信号时开启。 |
+| `--entry-price-mode` | `zone_max` | 入场价模式。 | 默认即可。 |
+
+---
+
+### 9. `backtest-top3`
+
+用途：对单个信号文件做 TopN 回测。
+
+```powershell
+python -m src.cli backtest-top3 `
+  --signals-file reports/daily_signals/signals_2026-06-25.csv `
+  --top-n 3 `
+  --target-return-pct 7
+```
+
+| 参数 | 默认值 | 含义 | 使用建议 |
+|---|---:|---|---|
+| `--signals-file` | 示例文件 | 单日信号 CSV。 | 指定要评估的某一天信号。 |
+| `--top-n` | `3` | 选前 N 只信号。 | 默认 `3`。 |
+| `--target-return-pct` | `7.0` | 目标收益率。 | 默认 `7`。 |
+| `--include-small` | `False` | 是否纳入小仓试探候选。 | 想看边缘候选时开启。 |
+| `--fetch-through-date` | 不指定 | 未来行情拉取到哪一天。 | 复盘指定未来截止日时使用。 |
+| `--days` | 配置默认值 | 目标 5 分钟线窗口。 | 建议 `40`。 |
+| `--force-refresh` | `False` | 忽略缓存重新拉数据。 | 数据异常时使用。 |
+| `--entry-price-mode` | `zone_max` | 入场价模式。 | 默认即可。 |
+
+---
+
+### 10. `validate-data`
+
+用途：对缓存中的日线、5 分钟线和均线计算做数据验收。
+
+```powershell
+python -m src.cli validate-data --limitup-file data/processed/recent_limitups.csv --days 40 --max-codes 100
+```
+
+| 参数 | 默认值 | 含义 | 使用建议 |
+|---|---:|---|---|
+| `--limitup-file` | `data/processed/recent_limitups.csv` | 要验证的候选池文件。 | 默认即可。 |
+| `--days` | 配置默认值 | 验证时使用的目标数据窗口。 | 建议 `40`。 |
+| `--max-codes` | 不限制 | 最多验证多少只股票。 | 调试时可限制。 |
+| `--reference-root` | `F:\dataaccept` | 外部对照数据目录。 | 有对照数据时使用。 |
+
+---
+
+### 11. `review-failed-data`
+
+用途：复查数据质量失败的样本，并输出排除或修复参考。
+
+```powershell
+python -m src.cli review-failed-data --quality-file reports/data_quality/data_quality_2026-06-25.csv --days 40 --force-refresh
+```
+
+| 参数 | 默认值 | 含义 | 使用建议 |
+|---|---:|---|---|
+| `--quality-file` | 不指定 | 要复查的数据质量 CSV。 | 指定某天失败较多的质量文件。 |
+| `--days` | 配置默认值 | 复查时目标数据窗口。 | 建议 `40`。 |
+| `--force-refresh` | `False` | 忽略缓存重新拉数据。 | 判断是否缓存导致失败时使用。 |
+
+---
+
+## 七、历史回测输出
+
+一次性历史回测：
 
 ```powershell
 python -m src.cli backtest-run `
@@ -219,37 +521,24 @@ reports/backtest_runs/<start>_<end>/
 主要产物：
 
 ```text
-daily_signals/                         每日信号
-数据_quality/                          每日数据质量报告
-backtest_results/history_trades_*.csv   全量交易/候选记录
-backtest_results/history_summary_*.csv  回测汇总
-backtest_results/history_factor_stats_*.csv 因子快照
-backtest_results/history_run_log_*.csv  每日运行日志
-backtest_results/history_future_fetch_*.csv 未来行情补数日志
+daily_signals/                                每日信号
+data_quality/                                 每日数据质量报告
+backtest_results/history_trades_*.csv         全量交易/候选记录
+backtest_results/history_summary_*.csv        回测汇总
+backtest_results/history_factor_stats_*.csv   因子快照
+backtest_results/history_run_log_*.csv        每日运行日志
+backtest_results/history_future_fetch_*.csv   未来行情补数日志
 ```
-
-### 2. 带进度输出的历史回测
-
-```powershell
-python -m src.watch_backtest `
-  --start-date 2026-06-01 `
-  --end-date 2026-06-25 `
-  --top-n 3 `
-  --signal-days 40 `
-  --eval-days 40
-```
-
-`watch_backtest` 会持续输出已经生成的信号文件、数据质量文件和结果文件数量，便于发现某个日期是否卡在数据阶段。
 
 ---
 
-## 七、研究模式：全候选收益分布分析
+## 八、研究模式：全候选收益分布分析
 
 研究模式用于回答下面这些问题：
 
 - 候选池整体收益分布是什么样？
-- 哪些因子在盈利尾部更明显？
-- 哪些因子在亏损尾部更明显？
+- 哪些因子在盈利样本中更常见？
+- 哪些因子在亏损样本中更常见？
 - 当前 TopN 或执行规则是否选中了真正更好的候选？
 - 机会收益和收盘留存收益之间是否存在明显衰减？
 
@@ -284,8 +573,6 @@ profit_loss_compare_<start>_<end>.csv           盈亏组比较
 daily_return_summary_<start>_<end>.csv          每日收益汇总
 ```
 
-### 研究时优先看哪些目标
-
 当前全样本研究重点不是简单的 `success/failed`，而是：
 
 | 字段 | 含义 |
@@ -300,14 +587,13 @@ daily_return_summary_<start>_<end>.csv          每日收益汇总
 全样本收益分布
   -> 盈利尾部 / 亏损尾部分组
   -> 因子分位数
-  -> 每日稳定性
   -> 因子调节
   -> 重新回测
 ```
 
 ---
 
-## 八、因子调节原则
+## 九、因子调节原则
 
 因子调节不要直接根据单次结果改权重，建议按下面顺序进行：
 
@@ -326,7 +612,7 @@ daily_return_summary_<start>_<end>.csv          每日收益汇总
 3. 再看因子分位数：
    - Q5 是否明显好于 Q1；
    - 高分组是否降低亏损率；
-   - 因子是否只在某些日期有效。
+   - 因子是否只在少数样本中有效。
 
 4. 最后才调整：
    - 因子权重；
@@ -339,7 +625,7 @@ daily_return_summary_<start>_<end>.csv          每日收益汇总
 
 ---
 
-## 九、正式使用流程
+## 十、正式使用流程
 
 正式盘后使用建议采用下面流程：
 
@@ -370,7 +656,7 @@ python -m src.cli run-daily --lookback-days 5 --days 40
 
 ---
 
-## 十、数据目录
+## 十一、数据目录
 
 ```text
 data/
@@ -391,7 +677,7 @@ reports/
 
 ---
 
-## 十一、数据源说明
+## 十二、数据源说明
 
 涨停池：
 
@@ -411,23 +697,3 @@ reports/
 reports/backtest_runs/<start>_<end>/backtest_results/history_run_log_<start>_<end>.csv
 reports/backtest_runs/<start>_<end>/data_quality/data_quality_<date>.csv
 ```
-
----
-
-## 十二、当前开发重点
-
-当前优先级：
-
-1. 保障数据获取链路稳定；
-2. 保留全候选研究样本；
-3. 分析收益分布和因子分位数；
-4. 基于数据调节因子；
-5. 回测验证后再进入正式日常使用。
-
-后续可继续增强：
-
-- 每日因子 IC；
-- 因子稳定性报告；
-- 数据质量评分；
-- 不同市场环境分层；
-- 更细的机会收益与收盘留存分析。
