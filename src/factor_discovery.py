@@ -6,6 +6,7 @@ from typing import Any
 
 import pandas as pd
 
+
 NUMERIC_DISCOVERY_FACTORS = [
     "daily_rank",
     "days_since_d0",
@@ -32,20 +33,9 @@ SEGMENT_COLUMNS = [
 ]
 
 COMPARISONS = [
-    ("success_vs_failed", "success", "failed", "Trade quality: executed winners vs executed losers."),
-    ("success_vs_ordinary", "success", "ordinary", "Positive samples vs ordinary baseline."),
-    (
-        "missed_selected_vs_success",
-        "missed_selected",
-        "success",
-        "Selected opportunities missed by D2 entry vs realized winners.",
-    ),
-    (
-        "missed_unselected_vs_ordinary",
-        "missed_unselected",
-        "ordinary",
-        "Filtered or unselected opportunities vs ordinary baseline.",
-    ),
+    ("success_vs_failed", "success", "failed", "Legacy executed-trade label comparison."),
+    ("missed_selected_vs_success", "missed_selected", "success", "Legacy selected-but-not-executed comparison."),
+    ("missed_unselected_vs_ordinary", "missed_unselected", "ordinary", "Legacy filtered-opportunity comparison."),
 ]
 
 
@@ -54,6 +44,12 @@ def run_factor_discovery(
     output_dir: str | Path | None = None,
     min_group_size: int = 3,
 ) -> tuple[pd.DataFrame, pd.DataFrame, Path, Path, Path]:
+    """Build optional legacy sample-group diagnostics.
+
+    This module is intentionally secondary to return_distribution.py. It compares
+    historical sample-group labels, but it should not be used as the primary
+    factor-research layer and it does not emit strategy-change recommendations.
+    """
     source_path = Path(samples_file)
     samples = pd.read_csv(source_path, dtype={"code": str})
     if samples.empty:
@@ -93,8 +89,6 @@ def prepare_samples(samples: pd.DataFrame) -> pd.DataFrame:
         "candidate_d3_max_return_pct",
         "candidate_d3_close_return_pct",
         "d3_realized_return_pct",
-        "d3_max_return_pct",
-        "d3_close_return_pct",
     ]:
         if column not in frame.columns:
             frame[column] = pd.NA
@@ -103,56 +97,26 @@ def prepare_samples(samples: pd.DataFrame) -> pd.DataFrame:
         if column not in frame.columns:
             frame[column] = ""
         frame[column] = frame[column].fillna("").astype(str)
-    frame["missed_detail"] = frame.apply(classify_missed_detail, axis=1)
     return frame
-
-
-def classify_missed_detail(row: pd.Series) -> str:
-    group = str(row.get("sample_group") or "")
-    if group != "missed_unselected" and group != "missed_selected":
-        return ""
-    signal_type = str(row.get("signal_type") or "")
-    selected = _to_bool(row.get("selected_for_execution"))
-    failure_reason = str(row.get("failure_reason") or "")
-    if group == "missed_selected":
-        if failure_reason == "zone_too_low":
-            return "missed_selected_zone_low"
-        if failure_reason:
-            return f"missed_selected_{failure_reason}"
-        return "missed_selected_not_triggered"
-    if signal_type == "WATCH_ONLY":
-        return "missed_watch_only"
-    if signal_type == "D2_WATCH_OR_SMALL":
-        return "missed_small_or_watch"
-    if selected:
-        return "missed_selected_like"
-    return "missed_rank_or_filter"
 
 
 def build_group_compare(samples: pd.DataFrame) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for group_name, group in samples.groupby("sample_group", dropna=False):
         rows.append(group_summary_row(str(group_name), group))
-    if "missed_detail" in samples.columns:
-        for group_name, group in samples[samples["missed_detail"] != ""].groupby("missed_detail", dropna=False):
-            rows.append(group_summary_row(str(group_name), group, row_type="missed_detail"))
     if not rows:
         return pd.DataFrame()
-    return pd.DataFrame(rows).sort_values(["row_type", "group"]).reset_index(drop=True)
+    return pd.DataFrame(rows).sort_values("group").reset_index(drop=True)
 
 
-def group_summary_row(group_name: str, group: pd.DataFrame, row_type: str = "sample_group") -> dict[str, Any]:
+def group_summary_row(group_name: str, group: pd.DataFrame) -> dict[str, Any]:
     row: dict[str, Any] = {
-        "row_type": row_type,
         "group": group_name,
         "count": int(len(group)),
-        "success_rate": _group_rate(group, "success"),
-        "failed_rate": _group_rate(group, "failed"),
-        "missed_rate": float(group["sample_group"].isin({"missed_selected", "missed_unselected"}).mean())
-        if len(group)
-        else None,
         "avg_candidate_d3_max_return_pct": _mean(group, "candidate_d3_max_return_pct"),
         "median_candidate_d3_max_return_pct": _median(group, "candidate_d3_max_return_pct"),
+        "avg_candidate_d3_close_return_pct": _mean(group, "candidate_d3_close_return_pct"),
+        "median_candidate_d3_close_return_pct": _median(group, "candidate_d3_close_return_pct"),
         "avg_d3_realized_return_pct": _mean(group, "d3_realized_return_pct"),
         "median_d3_realized_return_pct": _median(group, "d3_realized_return_pct"),
     }
@@ -189,8 +153,6 @@ def build_factor_discovery(samples: pd.DataFrame, min_group_size: int = 3) -> pd
                 min_group_size=min_group_size,
             )
         )
-
-    rows.extend(watch_only_rows(samples, min_group_size=min_group_size))
     if not rows:
         return pd.DataFrame()
     frame = pd.DataFrame(rows)
@@ -273,8 +235,7 @@ def segment_comparison_rows(
             lift = None if pos_rate is None or neg_rate in (None, 0) else pos_rate / neg_rate
             diff = None if pos_rate is None or neg_rate is None else pos_rate - neg_rate
             enough = pos_total >= min_group_size and neg_total >= min_group_size and (pos_count + neg_count) >= min_group_size
-            direction = segment_direction(diff, lift, enough)
-            evidence = abs(diff or 0.0)
+            direction = segment_direction(diff, enough)
             rows.append(
                 {
                     "comparison": comparison,
@@ -293,40 +254,13 @@ def segment_comparison_rows(
                     "positive_rate": pos_rate,
                     "negative_rate": neg_rate,
                     "lift": lift,
-                    "evidence_score": evidence,
+                    "evidence_score": abs(diff or 0.0),
                     "priority": priority_from_direction(direction, enough),
                     "direction": direction,
                     "interpretation": segment_interpretation(factor, value, diff, lift, enough),
                 }
             )
     return rows
-
-
-def watch_only_rows(samples: pd.DataFrame, min_group_size: int) -> list[dict[str, Any]]:
-    if "signal_type" not in samples.columns:
-        return []
-    watch = samples[samples["signal_type"] == "WATCH_ONLY"].copy()
-    if watch.empty:
-        return []
-    watch_hit = watch[watch["sample_group"] == "missed_unselected"]
-    watch_miss = watch[watch["sample_group"] == "ordinary"]
-    return numeric_comparison_rows(
-        "watch_hit_vs_watch_miss",
-        "WATCH_ONLY candidates that reached D3 target-min vs WATCH_ONLY ordinary candidates.",
-        "watch_hit",
-        "watch_miss",
-        watch_hit,
-        watch_miss,
-        min_group_size=min_group_size,
-    ) + segment_comparison_rows(
-        "watch_hit_vs_watch_miss",
-        "WATCH_ONLY candidates that reached D3 target-min vs WATCH_ONLY ordinary candidates.",
-        "watch_hit",
-        "watch_miss",
-        watch_hit,
-        watch_miss,
-        min_group_size=min_group_size,
-    )
 
 
 def build_factor_discovery_markdown(
@@ -337,11 +271,18 @@ def build_factor_discovery_markdown(
     min_group_size: int,
 ) -> str:
     lines: list[str] = [
-        "# Factor Discovery Report",
+        "# Legacy Sample-Group Factor Discovery Report",
         "",
         f"- source: `{samples_file}`",
         f"- records: **{len(samples)}**",
         f"- min comparison group size: **{min_group_size}**",
+        "- status: **optional legacy diagnostic, not the primary factor research report**",
+        "",
+        "## Scope",
+        "",
+        "This report compares old sample-group labels such as success, failed, missed, and ordinary.",
+        "It is useful for execution-state diagnostics, but the default research workflow now uses return-distribution analysis across all samples.",
+        "Do not read this report as a strategy recommendation layer.",
         "",
         "## Sample Group Counts",
         "",
@@ -353,29 +294,30 @@ def build_factor_discovery_markdown(
 
     if not group_compare.empty:
         lines.extend(["## Group Compare Snapshot", ""])
-        view = group_compare[group_compare["row_type"] == "sample_group"].head(12)
+        view = group_compare.head(12)
         lines.extend(
             [
-                "| group | count | avg total | avg support | avg active money | avg candidate D3 max | avg realized D3 |",
-                "|---|---:|---:|---:|---:|---:|---:|",
+                "| group | count | avg total | avg support | avg active money | avg D3 max | avg D3 close | avg realized D3 |",
+                "|---|---:|---:|---:|---:|---:|---:|---:|",
             ]
         )
         for _, row in view.iterrows():
             lines.append(
-                "| {group} | {count} | {total} | {support} | {active} | {candidate} | {realized} |".format(
+                "| {group} | {count} | {total} | {support} | {active} | {d3max} | {d3close} | {realized} |".format(
                     group=row.get("group", ""),
                     count=int(row.get("count") or 0),
                     total=_fmt(row.get("avg_total_score")),
                     support=_fmt(row.get("avg_support_score")),
                     active=_fmt(row.get("avg_active_money_score")),
-                    candidate=_fmt(row.get("avg_candidate_d3_max_return_pct")),
+                    d3max=_fmt(row.get("avg_candidate_d3_max_return_pct")),
+                    d3close=_fmt(row.get("avg_candidate_d3_close_return_pct")),
                     realized=_fmt(row.get("avg_d3_realized_return_pct")),
                 )
             )
         lines.append("")
 
     if not discovery.empty:
-        lines.extend(["## Highest-Priority Findings", ""])
+        lines.extend(["## Label-Based Findings", ""])
         top = discovery[discovery["direction"] != "insufficient_sample"].head(30)
         if top.empty:
             lines.append("No findings have enough sample size yet.")
@@ -399,55 +341,17 @@ def build_factor_discovery_markdown(
                 )
         lines.append("")
 
-        lines.extend(["## Strategy Experiment Hints", ""])
-        lines.extend(strategy_hints(samples, discovery))
-        lines.append("")
-
     lines.extend(
         [
-            "## How to Read This Report",
+            "## Research Notes",
             "",
-            "- `success_vs_failed` is for improving executed-trade quality.",
-            "- `missed_selected_vs_success` is for testing whether the D2 entry zone is too conservative.",
-            "- `missed_unselected_vs_ordinary` is for finding filtered candidates that may deserve promotion.",
-            "- `watch_hit_vs_watch_miss` is specifically for finding upgrade rules inside WATCH_ONLY candidates.",
-            "- Treat findings with small sample counts as hypotheses, not final strategy rules.",
+            "- Use this only as an auxiliary diagnostic for old sample-group labels.",
+            "- The primary research question should be profit/loss and opportunity distribution across all candidates.",
+            "- TopN, execution, and selection fields are metadata here, not the main target variable.",
+            "- Do not change factor weights from this report alone; validate with return-distribution and cross-date stability analysis.",
         ]
     )
     return "\n".join(lines)
-
-
-def strategy_hints(samples: pd.DataFrame, discovery: pd.DataFrame) -> list[str]:
-    hints: list[str] = []
-    missed_detail_counts = samples["missed_detail"].value_counts() if "missed_detail" in samples.columns else pd.Series(dtype=int)
-    zone_low = int(missed_detail_counts.get("missed_selected_zone_low", 0))
-    watch_hit = int(missed_detail_counts.get("missed_watch_only", 0))
-    if watch_hit:
-        hints.append(
-            f"- WATCH_ONLY contains **{watch_hit}** missed D3 target opportunities; prioritize WATCH_ONLY upgrade conditions before final TopN simulation."
-        )
-    if zone_low:
-        hints.append(
-            f"- Selected-but-missed zone-low cases: **{zone_low}**; test a less conservative D2 entry variant such as confirmation close or wider zone."
-        )
-
-    executed = samples[samples["executed"].astype(str).str.lower().isin({"true", "1", "yes"})]
-    if not executed.empty:
-        success_count = int((executed["sample_group"] == "success").sum())
-        hints.append(f"- Executed success rate is **{success_count}/{len(executed)}**; improve trade-quality filters before tuning sell logic.")
-
-    active_money_rows = discovery[
-        (discovery["comparison"] == "success_vs_failed") & (discovery["factor"] == "active_money_score")
-    ]
-    if not active_money_rows.empty:
-        row = active_money_rows.iloc[0]
-        diff = _to_float(row.get("difference"))
-        if diff is not None and diff < 0:
-            hints.append("- `active_money_score` is higher in failed than success for this run; avoid blindly increasing its ranking weight.")
-
-    if not hints:
-        hints.append("- No strong automatic hints yet. Increase date range before changing strategy rules.")
-    return hints
 
 
 def numeric_direction(diff: float | None, effect: float | None, enough: bool) -> str:
@@ -462,7 +366,7 @@ def numeric_direction(diff: float | None, effect: float | None, enough: bool) ->
     return "negative_group_higher"
 
 
-def segment_direction(diff: float | None, lift: float | None, enough: bool) -> str:
+def segment_direction(diff: float | None, enough: bool) -> str:
     if not enough:
         return "insufficient_sample"
     if diff is None:
@@ -480,9 +384,9 @@ def numeric_interpretation(factor: str, diff: float | None, effect: float | None
     if diff is None or effect is None:
         return f"No usable numeric comparison for `{factor}`."
     if abs(effect) < 0.2:
-        return f"`{factor}` has weak separation in this comparison."
-    side = "positive group" if diff > 0 else "negative group"
-    return f"`{factor}` is higher in the {side}; treat as a candidate hypothesis."
+        return f"`{factor}` has weak separation in this label comparison."
+    side = "positive label group" if diff > 0 else "negative label group"
+    return f"`{factor}` is higher in the {side}; treat as an auxiliary hypothesis only."
 
 
 def segment_interpretation(factor: str, value: str, diff: float | None, lift: float | None, enough: bool) -> str:
@@ -493,7 +397,7 @@ def segment_interpretation(factor: str, value: str, diff: float | None, lift: fl
         return f"No usable segment comparison for {label}."
     if abs(diff) < 0.10:
         return f"{label} has weak segment separation."
-    side = "positive group" if diff > 0 else "negative group"
+    side = "positive label group" if diff > 0 else "negative label group"
     lift_text = "" if lift is None else f" lift={lift:.2f}."
     return f"{label} is overrepresented in the {side}.{lift_text}"
 
@@ -506,12 +410,6 @@ def priority_from_direction(direction: str, enough: bool) -> int:
     if direction == "weak_or_no_separation":
         return 5
     return 7
-
-
-def _group_rate(group: pd.DataFrame, target_group: str) -> float | None:
-    if len(group) == 0 or "sample_group" not in group.columns:
-        return None
-    return float((group["sample_group"] == target_group).mean())
 
 
 def _mean(frame: pd.DataFrame, column: str) -> float | None:
@@ -535,17 +433,11 @@ def _series_mean(values: pd.Series) -> float | None:
 def _pooled_std(left: pd.Series, right: pd.Series) -> float | None:
     if left.empty or right.empty:
         return None
-    combined = pd.concat([left, right], ignore_index=True)
-    value = float(combined.std(ddof=0))
-    return value
+    return float(pd.concat([left, right], ignore_index=True).std(ddof=0))
 
 
 def _safe_rate(numerator: int, denominator: int) -> float | None:
     return None if denominator <= 0 else float(numerator) / float(denominator)
-
-
-def _to_bool(value: Any) -> bool:
-    return str(value).strip().lower() in {"true", "1", "yes"}
 
 
 def _to_float(value: Any) -> float | None:
@@ -574,7 +466,7 @@ def _suffix_from_samples_path(path: Path) -> str:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Discover factor differences across research sample groups")
+    parser = argparse.ArgumentParser(description="Build optional legacy sample-group factor diagnostics")
     parser.add_argument("--samples-file", required=True)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--min-group-size", type=int, default=3)
