@@ -5,7 +5,7 @@ import sys
 
 import pandas as pd
 
-from .backtester import run_top3_signal_backtest
+from .backtester import run_full_history_backtest, run_history_backtest, run_top3_signal_backtest
 from .config import get_data_config
 from .data_acceptance import run_data_acceptance
 from .failure_review import review_failed_data
@@ -30,6 +30,10 @@ def main(argv: list[str] | None = None) -> int:
             return review_failed_data_command(args)
         if args.command == "backtest-top3":
             return backtest_top3(args)
+        if args.command == "backtest-history":
+            return backtest_history(args)
+        if args.command == "backtest-run":
+            return backtest_run(args)
         if args.command == "run-daily":
             return run_daily(args)
     except Exception as exc:
@@ -79,6 +83,34 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--fetch-through-date", default=None)
     p.add_argument("--days", type=int, default=None)
     p.add_argument("--force-refresh", action="store_true")
+    p.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default="zone_max")
+
+    p = sub.add_parser("backtest-history", help="backtest multiple daily signal files and write full records")
+    p.add_argument("--signals-dir", default="reports/daily_signals")
+    p.add_argument("--start-date", required=True)
+    p.add_argument("--end-date", required=True)
+    p.add_argument("--top-n", type=int, default=3)
+    p.add_argument("--hold-days", type=int, default=10)
+    p.add_argument("--target-return-pct", type=float, default=7.0)
+    p.add_argument("--stop-loss-pct", type=float, default=3.0)
+    p.add_argument("--include-all-allowed", action="store_true")
+    p.add_argument("--include-small", action="store_true")
+    p.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default="zone_max")
+
+    p = sub.add_parser("backtest-run", help="run full historical backtest from data collection to evaluation")
+    p.add_argument("--start-date", required=True)
+    p.add_argument("--end-date", required=True)
+    p.add_argument("--top-n", type=int, default=3)
+    p.add_argument("--hold-days", type=int, default=10)
+    p.add_argument("--target-return-pct", type=float, default=7.0)
+    p.add_argument("--stop-loss-pct", type=float, default=3.0)
+    p.add_argument("--lookback-days", type=int, default=5)
+    p.add_argument("--signal-days", type=int, default=None)
+    p.add_argument("--eval-days", type=int, default=None)
+    p.add_argument("--max-codes", type=int, default=None)
+    p.add_argument("--force-refresh", action="store_true")
+    p.add_argument("--include-all-allowed", action="store_true")
+    p.add_argument("--include-small", action="store_true")
     p.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default="zone_max")
 
     p = sub.add_parser("run-daily", help="涨停池、补数、信号一键执行")
@@ -214,6 +246,83 @@ def backtest_top3(args) -> int:
     print(f"target hit rate: {item.get('target_hit_rate', '') if len(summary) else ''}")
     print(f"csv: {csv_path}")
     print(f"markdown: {md_path}")
+    return 0
+
+
+def backtest_history(args) -> int:
+    trades, summary, factor_stats, trade_csv, summary_csv, factor_csv, md_path = run_history_backtest(
+        signals_dir=args.signals_dir,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        top_n=args.top_n,
+        hold_days=args.hold_days,
+        target_return_pct=args.target_return_pct,
+        stop_loss_pct=args.stop_loss_pct,
+        include_all_allowed=args.include_all_allowed,
+        include_small=args.include_small,
+        entry_price_mode=args.entry_price_mode,
+    )
+    item = summary.iloc[0] if not summary.empty else {}
+    print(f"records: {len(trades)}")
+    print(f"selected: {int(item.get('selected_count', 0)) if len(summary) else 0}")
+    print(f"evaluable: {int(item.get('evaluable_count', 0)) if len(summary) else 0}")
+    print(f"executed: {int(item.get('executed_count', 0)) if len(summary) else 0}")
+    print(f"target hit rate: {item.get('target_hit_rate', '') if len(summary) else ''}")
+    print(f"factor rows: {len(factor_stats)}")
+    print(f"trades csv: {trade_csv}")
+    print(f"summary csv: {summary_csv}")
+    print(f"factor csv: {factor_csv}")
+    print(f"markdown: {md_path}")
+    return 0
+
+
+def backtest_run(args) -> int:
+    (
+        trades,
+        summary,
+        factor_stats,
+        run_log,
+        trade_csv,
+        summary_csv,
+        factor_csv,
+        md_path,
+        run_log_csv,
+        run_log_md,
+        future_fetch_csv,
+    ) = run_full_history_backtest(
+        start_date=args.start_date,
+        end_date=args.end_date,
+        top_n=args.top_n,
+        hold_days=args.hold_days,
+        target_return_pct=args.target_return_pct,
+        stop_loss_pct=args.stop_loss_pct,
+        lookback_days=args.lookback_days,
+        signal_days=args.signal_days,
+        eval_days=args.eval_days,
+        max_codes=args.max_codes,
+        force_refresh=args.force_refresh,
+        include_all_allowed=args.include_all_allowed,
+        include_small=args.include_small,
+        entry_price_mode=args.entry_price_mode,
+    )
+    item = summary.iloc[0] if not summary.empty else {}
+    status_counts = run_log["status"].value_counts(dropna=False) if not run_log.empty and "status" in run_log.columns else {}
+    print(f"run dates: {len(run_log)}")
+    for status, count in status_counts.items():
+        print(f"{status}: {int(count)}")
+    print(f"records: {len(trades)}")
+    print(f"selected: {int(item.get('selected_count', 0)) if len(summary) else 0}")
+    print(f"evaluable: {int(item.get('evaluable_count', 0)) if len(summary) else 0}")
+    print(f"executed: {int(item.get('executed_count', 0)) if len(summary) else 0}")
+    print(f"target hit rate: {item.get('target_hit_rate', '') if len(summary) else ''}")
+    print(f"factor rows: {len(factor_stats)}")
+    print(f"trades csv: {trade_csv}")
+    print(f"summary csv: {summary_csv}")
+    print(f"factor csv: {factor_csv}")
+    print(f"markdown: {md_path}")
+    print(f"run log csv: {run_log_csv}")
+    print(f"run log markdown: {run_log_md}")
+    print(f"future fetch csv: {future_fetch_csv}")
     return 0
 
 

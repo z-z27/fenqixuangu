@@ -149,6 +149,55 @@ python -m src.cli backtest-top3 --signals-file reports/daily_signals/signals_202
 
 注意：`--fetch-through-date` 只用于事后评估 D2 执行，不允许回头改写 T 日信号。
 
+完整历史回测命令：
+
+```powershell
+python -m src.cli backtest-run --start-date 2026-01-01 --end-date 2026-06-30 --top-n 3 --hold-days 10 --target-return-pct 7 --stop-loss-pct 3
+```
+
+`backtest-run` 是正式回测入口，不要求提前准备信号 CSV。它按日期逐日执行正常项目流程：
+
+1. 拉取信号日 T 及 lookback 范围内的涨停池。
+2. 对候选股拉取并缓存 `<= T` 的日线和 5 分钟线。
+3. 使用严格数据质量门槛生成 T 日收盘后的 D2 预案，MA5/MA10/MA20/MA30 仍要求足够历史数据。
+4. 保存 `signals_YYYY-MM-DD.csv/md` 和 `data_quality_YYYY-MM-DD.csv/md` 作为审计快照。
+5. 再拉取 T 之后的 5 分钟数据，只用于事后验证。
+6. 汇总候选收益、Top3 执行、目标收益、止损、失败原因和因子分箱。
+
+完整回测产物写入隔离目录，避免覆盖日常运行报告：
+
+- `reports/backtest_runs/<start>_<end>/daily_signals/`
+- `reports/backtest_runs/<start>_<end>/data_quality/`
+- `reports/backtest_runs/<start>_<end>/backtest_results/`
+
+完整回测不会覆盖 `data/processed/recent_limitups.csv`，日常 `run-daily` 的工作文件保持独立。
+
+回放已保存信号快照的命令：
+
+```powershell
+python -m src.cli backtest-history --signals-dir reports/daily_signals --start-date 2026-01-01 --end-date 2026-06-30 --top-n 3 --hold-days 10 --target-return-pct 7 --stop-loss-pct 3
+```
+
+`backtest-history` 只读取已经生成好的 `signals_YYYY-MM-DD.csv`，用于复盘、审计或重新评估旧信号。正式跑新样本应使用 `backtest-run`。两者共同遵守：
+
+- 信号生成阶段：只能使用信号日及以前的数据。
+- 事后评估阶段：读取信号日之后的 5 分钟数据，统计候选收益、合规买点触发、执行收益、止盈止损和失败原因。
+
+输出文件：
+
+- `history_trades_<start>_<end>.csv`：逐信号明细。所有信号都会保留，包含 `selected_by_topn`、`selected_for_execution`、候选 D2/D3/D5/D10 收益、执行 D2/D3/D5/D10 收益、`target_hit`、`stop_hit`、`first_outcome`、`failure_reason`。
+- `history_summary_<start>_<end>.csv`：区间总览，包括样本数、入选数、成交数、成交率、7% 命中率、止损率、平均/中位收益。
+- `history_factor_stats_<start>_<end>.csv`：按排名、涨停后天数、信号类型、仓位、承接类型、总分、图形分、承接分、活跃资金分、题材分、低吸区宽度、失效距离做分箱统计。
+- `history_review_<start>_<end>.md`：可读版摘要。
+- `history_run_log_<start>_<end>.csv/md`：逐信号日运行日志，记录涨停池、信号数、质量通过数、未来数据补取成功/失败数。
+- `history_future_fetch_<start>_<end>.csv`：逐代码未来验证数据补取日志，记录失败原因，避免把数据源问题误判为策略失败。
+
+如果要研究“不是只买 Top3，而是所有 allowed 样本的因子表现”，使用：
+
+```powershell
+python -m src.cli backtest-history --signals-dir reports/daily_signals --start-date 2026-01-01 --end-date 2026-06-30 --include-all-allowed
+```
+
 ## 关键风险
 
 - 当前涨停池来自近期数据，历史长区间回测会有幸存者偏差。

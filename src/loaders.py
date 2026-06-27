@@ -44,6 +44,7 @@ class MarketDataService:
         trade_date: str | None = None,
         lookback_days: int = 1,
         force_refresh: bool = False,
+        write_processed: bool = True,
     ) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
         errors: list[str] = []
@@ -74,8 +75,9 @@ class MarketDataService:
         result = pd.concat(frames, ignore_index=True)
         result = result.sort_values(["trade_date", "code"]).drop_duplicates(["trade_date", "code"], keep="last")
         result = result.reset_index(drop=True)
-        out_path = self.config.processed_dir / "recent_limitups.csv"
-        result.to_csv(out_path, index=False, encoding="utf-8-sig")
+        if write_processed:
+            out_path = self.config.processed_dir / "recent_limitups.csv"
+            result.to_csv(out_path, index=False, encoding="utf-8-sig")
         return result
 
     def get_stock_bars(
