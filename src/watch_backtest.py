@@ -7,6 +7,9 @@ import time
 from pathlib import Path
 
 
+DEFAULT_5MIN_TARGET_DAYS = 40
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     command = [
@@ -30,11 +33,12 @@ def main(argv: list[str] | None = None) -> int:
         str(args.lookback_days),
     ]
 
-    # always explicitly pass 5m window to avoid config ambiguity
+    # Target collection window is 40 trading days by default. Data quality is
+    # checked downstream against the minimum usable window, not this target.
     if args.signal_days is None:
-        args.signal_days = 20
+        args.signal_days = DEFAULT_5MIN_TARGET_DAYS
     if args.eval_days is None:
-        args.eval_days = 20
+        args.eval_days = DEFAULT_5MIN_TARGET_DAYS
 
     command.extend(["--signal-days", str(args.signal_days)])
     command.extend(["--eval-days", str(args.eval_days)])
