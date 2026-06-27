@@ -14,7 +14,8 @@ class DataConfig:
     timezone: str = os.getenv("FQ_TIMEZONE", "Asia/Shanghai")
     adjust: str = os.getenv("FQ_ADJUST", "none")
     daily_history_days: int = int(os.getenv("FQ_DAILY_HISTORY_DAYS", "180"))
-    default_5min_days: int = int(os.getenv("FQ_5MIN_DAYS", "20"))
+    default_5min_days: int = int(os.getenv("FQ_5MIN_DAYS", "40"))
+    min_5min_trade_days: int = int(os.getenv("FQ_MIN_5MIN_DAYS", "20"))
     indicator_warmup_trading_days: int = int(os.getenv("FQ_INDICATOR_WARMUP_TRADING_DAYS", "120"))
     disable_proxy: bool = os.getenv("FQ_DISABLE_PROXY", "true").lower() in {
         "1",
