@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .factor_discovery import run_factor_discovery
 from .research_analysis import (
     DEFAULT_TARGET_MAX_RETURN_PCT,
     DEFAULT_TARGET_MIN_RETURN_PCT,
@@ -55,6 +56,14 @@ def main(argv: list[str] | None = None) -> int:
         target_min_return_pct=args.target_min_return_pct,
         target_max_return_pct=args.target_max_return_pct,
     )
+
+    print("[research] building factor discovery reports...", flush=True)
+    group_compare, discovery, group_csv, discovery_csv, discovery_markdown = run_factor_discovery(
+        samples_file=samples_csv,
+        output_dir=research_results_dir,
+        min_group_size=args.discovery_min_group_size,
+    )
+
     write_manifest(
         path=research_root / "research_manifest.md",
         args=args,
@@ -75,9 +84,14 @@ def main(argv: list[str] | None = None) -> int:
     print(f"samples csv: {samples_csv}", flush=True)
     print(f"factor csv: {factor_csv}", flush=True)
     print(f"markdown: {markdown_path}", flush=True)
+    print(f"group compare csv: {group_csv}", flush=True)
+    print(f"factor discovery csv: {discovery_csv}", flush=True)
+    print(f"factor discovery markdown: {discovery_markdown}", flush=True)
     print(f"manifest: {research_root / 'research_manifest.md'}", flush=True)
     print(f"samples: {len(samples)}", flush=True)
     print(f"factor rows: {len(factor_compare)}", flush=True)
+    print(f"group rows: {len(group_compare)}", flush=True)
+    print(f"discovery rows: {len(discovery)}", flush=True)
     return 0
 
 
@@ -203,6 +217,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stop-loss-pct", type=float, default=3.0)
     parser.add_argument("--target-min-return-pct", type=float, default=DEFAULT_TARGET_MIN_RETURN_PCT)
     parser.add_argument("--target-max-return-pct", type=float, default=DEFAULT_TARGET_MAX_RETURN_PCT)
+    parser.add_argument("--discovery-min-group-size", type=int, default=3)
     parser.add_argument("--lookback-days", type=int, default=5)
     parser.add_argument("--signal-days", type=int, default=None)
     parser.add_argument("--eval-days", type=int, default=None)
