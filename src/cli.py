@@ -12,6 +12,7 @@ from .failure_review import review_failed_data
 from .history_samples import run_history_sample_generation
 from .loaders import DataQualityError, MarketDataService, load_limitup_file
 from .report import write_data_quality_reports, write_signal_reports
+from .research_models import run_research_model_generation
 from .signal_engine import generate_signal
 
 
@@ -37,6 +38,8 @@ def main(argv: list[str] | None = None) -> int:
             return backtest_run(args)
         if args.command == "generate-history-samples":
             return generate_history_samples(args)
+        if args.command == "generate-research-model":
+            return generate_research_model(args)
         if args.command == "run-daily":
             return run_daily(args)
     except Exception as exc:
@@ -127,6 +130,15 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--hold-days", type=int, default=10)
     p.add_argument("--target-return-pct", type=float, default=7.0)
     p.add_argument("--secondary-target-return-pct", type=float, default=10.0)
+
+    p = sub.add_parser("generate-research-model", help="analyze history candidates and generate a research ranking model")
+    p.add_argument("--samples-file", required=True)
+    p.add_argument("--output-dir", default=None)
+    p.add_argument("--model-id", default="ranking_model_v001")
+    p.add_argument("--model-type", choices=["bucket_score", "interaction_rules", "linear_score"], default="bucket_score")
+    p.add_argument("--target-return-pct", type=float, default=7.0)
+    p.add_argument("--min-bucket-size", type=int, default=10)
+    p.add_argument("--max-features", type=int, default=8)
 
     p = sub.add_parser("run-daily", help="涨停池、补数、信号一键执行")
     p.add_argument("--date", default=None)
@@ -374,6 +386,27 @@ def generate_history_samples(args) -> int:
     print(f"summary csv: {summary_csv}")
     print(f"run log csv: {run_log_csv}")
     print(f"future fetch csv: {future_fetch_csv}")
+    print(f"markdown: {markdown_path}")
+    return 0
+
+
+def generate_research_model(args) -> int:
+    factor_summary, factor_buckets, model, summary_csv, buckets_csv, model_json, markdown_path = run_research_model_generation(
+        samples_file=args.samples_file,
+        output_dir=args.output_dir,
+        model_id=args.model_id,
+        model_type=args.model_type,
+        target_return_pct=args.target_return_pct,
+        min_bucket_size=args.min_bucket_size,
+        max_features=args.max_features,
+    )
+    print(f"factor summary rows: {len(factor_summary)}")
+    print(f"factor bucket rows: {len(factor_buckets)}")
+    print(f"model id: {model['model_id']}")
+    print(f"model type: {model['model_type']}")
+    print(f"factor summary csv: {summary_csv}")
+    print(f"factor buckets csv: {buckets_csv}")
+    print(f"model json: {model_json}")
     print(f"markdown: {markdown_path}")
     return 0
 
