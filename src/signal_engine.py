@@ -111,13 +111,8 @@ def generate_signal(
         signal_type = "WATCH_ONLY"
     else:
         allowed = True
+        position = "normal"
         signal_type = "D2_LOW_ABSORB"
-        if total >= cfg.normal_signal_min_score:
-            position = "normal"
-        elif total >= cfg.small_signal_min_score:
-            position = "small"
-        else:
-            position = "watch"
 
     all_reasons = []
     for label, items in (
