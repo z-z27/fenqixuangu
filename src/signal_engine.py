@@ -26,6 +26,7 @@ class Signal:
     allowed: bool
     position_level: str
     total_score: float
+    top3_precision_score: float
     graph_quality_score: float
     active_money_score: float
     active_cooling_score: float
@@ -84,15 +85,22 @@ def generate_signal(
     active_cooling = score_active_cooling(active_score)
     trend_hold = score_trend_hold(zones)
     entry_width = score_entry_width(width_pct)
-
-    total = (
-        graph_score * cfg.graph_quality_weight
-        + trend_hold * cfg.trend_hold_weight
-        + active_cooling * cfg.active_cooling_weight
-        + entry_width * cfg.entry_width_weight
-        + theme_score_value * cfg.theme_weight
-        + support_score * cfg.support_weight
+    top3_precision = score_top3_precision(
+        graph_score=graph_score,
+        trend_hold_score=trend_hold,
+        active_money_score=active_score,
+        active_cooling_score=active_cooling,
+        entry_width_score=entry_width,
+        theme_score=theme_score_value,
+        support_score=support_score,
+        low_absorb_width_pct=width_pct,
+        d1_low_ma10_pct=d1_low_ma10_pct,
+        d1_close_vwap_pct=d1_close_vwap_pct,
     )
+
+    # total_score is deliberately mapped to top3_precision_score so the existing
+    # daily ranking code immediately optimizes for Top3 hit-rate precision.
+    total = top3_precision
 
     hard_blocks = []
     soft_flags = []
@@ -108,11 +116,15 @@ def generate_signal(
         hard_blocks.append("承接分严重不足")
 
     if active_score >= cfg.max_active_money_trade:
-        soft_flags.append("活跃资金过热，降权处理")
+        soft_flags.append("活跃资金过热，Top3 精度强惩罚")
     if width_pct is not None and width_pct > cfg.max_low_absorb_width_trade:
-        soft_flags.append("低吸区间/失效距离偏宽，降权处理")
+        soft_flags.append("低吸区间/失效距离偏宽，Top3 精度惩罚")
+    if d1_close_vwap_pct is not None and d1_close_vwap_pct > 3.0:
+        soft_flags.append("D1 收盘相对 VWAP 偏高，空间透支惩罚")
+    if d1_low_ma10_pct is not None and d1_low_ma10_pct < 3.0:
+        soft_flags.append("D1 低点趋势保持不足，限制 Top3 优先级")
     if support_type == "C":
-        soft_flags.append("承接类型 C，仅作辅助扣分，不再硬过滤")
+        soft_flags.append("承接类型 C，仅作辅助观察，不再硬过滤")
 
     high_volume_fail = _is_high_volume_fail(daily, cfg)
     if high_volume_fail:
@@ -150,6 +162,7 @@ def generate_signal(
         all_reasons.extend([f"{label}: {item}" for item in items])
     all_reasons.extend(
         [
+            f"factor: top3_precision_score={top3_precision:.2f}",
             f"factor: active_cooling_score={active_cooling:.2f}",
             f"factor: trend_hold_score={trend_hold:.2f}",
             f"factor: entry_width_score={entry_width:.2f}",
@@ -175,6 +188,7 @@ def generate_signal(
         allowed=allowed,
         position_level=position,
         total_score=round(float(total), 2),
+        top3_precision_score=round(float(top3_precision), 2),
         graph_quality_score=round(float(graph_score), 2),
         active_money_score=round(float(active_score), 2),
         active_cooling_score=round(float(active_cooling), 2),
@@ -194,6 +208,81 @@ def generate_signal(
         key_zones_json=json.dumps(zones, ensure_ascii=False),
         reasons="; ".join(all_reasons),
     )
+
+
+def score_top3_precision(
+    *,
+    graph_score: float,
+    trend_hold_score: float,
+    active_money_score: float,
+    active_cooling_score: float,
+    entry_width_score: float,
+    theme_score: float,
+    support_score: float,
+    low_absorb_width_pct: float | None,
+    d1_low_ma10_pct: float | None,
+    d1_close_vwap_pct: float | None,
+) -> float:
+    """Top3 precision score for D1 -> D2 selection.
+
+    This score is not a generic quality score. It is built to push likely D3
+    7% opportunity names into the daily Top3 by combining stable base factors
+    with explicit interaction bonuses and conflict penalties found in the
+    research samples.
+    """
+    graph = min(max(float(graph_score), 0.0), 90.0)
+    support = min(max(float(support_score), 0.0), 80.0)
+    base = (
+        graph * 0.35
+        + float(trend_hold_score) * 0.25
+        + float(active_cooling_score) * 0.15
+        + float(entry_width_score) * 0.10
+        + float(theme_score) * 0.10
+        + support * 0.05
+    )
+
+    bonus = 0.0
+    penalty = 0.0
+
+    if d1_low_ma10_pct is not None and d1_low_ma10_pct >= 10.0:
+        bonus += 6.0
+    if (
+        d1_low_ma10_pct is not None
+        and d1_low_ma10_pct >= 10.0
+        and 70.0 <= float(active_money_score) < 80.0
+        and (low_absorb_width_pct is None or low_absorb_width_pct <= 4.5)
+    ):
+        bonus += 10.0
+    if d1_low_ma10_pct is not None and d1_low_ma10_pct >= 10.0 and low_absorb_width_pct is not None and low_absorb_width_pct <= 2.0:
+        bonus += 6.0
+    if graph_score >= 80.0 and d1_low_ma10_pct is not None and d1_low_ma10_pct >= 10.0:
+        bonus += 4.0
+
+    if d1_low_ma10_pct is not None and d1_low_ma10_pct < 0.0:
+        penalty += 16.0
+    elif d1_low_ma10_pct is not None and d1_low_ma10_pct < 3.0:
+        penalty += 9.0
+
+    if float(active_money_score) >= 90.0:
+        penalty += 18.0
+    elif float(active_money_score) >= 85.0:
+        penalty += 9.0
+
+    if d1_close_vwap_pct is not None and d1_close_vwap_pct > 5.0:
+        penalty += 14.0
+    elif d1_close_vwap_pct is not None and d1_close_vwap_pct > 3.0:
+        penalty += 9.0
+
+    if float(active_money_score) >= 90.0 and d1_close_vwap_pct is not None and d1_close_vwap_pct > 2.0:
+        penalty += 12.0
+    if graph_score >= 80.0 and float(active_money_score) >= 90.0:
+        penalty += 8.0
+    if low_absorb_width_pct is not None and low_absorb_width_pct > 5.0:
+        penalty += 10.0
+    elif low_absorb_width_pct is not None and low_absorb_width_pct > 4.5:
+        penalty += 5.0
+
+    return max(0.0, min(100.0, base + bonus - penalty))
 
 
 def score_active_cooling(active_score: float) -> float:
