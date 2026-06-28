@@ -99,7 +99,7 @@ def generate_signal(
     )
 
     # total_score is deliberately mapped to top3_precision_score so the existing
-    # daily ranking code immediately optimizes for Top3 hit-rate precision.
+    # daily ranking code optimizes for Top3 hit-rate precision.
     total = top3_precision
 
     hard_blocks = []
@@ -108,13 +108,16 @@ def generate_signal(
         hard_blocks.append("今日仍涨停，等待首次分歧日")
     if days_since_d0 > 3:
         hard_blocks.append(f"涨停后 {days_since_d0} 天，分歧时效已过")
-    if graph_score < cfg.min_graph_quality_watch:
-        hard_blocks.append("图形趋势分严重不足")
-    if active_score < cfg.min_active_money:
-        hard_blocks.append("活跃资金分过低")
-    if support_score < cfg.weak_support_min:
-        hard_blocks.append("承接分严重不足")
 
+    # Old graph/support/active gates are no longer hard filters. For the Top3
+    # objective they are model inputs and penalties, otherwise the legacy gates
+    # can block high precision-score candidates from entering the daily ranking.
+    if graph_score < cfg.min_graph_quality_watch:
+        soft_flags.append("图形趋势分低，已在 Top3 精度分中降权")
+    if active_score < cfg.min_active_money:
+        soft_flags.append("活跃资金分低，已在 Top3 精度分中降权")
+    if support_score < cfg.weak_support_min:
+        soft_flags.append("承接分低，已在 Top3 精度分中降权")
     if active_score >= cfg.max_active_money_trade:
         soft_flags.append("活跃资金过热，Top3 精度强惩罚")
     if width_pct is not None and width_pct > cfg.max_low_absorb_width_trade:
@@ -130,27 +133,14 @@ def generate_signal(
     if high_volume_fail:
         hard_blocks.append("高位巨量失败风险")
 
-    allowed = False
     if hard_blocks:
+        allowed = False
         position = "zero"
         signal_type = "WATCH_ONLY"
-    elif (
-        total >= cfg.normal_signal_min_score
-        and graph_score >= cfg.min_graph_quality_trade
-        and active_score < cfg.max_active_money_trade
-        and trend_hold >= 65
-        and entry_width >= 45
-    ):
+    else:
         allowed = True
         position = "normal"
         signal_type = "D2_LOW_ABSORB"
-    elif total >= cfg.small_signal_min_score and graph_score >= cfg.min_graph_quality_watch:
-        allowed = True
-        position = "small"
-        signal_type = "D2_WATCH_OR_SMALL"
-    else:
-        position = "zero"
-        signal_type = "WATCH_ONLY"
 
     all_reasons = []
     for label, items in (
@@ -228,61 +218,57 @@ def score_top3_precision(
     This score is not a generic quality score. It is built to push likely D3
     7% opportunity names into the daily Top3 by combining stable base factors
     with explicit interaction bonuses and conflict penalties found in the
-    research samples.
+    research samples. The upper bound is intentionally not capped at 100 so
+    saturated high-quality candidates can still be ranked against each other.
     """
-    graph = min(max(float(graph_score), 0.0), 90.0)
+    graph = min(max(float(graph_score), 0.0), 75.0)
     support = min(max(float(support_score), 0.0), 80.0)
+    active = float(active_money_score)
     base = (
-        graph * 0.35
-        + float(trend_hold_score) * 0.25
-        + float(active_cooling_score) * 0.15
-        + float(entry_width_score) * 0.10
+        graph * 0.20
+        + float(trend_hold_score) * 0.26
+        + float(active_cooling_score) * 0.05
+        + float(entry_width_score) * 0.04
         + float(theme_score) * 0.10
-        + support * 0.05
+        - support * 0.02
     )
 
     bonus = 0.0
     penalty = 0.0
 
-    if d1_low_ma10_pct is not None and d1_low_ma10_pct >= 10.0:
-        bonus += 6.0
     if (
         d1_low_ma10_pct is not None
         and d1_low_ma10_pct >= 10.0
-        and 70.0 <= float(active_money_score) < 80.0
+        and 70.0 <= active < 80.0
         and (low_absorb_width_pct is None or low_absorb_width_pct <= 4.5)
     ):
-        bonus += 10.0
-    if d1_low_ma10_pct is not None and d1_low_ma10_pct >= 10.0 and low_absorb_width_pct is not None and low_absorb_width_pct <= 2.0:
-        bonus += 6.0
-    if graph_score >= 80.0 and d1_low_ma10_pct is not None and d1_low_ma10_pct >= 10.0:
-        bonus += 4.0
+        bonus += 22.0
+    elif d1_low_ma10_pct is not None and d1_low_ma10_pct >= 10.0:
+        bonus += 8.0
 
-    if d1_low_ma10_pct is not None and d1_low_ma10_pct < 0.0:
-        penalty += 16.0
-    elif d1_low_ma10_pct is not None and d1_low_ma10_pct < 3.0:
-        penalty += 9.0
+    if active >= 90.0:
+        penalty += 36.0
+    elif active >= 85.0:
+        penalty += 24.0
 
-    if float(active_money_score) >= 90.0:
-        penalty += 18.0
-    elif float(active_money_score) >= 85.0:
-        penalty += 9.0
-
-    if d1_close_vwap_pct is not None and d1_close_vwap_pct > 5.0:
-        penalty += 14.0
-    elif d1_close_vwap_pct is not None and d1_close_vwap_pct > 3.0:
-        penalty += 9.0
-
-    if float(active_money_score) >= 90.0 and d1_close_vwap_pct is not None and d1_close_vwap_pct > 2.0:
-        penalty += 12.0
-    if graph_score >= 80.0 and float(active_money_score) >= 90.0:
-        penalty += 8.0
-    if low_absorb_width_pct is not None and low_absorb_width_pct > 5.0:
-        penalty += 10.0
-    elif low_absorb_width_pct is not None and low_absorb_width_pct > 4.5:
+    if d1_close_vwap_pct is not None and d1_close_vwap_pct > 3.0:
+        penalty += 24.0
+    elif d1_close_vwap_pct is not None and d1_close_vwap_pct > 2.0:
         penalty += 5.0
 
-    return max(0.0, min(100.0, base + bonus - penalty))
+    if low_absorb_width_pct is not None and low_absorb_width_pct > 5.0:
+        penalty += 4.0
+    elif low_absorb_width_pct is not None and low_absorb_width_pct > 4.5:
+        penalty += 7.0
+
+    if support_score >= 80.0:
+        penalty += 8.0
+    if d1_low_ma10_pct is not None and d1_low_ma10_pct < 0.0:
+        penalty += 12.0
+    elif d1_low_ma10_pct is not None and d1_low_ma10_pct < 3.0:
+        penalty += 6.0
+
+    return max(0.0, base + bonus - penalty)
 
 
 def score_active_cooling(active_score: float) -> float:
@@ -320,10 +306,10 @@ def score_entry_width(width_pct: float | None) -> float:
     if width_pct <= 3.5:
         return 65.0
     if width_pct <= 4.5:
-        return 60.0
+        return 55.0
     if width_pct <= 5.0:
-        return 45.0
-    return 25.0
+        return 60.0
+    return 15.0
 
 
 def score_trend_hold(zones: dict[str, Any]) -> float:
