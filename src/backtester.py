@@ -538,12 +538,9 @@ def prepare_history_rankings(
     frame["__row_id"] = range(len(frame))
     frame["code"] = frame["code"].astype(str).str.zfill(6)
     frame["allowed_bool"] = frame.get("allowed", False).astype(str).str.lower().isin({"true", "1", "yes"})
-    frame["position_priority"] = frame.get("position_level", "").map({"normal": 0, "small": 1}).fillna(9)
     for column in (
         "total_score",
         "graph_quality_score",
-        "support_score",
-        "active_money_score",
         "theme_score",
         "days_since_d0",
         "consecutive_boards",
@@ -568,13 +565,11 @@ def prepare_history_rankings(
     eligible = eligible.sort_values(
         [
             "trade_date",
-            "position_priority",
             "total_score",
             "graph_quality_score",
-            "support_score",
-            "active_money_score",
+            "code",
         ],
-        ascending=[True, True, False, False, False, False],
+        ascending=[True, False, False, True],
     )
     eligible["daily_rank"] = eligible.groupby("trade_date").cumcount() + 1
     rank_map = eligible[["__row_id", "daily_rank"]]
