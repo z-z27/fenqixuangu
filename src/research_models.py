@@ -13,6 +13,8 @@ from .config import get_data_config
 
 DEFAULT_TARGET_RETURN_PCT = 7.0
 DEFAULT_MODEL_ID = "ranking_model_v001"
+DEFAULT_MODEL_TYPE = "bucket_score"
+SUPPORTED_MODEL_TYPES = {"linear_score", "bucket_score", "interaction_rules"}
 
 NUMERIC_FEATURE_COLUMNS = [
     "total_score",
@@ -105,8 +107,10 @@ def run_research_model_generation(
     samples_file: str | Path,
     output_dir: str | Path | None = None,
     model_id: str = DEFAULT_MODEL_ID,
+    model_type: str = DEFAULT_MODEL_TYPE,
     target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
     min_bucket_size: int = 10,
+    max_features: int = 8,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any], Path, Path, Path, Path]:
     """Analyze clean history candidate samples and emit a research ranking model.
 
@@ -114,6 +118,8 @@ def run_research_model_generation(
     candidate future-return columns as labels/evaluation fields, never as model
     input features. It does not modify signal_engine.py or config.py.
     """
+    if model_type not in SUPPORTED_MODEL_TYPES:
+        raise RuntimeError(f"unsupported model_type={model_type}; supported={sorted(SUPPORTED_MODEL_TYPES)}")
     source_path = Path(samples_file)
     samples = pd.read_csv(source_path, dtype={"code": str})
     prepared = prepare_history_candidates(samples, target_return_pct=target_return_pct)
@@ -124,10 +130,14 @@ def run_research_model_generation(
     factor_buckets = build_factor_bucket_report(prepared, feature_columns, min_bucket_size=min_bucket_size)
     model = build_research_ranking_model(
         factor_summary=factor_summary,
+        factor_buckets=factor_buckets,
         samples=prepared,
         feature_columns=feature_columns,
         model_id=model_id,
+        model_type=model_type,
         target_return_pct=target_return_pct,
+        max_features=max_features,
+        min_bucket_size=min_bucket_size,
     )
 
     out_dir = Path(output_dir) if output_dir else get_data_config().reports_dir / "research_models" / _suffix_from_samples_path(source_path)
@@ -205,7 +215,7 @@ def build_factor_summary(samples: pd.DataFrame, feature_columns: list[str], targ
                     "count": int(len(samples)),
                     "non_null_count": int(numeric.notna().sum()),
                     "target7_count": int(target.sum()),
-                    "target7_rate": _safe_rate(int(target.sum()), int(target.notna().sum())),
+                    "target7_rate": _safe_rate(int(target.sum()), int(len(target))),
                     "mean": _mean(numeric),
                     "median": _median(numeric),
                     "target7_mean": _mean(numeric[target]),
@@ -263,18 +273,19 @@ def build_factor_bucket_report(samples: pd.DataFrame, feature_columns: list[str]
 
 def build_research_ranking_model(
     factor_summary: pd.DataFrame,
+    factor_buckets: pd.DataFrame,
     samples: pd.DataFrame,
     feature_columns: list[str],
     model_id: str,
+    model_type: str,
     target_return_pct: float,
+    max_features: int,
+    min_bucket_size: int,
 ) -> dict[str, Any]:
-    selected_features = _select_model_features(factor_summary, feature_columns)
-    weights = _normalised_linear_weights(factor_summary, selected_features)
-    if not weights:
-        weights = {feature: 1.0 / len(selected_features) for feature in selected_features} if selected_features else {}
-    return {
+    selected_features = _select_model_features(factor_summary, feature_columns, max_features=max_features)
+    common = {
         "model_id": model_id,
-        "model_type": "linear_score",
+        "model_type": model_type,
         "label": "target7",
         "target_column": "candidate_d3_max_return_pct",
         "target_return_pct": float(target_return_pct),
@@ -282,24 +293,21 @@ def build_research_ranking_model(
         "feature_columns": selected_features,
         "tie_breakers": ["-graph_quality_score", "code"],
         "forbidden_input_patterns": FORBIDDEN_INPUT_PATTERNS,
-        "training_sample": {
-            "row_count": int(len(samples)),
-            "date_count": int(samples["signal_date"].dropna().nunique()),
-            "eligible_count": int(samples["eligible_for_trade"].fillna(False).astype(bool).sum()),
-            "target7_count": int(samples["target7"].fillna(False).astype(bool).sum()),
-            "target7_rate": _safe_rate(int(samples["target7"].fillna(False).astype(bool).sum()), int(len(samples))),
-        },
-        "model": {
-            "type": "linear_score",
-            "intercept": 0.0,
-            "weights": weights,
-            "normalization": "rank_percentile_per_sample_file",
-        },
+        "training_sample": _training_sample_summary(samples),
         "notes": [
             "Research model only; do not write into signal_engine.py until ranking_backtest validates it.",
             "Future candidate_* and target* columns are labels/evaluation only and are forbidden as inputs.",
         ],
     }
+    if model_type == "linear_score":
+        common["model"] = _build_linear_model(factor_summary, selected_features)
+    elif model_type == "bucket_score":
+        common["model"] = _build_bucket_score_model(samples, factor_summary, selected_features, min_bucket_size=min_bucket_size)
+    elif model_type == "interaction_rules":
+        common["model"] = _build_interaction_rules_model(samples, factor_summary, selected_features)
+    else:
+        raise RuntimeError(f"unsupported model_type={model_type}")
+    return common
 
 
 def build_research_model_markdown(
@@ -331,13 +339,23 @@ def build_research_model_markdown(
             f"- model type: **{model['model_type']}**",
             f"- score column: **{model['score_column']}**",
             "",
-            "| feature | weight |",
-            "|---|---:|",
+            "## Model Detail",
+            "",
         ]
     )
-    weights = model.get("model", {}).get("weights", {})
-    for feature, weight in weights.items():
-        lines.append(f"| {feature} | {float(weight):.6f} |")
+    model_body = model.get("model", {})
+    if model["model_type"] == "linear_score":
+        lines.extend(["| feature | weight |", "|---|---:|"])
+        for feature, weight in model_body.get("weights", {}).items():
+            lines.append(f"| {feature} | {float(weight):.6f} |")
+    elif model["model_type"] == "bucket_score":
+        lines.extend(["| feature | bucket count |", "|---|---:|"])
+        for rule in model_body.get("rules", []):
+            lines.append(f"| {rule.get('feature', '')} | {len(rule.get('buckets', []))} |")
+    elif model["model_type"] == "interaction_rules":
+        lines.extend(["| rule | score |", "|---|---:|"])
+        for idx, rule in enumerate(model_body.get("rules", []), 1):
+            lines.append(f"| rule_{idx}: {rule.get('when', [])} | {float(rule.get('score', 0.0)):.4f} |")
     lines.extend(["", "## Top Factor Signals", "", "| feature | type | strength | corr target7 | corr D3 max | direction |", "|---|---|---:|---:|---:|---|"])
     if not factor_summary.empty:
         for _, row in factor_summary.head(20).iterrows():
@@ -352,6 +370,78 @@ def build_research_model_markdown(
                 f"| {row.get('feature', '')} | {row.get('bucket', '')} | {int(row.get('count', 0))} | {_format_pct(row.get('target7_rate'))} | {_format_number(row.get('avg_candidate_d3_max_return_pct'))} |"
             )
     return "\n".join(lines)
+
+
+def _training_sample_summary(samples: pd.DataFrame) -> dict[str, Any]:
+    target = samples["target7"].fillna(False).astype(bool)
+    return {
+        "row_count": int(len(samples)),
+        "date_count": int(samples["signal_date"].dropna().nunique()),
+        "eligible_count": int(samples["eligible_for_trade"].fillna(False).astype(bool).sum()),
+        "target7_count": int(target.sum()),
+        "target7_rate": _safe_rate(int(target.sum()), int(len(samples))),
+    }
+
+
+def _build_linear_model(factor_summary: pd.DataFrame, selected_features: list[str]) -> dict[str, Any]:
+    weights = _normalised_linear_weights(factor_summary, selected_features)
+    if not weights:
+        weights = {feature: 1.0 / len(selected_features) for feature in selected_features} if selected_features else {}
+    return {
+        "type": "linear_score",
+        "intercept": 0.0,
+        "weights": weights,
+        "normalization": "rank_percentile_per_sample_file",
+    }
+
+
+def _build_bucket_score_model(
+    samples: pd.DataFrame,
+    factor_summary: pd.DataFrame,
+    selected_features: list[str],
+    min_bucket_size: int,
+) -> dict[str, Any]:
+    base_rate = _safe_rate(int(samples["target7"].fillna(False).astype(bool).sum()), int(len(samples))) or 0.0
+    rules: list[dict[str, Any]] = []
+    for feature in selected_features:
+        if feature not in NUMERIC_FEATURE_COLUMNS:
+            continue
+        values = pd.to_numeric(samples[feature], errors="coerce")
+        target = samples["target7"].fillna(False).astype(bool)
+        buckets = _quantile_bucket_specs(values, target, base_rate=base_rate, min_bucket_size=min_bucket_size)
+        if buckets:
+            rules.append({"feature": feature, "missing_score": 0.0, "buckets": buckets})
+    return {
+        "type": "bucket_score",
+        "base_score": 0.0,
+        "score_scale": "bucket_target_rate_minus_base_rate_times_100",
+        "rules": rules,
+    }
+
+
+def _build_interaction_rules_model(samples: pd.DataFrame, factor_summary: pd.DataFrame, selected_features: list[str]) -> dict[str, Any]:
+    numeric_features = [feature for feature in selected_features if feature in NUMERIC_FEATURE_COLUMNS]
+    thresholds: list[dict[str, Any]] = []
+    for feature in numeric_features[:4]:
+        direction = _feature_direction(factor_summary, feature)
+        values = pd.to_numeric(samples[feature], errors="coerce")
+        if direction == "lower_better":
+            thresholds.append({"feature": feature, "op": "<=", "value": _json_float(values.quantile(0.2))})
+        elif direction == "higher_better":
+            thresholds.append({"feature": feature, "op": ">=", "value": _json_float(values.quantile(0.8))})
+    rules: list[dict[str, Any]] = []
+    if thresholds:
+        rules.append({"when": [thresholds[0]], "score": 10.0})
+    if len(thresholds) >= 2:
+        rules.append({"when": thresholds[:2], "score": 22.0})
+    if len(thresholds) >= 3:
+        rules.append({"when": thresholds[:3], "score": 35.0})
+    return {
+        "type": "interaction_rules",
+        "base_score": 0.0,
+        "rules": rules,
+        "missing_policy": "condition_false",
+    }
 
 
 def _select_model_features(factor_summary: pd.DataFrame, feature_columns: list[str], max_features: int = 8) -> list[str]:
@@ -375,6 +465,35 @@ def _normalised_linear_weights(factor_summary: pd.DataFrame, selected_features: 
     if total <= 0:
         return {}
     return {feature: float(strengths.get(feature, 0.0) / total) for feature in selected_features}
+
+
+def _quantile_bucket_specs(values: pd.Series, target: pd.Series, base_rate: float, min_bucket_size: int) -> list[dict[str, Any]]:
+    frame = pd.DataFrame({"value": pd.to_numeric(values, errors="coerce"), "target7": target}).dropna(subset=["value"])
+    if frame.empty or frame["value"].nunique() <= 1:
+        return []
+    try:
+        frame["bucket"] = pd.qcut(frame["value"], q=min(5, int(frame["value"].nunique())), duplicates="drop")
+    except Exception:
+        frame["bucket"] = pd.cut(frame["value"], bins=5, duplicates="drop")
+    buckets: list[dict[str, Any]] = []
+    for bucket, group in frame.groupby("bucket", dropna=True):
+        count = int(len(group))
+        if count < int(min_bucket_size):
+            continue
+        target_count = int(group["target7"].fillna(False).astype(bool).sum())
+        target_rate = _safe_rate(target_count, count) or 0.0
+        buckets.append(
+            {
+                "min": _json_float(bucket.left),
+                "max": _json_float(bucket.right),
+                "include_min": True,
+                "include_max": True,
+                "count": count,
+                "target7_rate": target_rate,
+                "score": float((target_rate - base_rate) * 100.0),
+            }
+        )
+    return buckets
 
 
 def _categorical_summary_row(samples: pd.DataFrame, feature: str, target: pd.Series) -> dict[str, Any]:
@@ -464,6 +583,15 @@ def _direction_hint(values: pd.Series, target: pd.Series) -> str:
     return "flat"
 
 
+def _feature_direction(factor_summary: pd.DataFrame, feature: str) -> str:
+    if factor_summary.empty or "feature" not in factor_summary.columns:
+        return "unknown"
+    matched = factor_summary[factor_summary["feature"] == feature]
+    if matched.empty:
+        return "unknown"
+    return str(matched.iloc[0].get("direction_hint") or "unknown")
+
+
 def _bool_series(series: pd.Series) -> pd.Series:
     if series.dtype == bool:
         return series.fillna(False)
@@ -507,6 +635,12 @@ def _safe_rate(numerator: int, denominator: int) -> float | None:
     return float(numerator) / float(denominator)
 
 
+def _json_float(value: Any) -> float | None:
+    if value is None or pd.isna(value):
+        return None
+    return float(value)
+
+
 def _format_pct(value: Any) -> str:
     if value is None or pd.isna(value):
         return ""
@@ -532,15 +666,19 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--samples-file", required=True)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--model-id", default=DEFAULT_MODEL_ID)
+    parser.add_argument("--model-type", choices=sorted(SUPPORTED_MODEL_TYPES), default=DEFAULT_MODEL_TYPE)
     parser.add_argument("--target-return-pct", type=float, default=DEFAULT_TARGET_RETURN_PCT)
     parser.add_argument("--min-bucket-size", type=int, default=10)
+    parser.add_argument("--max-features", type=int, default=8)
     args = parser.parse_args(argv)
     factor_summary, factor_buckets, model, summary_csv, buckets_csv, model_json, markdown_path = run_research_model_generation(
         samples_file=args.samples_file,
         output_dir=args.output_dir,
         model_id=args.model_id,
+        model_type=args.model_type,
         target_return_pct=args.target_return_pct,
         min_bucket_size=args.min_bucket_size,
+        max_features=args.max_features,
     )
     print(f"factor summary rows: {len(factor_summary)}")
     print(f"factor bucket rows: {len(factor_buckets)}")
