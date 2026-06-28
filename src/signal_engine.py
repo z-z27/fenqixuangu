@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, asdict
 import json
+from typing import Any
 
 import pandas as pd
 
@@ -27,8 +28,16 @@ class Signal:
     total_score: float
     graph_quality_score: float
     active_money_score: float
+    active_cooling_score: float
     support_score: float
     theme_score: float
+    trend_hold_score: float
+    entry_width_score: float
+    low_absorb_width_pct: float | None
+    invalid_distance_pct: float | None
+    d1_low_ma10_pct: float | None
+    d1_close_ma10_pct: float | None
+    d1_close_vwap_pct: float | None
     support_type: str
     low_absorb_min: float | None
     low_absorb_max: float | None
@@ -62,27 +71,48 @@ def generate_signal(
     active_score, active_reasons = score_active_money(daily, minute)
     support_score, support_type, support_reasons = score_support_quality(daily, minute)
     theme_score_value, theme_reasons = score_theme(limit_up_pool, code)
+    zones = build_key_zones(daily, minute)
+
+    width_pct = _low_absorb_width_pct(zones)
+    invalid_distance_pct = _invalid_distance_pct(zones)
+    d1_low_ma10_pct = _pct_distance(zones.get("d1_low"), zones.get("ma10"))
+    d1_close_ma10_pct = _pct_distance(zones.get("d1_close"), zones.get("ma10"))
+    d1_close_vwap_pct = _pct_distance(
+        zones.get("d1_close"),
+        zones.get("d1_intraday_vwap") or zones.get("d1_vwap"),
+    )
+    active_cooling = score_active_cooling(active_score)
+    trend_hold = score_trend_hold(zones)
+    entry_width = score_entry_width(width_pct)
+
     total = (
         graph_score * cfg.graph_quality_weight
-        + active_score * cfg.active_money_weight
+        + trend_hold * cfg.trend_hold_weight
+        + entry_width * cfg.entry_width_weight
+        + active_cooling * cfg.active_cooling_weight
         + support_score * cfg.support_weight
         + theme_score_value * cfg.theme_weight
     )
-    zones = build_key_zones(daily, minute)
 
     hard_blocks = []
+    soft_flags = []
     if days_since_d0 <= 0 and d0_date:
-        hard_blocks.append("今日仍涨停，等待分歧日")
+        hard_blocks.append("今日仍涨停，等待首次分歧日")
     if days_since_d0 > 3:
         hard_blocks.append(f"涨停后 {days_since_d0} 天，分歧时效已过")
-    if graph_score < cfg.min_graph_quality_trade:
-        hard_blocks.append("图形趋势分不足")
+    if graph_score < cfg.min_graph_quality_watch:
+        hard_blocks.append("图形趋势分严重不足")
     if active_score < cfg.min_active_money:
-        hard_blocks.append("活跃资金分不足")
+        hard_blocks.append("活跃资金分过低")
     if support_score < cfg.weak_support_min:
-        hard_blocks.append("承接分过低")
+        hard_blocks.append("承接分严重不足")
+
+    if active_score >= cfg.max_active_money_trade:
+        soft_flags.append("活跃资金过热，降权处理")
+    if width_pct is not None and width_pct > cfg.max_low_absorb_width_trade:
+        soft_flags.append("低吸区间/失效距离偏宽，降权处理")
     if support_type == "C":
-        hard_blocks.append("无效承接")
+        soft_flags.append("承接类型 C，仅作辅助扣分，不再硬过滤")
 
     high_volume_fail = _is_high_volume_fail(daily, cfg)
     if high_volume_fail:
@@ -92,11 +122,16 @@ def generate_signal(
     if hard_blocks:
         position = "zero"
         signal_type = "WATCH_ONLY"
-    elif support_type == "A" and support_score >= cfg.min_support_trade and total >= 70:
+    elif (
+        total >= cfg.normal_signal_min_score
+        and graph_score >= cfg.min_graph_quality_trade
+        and active_score < cfg.max_active_money_trade
+        and entry_width >= 60
+    ):
         allowed = True
         position = "normal"
         signal_type = "D2_LOW_ABSORB"
-    elif support_score >= cfg.weak_support_min:
+    elif total >= cfg.small_signal_min_score and graph_score >= cfg.min_graph_quality_watch:
         allowed = True
         position = "small"
         signal_type = "D2_WATCH_OR_SMALL"
@@ -107,11 +142,24 @@ def generate_signal(
     all_reasons = []
     for label, items in (
         ("graph", graph_reasons),
-        ("active", active_reasons),
+        ("active_raw", active_reasons),
         ("support", support_reasons),
         ("theme", theme_reasons),
     ):
         all_reasons.extend([f"{label}: {item}" for item in items])
+    all_reasons.extend(
+        [
+            f"factor: active_cooling_score={active_cooling:.2f}",
+            f"factor: trend_hold_score={trend_hold:.2f}",
+            f"factor: entry_width_score={entry_width:.2f}",
+            f"factor: low_absorb_width_pct={_format_optional(width_pct)}",
+            f"factor: invalid_distance_pct={_format_optional(invalid_distance_pct)}",
+            f"factor: d1_low_ma10_pct={_format_optional(d1_low_ma10_pct)}",
+            f"factor: d1_close_ma10_pct={_format_optional(d1_close_ma10_pct)}",
+            f"factor: d1_close_vwap_pct={_format_optional(d1_close_vwap_pct)}",
+        ]
+    )
+    all_reasons.extend([f"soft_filter: {item}" for item in soft_flags])
     all_reasons.extend([f"hard_filter: {item}" for item in hard_blocks])
 
     invalid_price = zones.get("invalid_price") or zones.get("d1_low") or zones.get("ma5")
@@ -128,8 +176,16 @@ def generate_signal(
         total_score=round(float(total), 2),
         graph_quality_score=round(float(graph_score), 2),
         active_money_score=round(float(active_score), 2),
+        active_cooling_score=round(float(active_cooling), 2),
         support_score=round(float(support_score), 2),
         theme_score=round(float(theme_score_value), 2),
+        trend_hold_score=round(float(trend_hold), 2),
+        entry_width_score=round(float(entry_width), 2),
+        low_absorb_width_pct=_round_optional(width_pct),
+        invalid_distance_pct=_round_optional(invalid_distance_pct),
+        d1_low_ma10_pct=_round_optional(d1_low_ma10_pct),
+        d1_close_ma10_pct=_round_optional(d1_close_ma10_pct),
+        d1_close_vwap_pct=_round_optional(d1_close_vwap_pct),
         support_type=support_type,
         low_absorb_min=zones.get("low_absorb_min"),
         low_absorb_max=zones.get("low_absorb_max"),
@@ -137,6 +193,114 @@ def generate_signal(
         key_zones_json=json.dumps(zones, ensure_ascii=False),
         reasons="; ".join(all_reasons),
     )
+
+
+def score_active_cooling(active_score: float) -> float:
+    """Convert raw active-money score into a cooling score.
+
+    The research sample showed raw active-money scores above 90 were more like
+    overheating than confirmation. Mid-range activity is rewarded; overheated
+    names are penalized.
+    """
+    score = _to_float(active_score)
+    if score is None:
+        return 60.0
+    if score < 50:
+        return 70.0
+    if score < 70:
+        return 90.0
+    if score < 80:
+        return 85.0
+    if score < 85:
+        return 70.0
+    if score < 90:
+        return 55.0
+    return 35.0
+
+
+def score_entry_width(width_pct: float | None) -> float:
+    """Score D1 low-absorb width / invalid-distance tightness."""
+    if width_pct is None:
+        return 50.0
+    if width_pct <= 2.0:
+        return 90.0
+    if width_pct <= 3.5:
+        return 75.0
+    if width_pct <= 4.5:
+        return 60.0
+    if width_pct <= 5.0:
+        return 45.0
+    return 30.0
+
+
+def score_trend_hold(zones: dict[str, Any]) -> float:
+    """Score whether D1 divergence still holds the MA10 trend structure."""
+    low_ma10_pct = _pct_distance(zones.get("d1_low"), zones.get("ma10"))
+    close_ma10_pct = _pct_distance(zones.get("d1_close"), zones.get("ma10"))
+    close_vwap_pct = _pct_distance(
+        zones.get("d1_close"),
+        zones.get("d1_intraday_vwap") or zones.get("d1_vwap"),
+    )
+
+    if low_ma10_pct is not None and low_ma10_pct >= 3.0:
+        score = 90.0
+    elif low_ma10_pct is not None and low_ma10_pct >= 0.0:
+        score = 75.0
+    elif close_ma10_pct is not None and close_ma10_pct >= 0.0:
+        score = 60.0
+    else:
+        score = 40.0
+
+    if close_vwap_pct is not None and close_vwap_pct >= 0.0:
+        score += 5.0
+    return min(score, 100.0)
+
+
+def _low_absorb_width_pct(zones: dict[str, Any]) -> float | None:
+    low_min = _to_float(zones.get("low_absorb_min"))
+    low_max = _to_float(zones.get("low_absorb_max"))
+    base = _to_float(zones.get("prev_close")) or _to_float(zones.get("d1_close"))
+    if low_min is None or low_max is None or base is None or base <= 0:
+        return None
+    return max(0.0, (low_max - low_min) / base * 100.0)
+
+
+def _invalid_distance_pct(zones: dict[str, Any]) -> float | None:
+    invalid = _to_float(zones.get("invalid_price"))
+    close = _to_float(zones.get("d1_close"))
+    if invalid is None or close is None or close <= 0:
+        return None
+    return max(0.0, (close - invalid) / close * 100.0)
+
+
+def _pct_distance(value: Any, base: Any) -> float | None:
+    value_float = _to_float(value)
+    base_float = _to_float(base)
+    if value_float is None or base_float is None or base_float == 0:
+        return None
+    return (value_float / base_float - 1.0) * 100.0
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _round_optional(value: float | None, digits: int = 4) -> float | None:
+    return None if value is None else round(float(value), digits)
+
+
+def _format_optional(value: float | None) -> str:
+    return "" if value is None else f"{float(value):.2f}"
 
 
 def _count_consecutive_boards(limit_up_pool: pd.DataFrame, code: str, d0_date: str) -> int:
