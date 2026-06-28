@@ -11,6 +11,7 @@ from .data_acceptance import run_data_acceptance
 from .failure_review import review_failed_data
 from .history_samples import run_history_sample_generation
 from .loaders import DataQualityError, MarketDataService, load_limitup_file
+from .ranking_backtest import run_ranking_backtest
 from .report import write_data_quality_reports, write_signal_reports
 from .research_models import run_research_model_generation
 from .signal_engine import generate_signal
@@ -40,6 +41,8 @@ def main(argv: list[str] | None = None) -> int:
             return generate_history_samples(args)
         if args.command == "generate-research-model":
             return generate_research_model(args)
+        if args.command == "ranking-backtest":
+            return ranking_backtest(args)
         if args.command == "run-daily":
             return run_daily(args)
     except Exception as exc:
@@ -139,6 +142,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--target-return-pct", type=float, default=7.0)
     p.add_argument("--min-bucket-size", type=int, default=10)
     p.add_argument("--max-features", type=int, default=8)
+
+    p = sub.add_parser("ranking-backtest", help="validate research ranking model against clean history candidates")
+    p.add_argument("--samples-file", required=True)
+    p.add_argument("--model-file", required=True)
+    p.add_argument("--output-dir", default=None)
+    p.add_argument("--top-n", type=int, default=3)
+    p.add_argument("--target-return-pct", type=float, default=None)
 
     p = sub.add_parser("run-daily", help="涨停池、补数、信号一键执行")
     p.add_argument("--date", default=None)
@@ -407,6 +417,27 @@ def generate_research_model(args) -> int:
     print(f"factor summary csv: {summary_csv}")
     print(f"factor buckets csv: {buckets_csv}")
     print(f"model json: {model_json}")
+    print(f"markdown: {markdown_path}")
+    return 0
+
+
+def ranking_backtest(args) -> int:
+    ranked, topn, daily, failures, summary, summary_csv, daily_csv, topn_csv, failures_csv, markdown_path = run_ranking_backtest(
+        samples_file=args.samples_file,
+        model_file=args.model_file,
+        output_dir=args.output_dir,
+        top_n=args.top_n,
+        target_return_pct=args.target_return_pct,
+    )
+    item = summary.iloc[0] if not summary.empty else {}
+    print(f"eligible candidates: {len(ranked)}")
+    print(f"topn rows: {len(topn)}")
+    print(f"daily hit rate: {item.get('daily_hit_rate', '') if len(summary) else ''}")
+    print(f"topn target7 rate: {item.get('topn_target7_rate', '') if len(summary) else ''}")
+    print(f"summary csv: {summary_csv}")
+    print(f"daily csv: {daily_csv}")
+    print(f"topn csv: {topn_csv}")
+    print(f"failures csv: {failures_csv}")
     print(f"markdown: {markdown_path}")
     return 0
 
