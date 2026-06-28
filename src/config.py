@@ -45,15 +45,28 @@ class DataConfig:
 
 @dataclass(frozen=True)
 class StrategyConfig:
-    graph_quality_weight: float = 0.35
-    active_money_weight: float = 0.25
-    support_weight: float = 0.25
-    theme_weight: float = 0.15
-    min_graph_quality_trade: float = 60
+    # D1 research-oriented score weights. The score uses only information
+    # available after D1 close, before the planned D2 buy.
+    graph_quality_weight: float = 0.40
+    trend_hold_weight: float = 0.15
+    entry_width_weight: float = 0.15
+    active_cooling_weight: float = 0.10
+    support_weight: float = 0.10
+    theme_weight: float = 0.10
+
+    # Candidate grading thresholds. Hard blocks are intentionally loose; the
+    # new score should rank candidates rather than letting the old support/active
+    # gates remove useful research samples too early.
+    normal_signal_min_score: float = 70
+    small_signal_min_score: float = 60
+    min_graph_quality_trade: float = 70
     min_graph_quality_watch: float = 50
-    min_active_money: float = 55
-    min_support_trade: float = 60
-    weak_support_min: float = 45
+    min_active_money: float = 35
+    max_active_money_trade: float = 90
+    min_support_trade: float = 45
+    weak_support_min: float = 20
+    max_low_absorb_width_trade: float = 4.5
+
     close_position_strong: float = 0.70
     close_position_weak: float = 0.30
     high_volume_fail_close_pos: float = 0.20
