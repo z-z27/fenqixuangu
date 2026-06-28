@@ -26,7 +26,6 @@ class Signal:
     allowed: bool
     position_level: str
     total_score: float
-    top3_precision_score: float
     graph_quality_score: float
     active_money_score: float
     active_cooling_score: float
@@ -82,52 +81,25 @@ def generate_signal(
         zones.get("d1_close"),
         zones.get("d1_intraday_vwap") or zones.get("d1_vwap"),
     )
+
     active_cooling = score_active_cooling(active_score)
     trend_hold = score_trend_hold(zones)
     entry_width = score_entry_width(width_pct)
-    top3_precision = score_top3_precision(
+    total = score_total(
+        cfg=cfg,
         graph_score=graph_score,
         trend_hold_score=trend_hold,
-        active_money_score=active_score,
         active_cooling_score=active_cooling,
         entry_width_score=entry_width,
         theme_score=theme_score_value,
         support_score=support_score,
-        low_absorb_width_pct=width_pct,
-        d1_low_ma10_pct=d1_low_ma10_pct,
-        d1_close_vwap_pct=d1_close_vwap_pct,
     )
 
-    # total_score is deliberately mapped to top3_precision_score so the existing
-    # daily ranking code optimizes for Top3 hit-rate precision.
-    total = top3_precision
-
     hard_blocks = []
-    soft_flags = []
     if days_since_d0 <= 0 and d0_date:
         hard_blocks.append("今日仍涨停，等待首次分歧日")
     if days_since_d0 > 3:
         hard_blocks.append(f"涨停后 {days_since_d0} 天，分歧时效已过")
-
-    # Old graph/support/active gates are no longer hard filters. For the Top3
-    # objective they are model inputs and penalties, otherwise the legacy gates
-    # can block high precision-score candidates from entering the daily ranking.
-    if graph_score < cfg.min_graph_quality_watch:
-        soft_flags.append("图形趋势分低，已在 Top3 精度分中降权")
-    if active_score < cfg.min_active_money:
-        soft_flags.append("活跃资金分低，已在 Top3 精度分中降权")
-    if support_score < cfg.weak_support_min:
-        soft_flags.append("承接分低，已在 Top3 精度分中降权")
-    if active_score >= cfg.max_active_money_trade:
-        soft_flags.append("活跃资金过热，Top3 精度强惩罚")
-    if width_pct is not None and width_pct > cfg.max_low_absorb_width_trade:
-        soft_flags.append("低吸区间/失效距离偏宽，Top3 精度惩罚")
-    if d1_close_vwap_pct is not None and d1_close_vwap_pct > 3.0:
-        soft_flags.append("D1 收盘相对 VWAP 偏高，空间透支惩罚")
-    if d1_low_ma10_pct is not None and d1_low_ma10_pct < 3.0:
-        soft_flags.append("D1 低点趋势保持不足，限制 Top3 优先级")
-    if support_type == "C":
-        soft_flags.append("承接类型 C，仅作辅助观察，不再硬过滤")
 
     high_volume_fail = _is_high_volume_fail(daily, cfg)
     if high_volume_fail:
@@ -139,8 +111,13 @@ def generate_signal(
         signal_type = "WATCH_ONLY"
     else:
         allowed = True
-        position = "normal"
         signal_type = "D2_LOW_ABSORB"
+        if total >= cfg.normal_signal_min_score:
+            position = "normal"
+        elif total >= cfg.small_signal_min_score:
+            position = "small"
+        else:
+            position = "watch"
 
     all_reasons = []
     for label, items in (
@@ -152,7 +129,6 @@ def generate_signal(
         all_reasons.extend([f"{label}: {item}" for item in items])
     all_reasons.extend(
         [
-            f"factor: top3_precision_score={top3_precision:.2f}",
             f"factor: active_cooling_score={active_cooling:.2f}",
             f"factor: trend_hold_score={trend_hold:.2f}",
             f"factor: entry_width_score={entry_width:.2f}",
@@ -163,7 +139,6 @@ def generate_signal(
             f"factor: d1_close_vwap_pct={_format_optional(d1_close_vwap_pct)}",
         ]
     )
-    all_reasons.extend([f"soft_filter: {item}" for item in soft_flags])
     all_reasons.extend([f"hard_filter: {item}" for item in hard_blocks])
 
     invalid_price = zones.get("invalid_price") or zones.get("d1_low") or zones.get("ma5")
@@ -178,7 +153,6 @@ def generate_signal(
         allowed=allowed,
         position_level=position,
         total_score=round(float(total), 2),
-        top3_precision_score=round(float(top3_precision), 2),
         graph_quality_score=round(float(graph_score), 2),
         active_money_score=round(float(active_score), 2),
         active_cooling_score=round(float(active_cooling), 2),
@@ -200,82 +174,32 @@ def generate_signal(
     )
 
 
-def score_top3_precision(
+def score_total(
     *,
+    cfg: StrategyConfig,
     graph_score: float,
     trend_hold_score: float,
-    active_money_score: float,
     active_cooling_score: float,
     entry_width_score: float,
     theme_score: float,
     support_score: float,
-    low_absorb_width_pct: float | None,
-    d1_low_ma10_pct: float | None,
-    d1_close_vwap_pct: float | None,
 ) -> float:
-    """Top3 precision score for D1 -> D2 selection.
-
-    This score is not a generic quality score. It is built to push likely D3
-    7% opportunity names into the daily Top3 by combining stable base factors
-    with explicit interaction bonuses and conflict penalties found in the
-    research samples. The upper bound is intentionally not capped at 100 so
-    saturated high-quality candidates can still be ranked against each other.
-    """
-    graph = min(max(float(graph_score), 0.0), 75.0)
-    support = min(max(float(support_score), 0.0), 80.0)
-    active = float(active_money_score)
-    base = (
-        graph * 0.20
-        + float(trend_hold_score) * 0.26
-        + float(active_cooling_score) * 0.05
-        + float(entry_width_score) * 0.04
-        + float(theme_score) * 0.10
-        - support * 0.02
+    """Single clean D1 ranking score used by daily usage and ranking validation."""
+    return (
+        float(trend_hold_score) * cfg.trend_hold_weight
+        + float(graph_score) * cfg.graph_quality_weight
+        + float(active_cooling_score) * cfg.active_cooling_weight
+        + float(entry_width_score) * cfg.entry_width_weight
+        + float(theme_score) * cfg.theme_weight
+        + float(support_score) * cfg.support_weight
     )
-
-    bonus = 0.0
-    penalty = 0.0
-
-    if (
-        d1_low_ma10_pct is not None
-        and d1_low_ma10_pct >= 10.0
-        and 70.0 <= active < 80.0
-        and (low_absorb_width_pct is None or low_absorb_width_pct <= 4.5)
-    ):
-        bonus += 22.0
-    elif d1_low_ma10_pct is not None and d1_low_ma10_pct >= 10.0:
-        bonus += 8.0
-
-    if active >= 90.0:
-        penalty += 36.0
-    elif active >= 85.0:
-        penalty += 24.0
-
-    if d1_close_vwap_pct is not None and d1_close_vwap_pct > 3.0:
-        penalty += 24.0
-    elif d1_close_vwap_pct is not None and d1_close_vwap_pct > 2.0:
-        penalty += 5.0
-
-    if low_absorb_width_pct is not None and low_absorb_width_pct > 5.0:
-        penalty += 4.0
-    elif low_absorb_width_pct is not None and low_absorb_width_pct > 4.5:
-        penalty += 7.0
-
-    if support_score >= 80.0:
-        penalty += 8.0
-    if d1_low_ma10_pct is not None and d1_low_ma10_pct < 0.0:
-        penalty += 12.0
-    elif d1_low_ma10_pct is not None and d1_low_ma10_pct < 3.0:
-        penalty += 6.0
-
-    return max(0.0, base + bonus - penalty)
 
 
 def score_active_cooling(active_score: float) -> float:
     """Convert raw active-money score into a cooling score.
 
-    For Top3 precision, overheated raw active scores are penalized more heavily.
-    Mid-range activity remains the preferred D1 state.
+    Raw activity is useful, but overheated activity should not automatically
+    dominate the daily Top3 ranking.
     """
     score = _to_float(active_score)
     if score is None:
@@ -294,11 +218,7 @@ def score_active_cooling(active_score: float) -> float:
 
 
 def score_entry_width(width_pct: float | None) -> float:
-    """Score D1 low-absorb width / invalid-distance tightness.
-
-    This is primarily a risk-shape factor: very tight zones are rewarded, very
-    wide zones are penalized, and the middle is intentionally conservative.
-    """
+    """Score D1 low-absorb width / invalid-distance tightness."""
     if width_pct is None:
         return 50.0
     if width_pct <= 2.0:
@@ -306,18 +226,14 @@ def score_entry_width(width_pct: float | None) -> float:
     if width_pct <= 3.5:
         return 65.0
     if width_pct <= 4.5:
-        return 55.0
-    if width_pct <= 5.0:
         return 60.0
-    return 15.0
+    if width_pct <= 5.0:
+        return 45.0
+    return 25.0
 
 
 def score_trend_hold(zones: dict[str, Any]) -> float:
-    """Score whether D1 divergence still holds the MA10 trend structure.
-
-    The research result showed D1 low-vs-MA10 is cleaner than D1 close-vs-VWAP,
-    so this score deliberately removes the old VWAP bonus.
-    """
+    """Score whether D1 divergence still holds the MA10 trend structure."""
     low_ma10_pct = _pct_distance(zones.get("d1_low"), zones.get("ma10"))
     close_ma10_pct = _pct_distance(zones.get("d1_close"), zones.get("ma10"))
 
