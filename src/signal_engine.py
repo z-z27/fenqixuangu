@@ -88,10 +88,10 @@ def generate_signal(
     total = (
         graph_score * cfg.graph_quality_weight
         + trend_hold * cfg.trend_hold_weight
-        + entry_width * cfg.entry_width_weight
         + active_cooling * cfg.active_cooling_weight
-        + support_score * cfg.support_weight
+        + entry_width * cfg.entry_width_weight
         + theme_score_value * cfg.theme_weight
+        + support_score * cfg.support_weight
     )
 
     hard_blocks = []
@@ -126,7 +126,8 @@ def generate_signal(
         total >= cfg.normal_signal_min_score
         and graph_score >= cfg.min_graph_quality_trade
         and active_score < cfg.max_active_money_trade
-        and entry_width >= 60
+        and trend_hold >= 65
+        and entry_width >= 45
     ):
         allowed = True
         position = "normal"
@@ -198,15 +199,14 @@ def generate_signal(
 def score_active_cooling(active_score: float) -> float:
     """Convert raw active-money score into a cooling score.
 
-    The research sample showed raw active-money scores above 90 were more like
-    overheating than confirmation. Mid-range activity is rewarded; overheated
-    names are penalized.
+    For Top3 precision, overheated raw active scores are penalized more heavily.
+    Mid-range activity remains the preferred D1 state.
     """
     score = _to_float(active_score)
     if score is None:
         return 60.0
     if score < 50:
-        return 70.0
+        return 65.0
     if score < 70:
         return 90.0
     if score < 80:
@@ -214,46 +214,54 @@ def score_active_cooling(active_score: float) -> float:
     if score < 85:
         return 70.0
     if score < 90:
-        return 55.0
-    return 35.0
+        return 50.0
+    return 30.0
 
 
 def score_entry_width(width_pct: float | None) -> float:
-    """Score D1 low-absorb width / invalid-distance tightness."""
+    """Score D1 low-absorb width / invalid-distance tightness.
+
+    This is primarily a risk-shape factor: very tight zones are rewarded, very
+    wide zones are penalized, and the middle is intentionally conservative.
+    """
     if width_pct is None:
         return 50.0
     if width_pct <= 2.0:
         return 90.0
     if width_pct <= 3.5:
-        return 75.0
+        return 65.0
     if width_pct <= 4.5:
         return 60.0
     if width_pct <= 5.0:
         return 45.0
-    return 30.0
+    return 25.0
 
 
 def score_trend_hold(zones: dict[str, Any]) -> float:
-    """Score whether D1 divergence still holds the MA10 trend structure."""
+    """Score whether D1 divergence still holds the MA10 trend structure.
+
+    The research result showed D1 low-vs-MA10 is cleaner than D1 close-vs-VWAP,
+    so this score deliberately removes the old VWAP bonus.
+    """
     low_ma10_pct = _pct_distance(zones.get("d1_low"), zones.get("ma10"))
     close_ma10_pct = _pct_distance(zones.get("d1_close"), zones.get("ma10"))
-    close_vwap_pct = _pct_distance(
-        zones.get("d1_close"),
-        zones.get("d1_intraday_vwap") or zones.get("d1_vwap"),
-    )
 
-    if low_ma10_pct is not None and low_ma10_pct >= 3.0:
-        score = 90.0
-    elif low_ma10_pct is not None and low_ma10_pct >= 0.0:
-        score = 75.0
-    elif close_ma10_pct is not None and close_ma10_pct >= 0.0:
-        score = 60.0
-    else:
-        score = 40.0
+    if low_ma10_pct is not None:
+        if low_ma10_pct < 0.0:
+            return 40.0
+        if low_ma10_pct < 3.0:
+            return 55.0
+        if low_ma10_pct < 6.0:
+            return 65.0
+        if low_ma10_pct < 10.0:
+            return 75.0
+        if low_ma10_pct < 20.0:
+            return 95.0
+        return 90.0
 
-    if close_vwap_pct is not None and close_vwap_pct >= 0.0:
-        score += 5.0
-    return min(score, 100.0)
+    if close_ma10_pct is not None and close_ma10_pct >= 0.0:
+        return 60.0
+    return 40.0
 
 
 def _low_absorb_width_pct(zones: dict[str, Any]) -> float | None:
