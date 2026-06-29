@@ -17,6 +17,7 @@ class DataConfig:
     default_5min_days: int = int(os.getenv("FQ_5MIN_DAYS", "40"))
     min_5min_trade_days: int = int(os.getenv("FQ_MIN_5MIN_DAYS", "20"))
     indicator_warmup_trading_days: int = int(os.getenv("FQ_INDICATOR_WARMUP_TRADING_DAYS", "120"))
+    min_limitup_universe_size: int = int(os.getenv("FQ_MIN_LIMITUP_UNIVERSE_SIZE", "2000"))
     disable_proxy: bool = os.getenv("FQ_DISABLE_PROXY", "true").lower() in {
         "1",
         "true",

@@ -1,0 +1,48 @@
+{
+  "model_id": "ranking_model_v001_core_momentum",
+  "model_type": "linear_score",
+  "score_column": "research_score",
+  "target_return_pct": 7.0,
+  "feature_columns": [
+    "total_score",
+    "trend_hold_score",
+    "d1_close_ma10_pct",
+    "d1_low_ma10_pct",
+    "graph_quality_score"
+  ],
+  "forbidden_input_patterns": [
+    "candidate_d2_*",
+    "candidate_d3_*",
+    "candidate_d5_*",
+    "candidate_d10_*",
+    "target7",
+    "target10",
+    "executed",
+    "selected_for_execution",
+    "selected_by_topn",
+    "buy_price",
+    "zone_buy_price",
+    "confirmation_price",
+    "execution_date",
+    "buy_time",
+    "entry_price_mode",
+    "execution_reason",
+    "target_hit",
+    "stop_hit",
+    "first_outcome",
+    "first_outcome_time",
+    "failure_reason",
+    "d3_realized_return_pct",
+    "d3_sell_reason"
+  ],
+  "model": {
+    "intercept": 0.0,
+    "weights": {
+      "total_score": 0.35,
+      "trend_hold_score": 0.20,
+      "d1_close_ma10_pct": 0.20,
+      "d1_low_ma10_pct": 0.15,
+      "graph_quality_score": 0.10
+    }
+  }
+}

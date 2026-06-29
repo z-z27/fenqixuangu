@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal, ROUND_HALF_UP
 from pathlib import Path
 from typing import Any
 
 import pandas as pd
 
 from .cache import FrameCache, StockFrameCache
-from .code_utils import normalize_stock_code
+from .code_utils import is_main_board_code, normalize_stock_code
 from .config import DataConfig, get_data_config
 from .data_sources import MarketDataProvider
 from .indicators import enrich_5min_indicators, enrich_daily_indicators
@@ -38,6 +39,7 @@ class MarketDataService:
         self.limit_up_cache = FrameCache(self.config.cache_dir / "limit_ups", "limitups")
         self.daily_cache = StockFrameCache(self.config.cache_dir / "daily", "daily")
         self.minute_cache = StockFrameCache(self.config.cache_dir / "minute_5m", "5min")
+        self.universe_cache = FrameCache(self.config.cache_dir / "universe", "universe")
 
     def collect_limit_ups(
         self,
@@ -62,8 +64,17 @@ class MarketDataService:
                 try:
                     frame, _ = self.provider.fetch_limit_up_pool(date_text)
                 except Exception as exc:
-                    errors.append(f"{date_text}: {exc}")
-                    continue
+                    try:
+                        frame = self._derive_limit_up_pool_from_daily(
+                            date_text,
+                            force_refresh=force_refresh,
+                        )
+                    except Exception as fallback_exc:
+                        errors.append(
+                            f"{date_text}: source pool failed ({exc}); "
+                            f"daily-derived fallback failed ({fallback_exc})"
+                        )
+                        continue
                 self.limit_up_cache.write(cache_key, frame)
                 raw_path = self.config.raw_dir / "limit_ups" / f"limit_up_{date_text}.csv"
                 frame.to_csv(raw_path, index=False, encoding="utf-8-sig")
@@ -190,11 +201,254 @@ class MarketDataService:
             result[code] = self.get_stock_bars(code, days=days, force_refresh=force_refresh)
         return result
 
+    def _derive_limit_up_pool_from_daily(
+        self,
+        trade_date: str,
+        force_refresh: bool = False,
+    ) -> pd.DataFrame:
+        date_text = pd.Timestamp(trade_date).strftime("%Y-%m-%d")
+        universe = self._get_stock_universe(force_refresh=force_refresh)
+        if universe.empty:
+            raise RuntimeError("stock universe is empty")
+
+        rows: list[dict[str, Any]] = []
+        checked = 0
+        date_seen = 0
+        errors: list[str] = []
+        for _, stock in universe.iterrows():
+            code = normalize_stock_code(str(stock.get("code", "")))
+            try:
+                daily = self._get_daily_for_limitup_scan(
+                    code,
+                    end_date=date_text,
+                    force_refresh=force_refresh,
+                )
+            except Exception as exc:
+                if len(errors) < 20:
+                    errors.append(f"{code}: {exc}")
+                continue
+            checked += 1
+            row = _derive_limit_up_row_from_daily(daily, stock, date_text)
+            if row is None:
+                if _daily_has_date(daily, date_text):
+                    date_seen += 1
+                continue
+            date_seen += 1
+            rows.append(row)
+
+        if not rows:
+            reason = f"no daily-derived limit-up rows for {date_text}; checked={checked}; date_seen={date_seen}"
+            if errors:
+                reason += "; sample_errors=" + " | ".join(errors[:5])
+            raise RuntimeError(reason)
+
+        result = pd.DataFrame(rows)
+        result = result.sort_values(["trade_date", "code"]).drop_duplicates(["trade_date", "code"], keep="last")
+        return result.reset_index(drop=True)
+
+    def _get_stock_universe(self, force_refresh: bool = False) -> pd.DataFrame:
+        cached = None if force_refresh else self.universe_cache.read("eastmoney_main_board")
+        if self._universe_has_min_size(cached):
+            return cached.copy()
+
+        fetch_error: Exception | None = None
+        try:
+            frame, _ = self.provider.fetch_stock_universe()
+            if not self._universe_has_min_size(frame):
+                raise RuntimeError(
+                    f"stock universe too small: {len(frame)} < {self.config.min_limitup_universe_size}"
+                )
+            self.universe_cache.write("eastmoney_main_board", frame)
+            return frame
+        except Exception as exc:
+            fetch_error = exc
+
+        if self._universe_has_min_size(cached):
+            return cached.copy()
+
+        frame = self._stock_universe_from_daily_cache()
+        if self._universe_has_min_size(frame):
+            return frame
+        raise RuntimeError(f"stock universe unavailable: {fetch_error}")
+
+    def _universe_has_min_size(self, frame: pd.DataFrame | None) -> bool:
+        if frame is None or frame.empty or "code" not in frame.columns:
+            return False
+        return int(frame["code"].dropna().astype(str).nunique()) >= int(self.config.min_limitup_universe_size)
+
+    def _stock_universe_from_daily_cache(self) -> pd.DataFrame:
+        rows: list[dict[str, Any]] = []
+        for path in sorted(self.daily_cache.root.glob("*_daily.pkl")):
+            suffix = "_daily.pkl"
+            if not path.name.endswith(suffix):
+                continue
+            code = path.name[: -len(suffix)]
+            try:
+                normalized = normalize_stock_code(code)
+            except ValueError:
+                continue
+            if not is_main_board_code(normalized):
+                continue
+            rows.append(
+                {
+                    "code": normalized,
+                    "name": "",
+                    "market": "SH" if normalized.startswith("6") else "SZ",
+                    "industry": "",
+                    "source": "daily_cache_universe",
+                }
+            )
+        return pd.DataFrame(rows).drop_duplicates("code").reset_index(drop=True) if rows else pd.DataFrame()
+
+    def _get_daily_for_limitup_scan(
+        self,
+        code: str,
+        end_date: str,
+        force_refresh: bool = False,
+    ) -> pd.DataFrame:
+        normalized = normalize_stock_code(code)
+        cached = None if force_refresh else self.daily_cache.read(normalized)
+        if _daily_has_date_and_previous(cached, end_date):
+            return cached
+
+        end_ts = pd.Timestamp(end_date)
+        start_ts = end_ts - pd.Timedelta(days=90)
+        fetched, _ = self.provider.fetch_daily_history(
+            normalized,
+            start_ts.strftime("%Y-%m-%d"),
+            end_ts.strftime("%Y-%m-%d"),
+            adjust=self.config.adjust,
+        )
+        merged = _merge_daily_frames(cached, fetched)
+        self.daily_cache.write(normalized, merged)
+        return merged
+
 
 def load_limitup_file(path: str | Path) -> pd.DataFrame:
     frame = pd.read_csv(path, dtype={"code": str})
     frame["code"] = frame["code"].map(normalize_stock_code)
     return frame
+
+
+def _derive_limit_up_row_from_daily(
+    daily: pd.DataFrame,
+    stock: pd.Series,
+    trade_date: str,
+) -> dict[str, Any] | None:
+    if daily is None or daily.empty or "date" not in daily.columns:
+        return None
+    code = normalize_stock_code(str(stock.get("code", "")))
+    if not is_main_board_code(code):
+        return None
+
+    data = daily.copy()
+    data["date"] = pd.to_datetime(data["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    data = data.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    matches = data.index[data["date"] == trade_date].tolist()
+    if not matches:
+        return None
+    idx = matches[-1]
+    if idx <= 0:
+        return None
+
+    today = data.iloc[idx]
+    prev = data.iloc[idx - 1]
+    prev_close = _to_float(prev.get("close"))
+    close = _to_float(today.get("close"))
+    high = _to_float(today.get("high"))
+    if prev_close is None or prev_close <= 0 or close is None or high is None:
+        return None
+
+    limit_price = _round_price_limit(prev_close, Decimal("1.10"))
+    tolerance = 0.011
+    pct_chg = (close / prev_close - 1.0) * 100.0
+    if pct_chg < 9.7:
+        return None
+    if close < limit_price - tolerance:
+        return None
+    if high < limit_price - tolerance:
+        return None
+
+    low = _to_float(today.get("low"))
+    open_price = _to_float(today.get("open"))
+    amount = _to_float(today.get("amount"))
+    total_market_cap = _to_float(stock.get("total_market_cap"))
+    float_market_cap = _to_float(stock.get("float_market_cap"))
+    name = "" if pd.isna(stock.get("name", "")) else str(stock.get("name", ""))
+    industry = "" if pd.isna(stock.get("industry", "")) else str(stock.get("industry", ""))
+    market = "SH" if code.startswith("6") else "SZ"
+    return {
+        "trade_date": trade_date,
+        "code": code,
+        "name": name,
+        "market": market,
+        "latest_price": close,
+        "pct_chg": pct_chg,
+        "amount": amount,
+        "turnover_rate": _to_float(today.get("turnover_rate")),
+        "float_market_cap": float_market_cap,
+        "total_market_cap": total_market_cap,
+        "industry": industry,
+        "limit_up_time": "",
+        "final_limit_up_time": "",
+        "open_board_count": None,
+        "seal_amount": None,
+        "consecutive_limit_up_count": 1,
+        "source": "daily_limitup_derived",
+        "open": open_price,
+        "high": high,
+        "low": low,
+        "prev_close": prev_close,
+        "limit_price": limit_price,
+    }
+
+
+def _daily_has_date(frame: pd.DataFrame | None, date_text: str) -> bool:
+    if frame is None or frame.empty or "date" not in frame.columns:
+        return False
+    dates = pd.to_datetime(frame["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    return bool((dates == date_text).any())
+
+
+def _daily_has_date_and_previous(frame: pd.DataFrame | None, date_text: str) -> bool:
+    if frame is None or frame.empty or "date" not in frame.columns:
+        return False
+    data = frame.copy()
+    data["date"] = pd.to_datetime(data["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    dates = sorted(data["date"].dropna().unique().tolist())
+    if date_text not in dates:
+        return False
+    return dates.index(date_text) > 0
+
+
+def _merge_daily_frames(cached: pd.DataFrame | None, fetched: pd.DataFrame) -> pd.DataFrame:
+    frames = [frame for frame in (cached, fetched) if frame is not None and not frame.empty]
+    if not frames:
+        return pd.DataFrame()
+    result = pd.concat(frames, ignore_index=True)
+    if "code" in result.columns:
+        result["code"] = result["code"].map(normalize_stock_code)
+    result["date"] = pd.to_datetime(result["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    return result.dropna(subset=["date"]).drop_duplicates(["code", "date"], keep="last").sort_values("date").reset_index(drop=True)
+
+
+def _round_price_limit(prev_close: float, ratio: Decimal) -> float:
+    value = Decimal(str(prev_close)) * ratio
+    return float(value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def _to_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except TypeError:
+        pass
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _keep_recent_trade_days(frame: pd.DataFrame, date_col: str, days: int) -> pd.DataFrame:

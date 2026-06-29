@@ -1,0 +1,2 @@
+﻿start_date,end_date,hold_days,target_return_pct,secondary_target_return_pct,record_count,date_count,eligible_count,candidate_evaluable_count,candidate_target7_count,candidate_target7_rate,candidate_target10_count,candidate_target10_rate,candidate_avg_d3_max_return_pct,candidate_avg_d5_max_return_pct,candidate_avg_d10_max_return_pct
+2026-06-01,2026-06-25,10,7.0,10.0,2962,14,1548,2956,1139,0.3853179972936401,685,0.2317320703653586,6.303967345684354,8.989312293733938,12.70463684610737

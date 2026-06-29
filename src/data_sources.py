@@ -45,6 +45,16 @@ class MarketDataProvider:
                 errors.append(f"{source}: {exc}")
         raise RuntimeError("all limit-up sources failed: " + " | ".join(errors))
 
+    def fetch_stock_universe(self) -> tuple[pd.DataFrame, str]:
+        frame = self._fetch_spot_eastmoney()
+        if frame is None or frame.empty:
+            raise RuntimeError("empty stock universe")
+        frame = normalize_stock_universe(frame, "eastmoney_spot_universe")
+        frame = filter_main_board(frame)
+        if frame.empty:
+            raise RuntimeError("main-board stock universe is empty")
+        return frame, "eastmoney_spot_universe"
+
     def fetch_daily_history(
         self,
         code: str,
@@ -341,6 +351,25 @@ def normalize_limit_up_pool(frame: pd.DataFrame, trade_date: str, source: str) -
         if column not in result.columns:
             result[column] = None
     return result[ordered].drop_duplicates(["trade_date", "code"]).reset_index(drop=True)
+
+
+def normalize_stock_universe(frame: pd.DataFrame, source: str) -> pd.DataFrame:
+    result = frame.copy()
+    if "code" not in result.columns:
+        raise RuntimeError("stock universe missing code")
+    if "name" not in result.columns:
+        result["name"] = ""
+    result["code"] = result["code"].map(normalize_stock_code)
+    result["market"] = result["code"].map(detect_market)
+    if "industry" not in result.columns:
+        result["industry"] = ""
+    for column in ("float_market_cap", "total_market_cap"):
+        if column not in result.columns:
+            result[column] = None
+        result[column] = pd.to_numeric(result[column], errors="coerce")
+    result["source"] = source
+    ordered = ["code", "name", "market", "industry", "float_market_cap", "total_market_cap", "source"]
+    return result[ordered].drop_duplicates("code").reset_index(drop=True)
 
 
 def filter_main_board(frame: pd.DataFrame) -> pd.DataFrame:
