@@ -15,6 +15,12 @@ from .data_sources import MarketDataProvider
 from .indicators import enrich_5min_indicators, enrich_daily_indicators
 
 
+MAIN_BOARD_LIMIT_RATIO = Decimal("1.10")
+LIMIT_UP_PRICE_TOLERANCE = 0.011
+LIMIT_UP_MIN_PCT_CHG = 9.7
+DERIVED_LIMITUP_PROGRESS_STEP = 100
+
+
 @dataclass
 class StockBars:
     code: str
@@ -38,6 +44,7 @@ class MarketDataService:
         self.provider = MarketDataProvider(self.config)
         self.limit_up_cache = FrameCache(self.config.cache_dir / "limit_ups", "limitups")
         self.daily_cache = StockFrameCache(self.config.cache_dir / "daily", "daily")
+        self.daily_unadjusted_cache = StockFrameCache(self.config.cache_dir / "daily_unadjusted", "daily")
         self.minute_cache = StockFrameCache(self.config.cache_dir / "minute_5m", "5min")
         self.universe_cache = FrameCache(self.config.cache_dir / "universe", "universe")
 
@@ -215,6 +222,8 @@ class MarketDataService:
         checked = 0
         date_seen = 0
         errors: list[str] = []
+        total = int(len(universe))
+        print(f"[derive-limitups] {date_text} start universe={total}", flush=True)
         for _, stock in universe.iterrows():
             code = normalize_stock_code(str(stock.get("code", "")))
             try:
@@ -228,6 +237,12 @@ class MarketDataService:
                     errors.append(f"{code}: {exc}")
                 continue
             checked += 1
+            if checked % DERIVED_LIMITUP_PROGRESS_STEP == 0:
+                print(
+                    f"[derive-limitups] {date_text} checked={checked}/{total} "
+                    f"date_seen={date_seen} rows={len(rows)} errors={len(errors)}",
+                    flush=True,
+                )
             row = _derive_limit_up_row_from_daily(daily, stock, date_text)
             if row is None:
                 if _daily_has_date(daily, date_text):
@@ -244,6 +259,11 @@ class MarketDataService:
 
         result = pd.DataFrame(rows)
         result = result.sort_values(["trade_date", "code"]).drop_duplicates(["trade_date", "code"], keep="last")
+        print(
+            f"[derive-limitups] {date_text} done checked={checked}/{total} "
+            f"date_seen={date_seen} rows={len(result)} errors={len(errors)}",
+            flush=True,
+        )
         return result.reset_index(drop=True)
 
     def _get_stock_universe(self, force_refresh: bool = False) -> pd.DataFrame:
@@ -307,20 +327,20 @@ class MarketDataService:
         force_refresh: bool = False,
     ) -> pd.DataFrame:
         normalized = normalize_stock_code(code)
-        cached = None if force_refresh else self.daily_cache.read(normalized)
+        cached = None if force_refresh else self.daily_unadjusted_cache.read(normalized)
         if _daily_has_date_and_previous(cached, end_date):
             return cached
 
         end_ts = pd.Timestamp(end_date)
-        start_ts = end_ts - pd.Timedelta(days=90)
+        start_ts = end_ts - pd.Timedelta(days=120)
         fetched, _ = self.provider.fetch_daily_history(
             normalized,
             start_ts.strftime("%Y-%m-%d"),
             end_ts.strftime("%Y-%m-%d"),
-            adjust=self.config.adjust,
+            adjust="none",
         )
         merged = _merge_daily_frames(cached, fetched)
-        self.daily_cache.write(normalized, merged)
+        self.daily_unadjusted_cache.write(normalized, merged)
         return merged
 
 
@@ -335,20 +355,18 @@ def _derive_limit_up_row_from_daily(
     stock: pd.Series,
     trade_date: str,
 ) -> dict[str, Any] | None:
-    if daily is None or daily.empty or "date" not in daily.columns:
+    data = _prepare_daily_limitup_scan_frame(daily)
+    if data.empty:
         return None
     code = normalize_stock_code(str(stock.get("code", "")))
     if not is_main_board_code(code):
         return None
 
-    data = daily.copy()
-    data["date"] = pd.to_datetime(data["date"], errors="coerce").dt.strftime("%Y-%m-%d")
-    data = data.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
     matches = data.index[data["date"] == trade_date].tolist()
     if not matches:
         return None
     idx = matches[-1]
-    if idx <= 0:
+    if not _is_main_board_limit_up_day(data, idx):
         return None
 
     today = data.iloc[idx]
@@ -356,21 +374,14 @@ def _derive_limit_up_row_from_daily(
     prev_close = _to_float(prev.get("close"))
     close = _to_float(today.get("close"))
     high = _to_float(today.get("high"))
-    if prev_close is None or prev_close <= 0 or close is None or high is None:
-        return None
-
-    limit_price = _round_price_limit(prev_close, Decimal("1.10"))
-    tolerance = 0.011
-    pct_chg = (close / prev_close - 1.0) * 100.0
-    if pct_chg < 9.7:
-        return None
-    if close < limit_price - tolerance:
-        return None
-    if high < limit_price - tolerance:
-        return None
-
     low = _to_float(today.get("low"))
     open_price = _to_float(today.get("open"))
+    if prev_close is None or close is None or high is None:
+        return None
+
+    pct_chg = (close / prev_close - 1.0) * 100.0
+    limit_price = _round_price_limit(prev_close, MAIN_BOARD_LIMIT_RATIO)
+    consecutive = _count_consecutive_main_board_limit_ups(data, idx)
     amount = _to_float(today.get("amount"))
     total_market_cap = _to_float(stock.get("total_market_cap"))
     float_market_cap = _to_float(stock.get("float_market_cap"))
@@ -393,14 +404,61 @@ def _derive_limit_up_row_from_daily(
         "final_limit_up_time": "",
         "open_board_count": None,
         "seal_amount": None,
-        "consecutive_limit_up_count": 1,
+        "consecutive_limit_up_count": consecutive,
         "source": "daily_limitup_derived",
         "open": open_price,
         "high": high,
         "low": low,
         "prev_close": prev_close,
         "limit_price": limit_price,
+        "limitup_basis": "daily_close_at_limit",
+        "limitup_price_tolerance": LIMIT_UP_PRICE_TOLERANCE,
+        "limitup_min_pct_chg": LIMIT_UP_MIN_PCT_CHG,
     }
+
+
+def _prepare_daily_limitup_scan_frame(daily: pd.DataFrame | None) -> pd.DataFrame:
+    if daily is None or daily.empty or "date" not in daily.columns:
+        return pd.DataFrame()
+    data = daily.copy()
+    data["date"] = pd.to_datetime(data["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    data = data.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+    for column in ("open", "high", "low", "close", "amount", "turnover_rate"):
+        if column not in data.columns:
+            data[column] = None
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+    return data
+
+
+def _is_main_board_limit_up_day(data: pd.DataFrame, idx: int) -> bool:
+    if data is None or data.empty or idx <= 0 or idx >= len(data):
+        return False
+    today = data.iloc[idx]
+    prev = data.iloc[idx - 1]
+    prev_close = _to_float(prev.get("close"))
+    close = _to_float(today.get("close"))
+    high = _to_float(today.get("high"))
+    if prev_close is None or prev_close <= 0 or close is None or high is None:
+        return False
+
+    limit_price = _round_price_limit(prev_close, MAIN_BOARD_LIMIT_RATIO)
+    pct_chg = (close / prev_close - 1.0) * 100.0
+    if pct_chg < LIMIT_UP_MIN_PCT_CHG:
+        return False
+    if close < limit_price - LIMIT_UP_PRICE_TOLERANCE:
+        return False
+    if high < limit_price - LIMIT_UP_PRICE_TOLERANCE:
+        return False
+    return True
+
+
+def _count_consecutive_main_board_limit_ups(data: pd.DataFrame, idx: int) -> int:
+    count = 0
+    current = idx
+    while current > 0 and _is_main_board_limit_up_day(data, current):
+        count += 1
+        current -= 1
+    return count
 
 
 def _daily_has_date(frame: pd.DataFrame | None, date_text: str) -> bool:
