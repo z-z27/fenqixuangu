@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -28,7 +30,7 @@ class FrameCache:
 
     def write(self, key: str, frame: pd.DataFrame) -> None:
         path = self.path(key)
-        tmp_path = path.with_suffix(".tmp.pkl")
+        tmp_path = path.with_name(f"{path.stem}.{os.getpid()}.{threading.get_ident()}.tmp{path.suffix}")
         _pickle_safe_frame(frame).to_pickle(tmp_path)
         tmp_path.replace(path)
 
