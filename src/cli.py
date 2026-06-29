@@ -63,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lookback-days", type=int, default=1, help="向前扫描自然日数量")
     p.add_argument("--force-refresh", action="store_true", help="忽略涨停池缓存")
     p.add_argument("--force-daily-refresh", action="store_true", help="当涨停池接口失败并进入日线反推时，同时忽略不复权日线缓存")
+    p.add_argument("--workers", type=int, default=1, help="日线反推时的股票级并发数；collect 默认 1")
 
     p = sub.add_parser("warmup-limitups", help="按区间预热涨停池缓存；不生成样本、不补5分钟线")
     p.add_argument("--start-date", required=True)
@@ -70,6 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--lookback-days", type=int, default=1)
     p.add_argument("--force-refresh", action="store_true", help="忽略涨停池缓存，重新抓取/反推并覆盖缓存")
     p.add_argument("--force-daily-refresh", action="store_true", help="日线反推时也忽略不复权日线缓存；一般不建议开启")
+    p.add_argument("--workers", type=int, default=6, help="日线反推时的股票级并发数；warmup 默认 6，上限由 loaders 限制")
 
     p = sub.add_parser("collect-bars", help="为涨停池候选补日线和 5 分钟线")
     p.add_argument("--limitup-file", default="data/processed/recent_limitups.csv")
@@ -174,6 +176,7 @@ def collect_limitups(args) -> int:
         lookback_days=args.lookback_days,
         force_refresh=args.force_refresh,
         force_daily_refresh=True if args.force_daily_refresh else None,
+        workers=args.workers,
     )
     print(f"limit-up rows: {len(frame)}")
     print(f"saved: {get_data_config().processed_dir / 'recent_limitups.csv'}")
@@ -203,6 +206,7 @@ def warmup_limitups(args) -> int:
                 force_refresh=args.force_refresh,
                 write_processed=False,
                 force_daily_refresh=True if args.force_daily_refresh else False,
+                workers=args.workers,
             )
             actual_date = _latest_trade_date(frame)
             source_counts = frame["source"].value_counts(dropna=False).to_dict() if "source" in frame.columns else {}
