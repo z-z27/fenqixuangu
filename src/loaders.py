@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal, ROUND_HALF_UP
@@ -19,6 +20,7 @@ MAIN_BOARD_LIMIT_RATIO = Decimal("1.10")
 LIMIT_UP_PRICE_TOLERANCE = 0.011
 LIMIT_UP_MIN_PCT_CHG = 9.7
 DERIVED_LIMITUP_PROGRESS_STEP = 100
+DERIVED_LIMITUP_MAX_WORKERS = 12
 
 
 @dataclass
@@ -55,6 +57,7 @@ class MarketDataService:
         force_refresh: bool = False,
         write_processed: bool = True,
         force_daily_refresh: bool | None = None,
+        workers: int = 1,
     ) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
         errors: list[str] = []
@@ -77,6 +80,7 @@ class MarketDataService:
                         frame = self._derive_limit_up_pool_from_daily(
                             date_text,
                             force_refresh=daily_force,
+                            workers=workers,
                         )
                     except Exception as fallback_exc:
                         errors.append(
@@ -214,6 +218,7 @@ class MarketDataService:
         self,
         trade_date: str,
         force_refresh: bool = False,
+        workers: int = 1,
     ) -> pd.DataFrame:
         date_text = pd.Timestamp(trade_date).strftime("%Y-%m-%d")
         universe = self._get_stock_universe(force_refresh=force_refresh)
@@ -225,33 +230,38 @@ class MarketDataService:
         date_seen = 0
         errors: list[str] = []
         total = int(len(universe))
-        print(f"[derive-limitups] {date_text} start universe={total}", flush=True)
-        for _, stock in universe.iterrows():
-            code = normalize_stock_code(str(stock.get("code", "")))
-            try:
-                daily = self._get_daily_for_limitup_scan(
-                    code,
-                    end_date=date_text,
-                    force_refresh=force_refresh,
+        worker_count = _normalise_worker_count(workers)
+        print(f"[derive-limitups] {date_text} start universe={total} workers={worker_count}", flush=True)
+
+        stock_rows = [stock for _, stock in universe.iterrows()]
+        if worker_count <= 1:
+            results = (self._derive_one_limitup_scan_row(stock, date_text, force_refresh) for stock in stock_rows)
+            for scan in results:
+                checked, date_seen = _apply_limitup_scan_result(
+                    scan,
+                    rows=rows,
+                    errors=errors,
+                    checked=checked,
+                    date_seen=date_seen,
+                    total=total,
+                    date_text=date_text,
                 )
-            except Exception as exc:
-                if len(errors) < 20:
-                    errors.append(f"{code}: {exc}")
-                continue
-            checked += 1
-            if checked % DERIVED_LIMITUP_PROGRESS_STEP == 0:
-                print(
-                    f"[derive-limitups] {date_text} checked={checked}/{total} "
-                    f"date_seen={date_seen} rows={len(rows)} errors={len(errors)}",
-                    flush=True,
-                )
-            row = _derive_limit_up_row_from_daily(daily, stock, date_text)
-            if row is None:
-                if _daily_has_date(daily, date_text):
-                    date_seen += 1
-                continue
-            date_seen += 1
-            rows.append(row)
+        else:
+            with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                futures = [
+                    executor.submit(self._derive_one_limitup_scan_row, stock, date_text, force_refresh)
+                    for stock in stock_rows
+                ]
+                for future in as_completed(futures):
+                    checked, date_seen = _apply_limitup_scan_result(
+                        future.result(),
+                        rows=rows,
+                        errors=errors,
+                        checked=checked,
+                        date_seen=date_seen,
+                        total=total,
+                        date_text=date_text,
+                    )
 
         if not rows:
             reason = f"no daily-derived limit-up rows for {date_text}; checked={checked}; date_seen={date_seen}"
@@ -267,6 +277,35 @@ class MarketDataService:
             flush=True,
         )
         return result.reset_index(drop=True)
+
+    def _derive_one_limitup_scan_row(
+        self,
+        stock: pd.Series,
+        date_text: str,
+        force_refresh: bool,
+    ) -> dict[str, Any]:
+        code = ""
+        try:
+            code = normalize_stock_code(str(stock.get("code", "")))
+            daily = self._get_daily_for_limitup_scan(
+                code,
+                end_date=date_text,
+                force_refresh=force_refresh,
+            )
+            row = _derive_limit_up_row_from_daily(daily, stock, date_text)
+            return {
+                "code": code,
+                "row": row,
+                "date_seen": bool(_daily_has_date(daily, date_text)),
+                "error": "",
+            }
+        except Exception as exc:
+            return {
+                "code": code or str(stock.get("code", "")),
+                "row": None,
+                "date_seen": False,
+                "error": str(exc),
+            }
 
     def _get_stock_universe(self, force_refresh: bool = False) -> pd.DataFrame:
         cached = None if force_refresh else self.universe_cache.read("eastmoney_main_board")
@@ -350,6 +389,41 @@ def load_limitup_file(path: str | Path) -> pd.DataFrame:
     frame = pd.read_csv(path, dtype={"code": str})
     frame["code"] = frame["code"].map(normalize_stock_code)
     return frame
+
+
+def _normalise_worker_count(workers: int | None) -> int:
+    try:
+        value = int(workers or 1)
+    except (TypeError, ValueError):
+        value = 1
+    return max(1, min(value, DERIVED_LIMITUP_MAX_WORKERS))
+
+
+def _apply_limitup_scan_result(
+    scan: dict[str, Any],
+    rows: list[dict[str, Any]],
+    errors: list[str],
+    checked: int,
+    date_seen: int,
+    total: int,
+    date_text: str,
+) -> tuple[int, int]:
+    checked += 1
+    error = str(scan.get("error") or "")
+    if error and len(errors) < 20:
+        errors.append(f"{scan.get('code', '')}: {error}")
+    row = scan.get("row")
+    if row is not None:
+        rows.append(row)
+    if bool(scan.get("date_seen")):
+        date_seen += 1
+    if checked % DERIVED_LIMITUP_PROGRESS_STEP == 0:
+        print(
+            f"[derive-limitups] {date_text} checked={checked}/{total} "
+            f"date_seen={date_seen} rows={len(rows)} errors={len(errors)}",
+            flush=True,
+        )
+    return checked, date_seen
 
 
 def _derive_limit_up_row_from_daily(
