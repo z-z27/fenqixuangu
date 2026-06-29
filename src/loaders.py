@@ -54,10 +54,12 @@ class MarketDataService:
         lookback_days: int = 1,
         force_refresh: bool = False,
         write_processed: bool = True,
+        force_daily_refresh: bool | None = None,
     ) -> pd.DataFrame:
         frames: list[pd.DataFrame] = []
         errors: list[str] = []
         anchor = pd.Timestamp(trade_date or datetime.now().strftime("%Y-%m-%d"))
+        daily_force = force_refresh if force_daily_refresh is None else bool(force_daily_refresh)
         for offset in range(max(1, lookback_days)):
             current = anchor - pd.Timedelta(days=offset)
             if current.weekday() >= 5:
@@ -74,7 +76,7 @@ class MarketDataService:
                     try:
                         frame = self._derive_limit_up_pool_from_daily(
                             date_text,
-                            force_refresh=force_refresh,
+                            force_refresh=daily_force,
                         )
                     except Exception as fallback_exc:
                         errors.append(
