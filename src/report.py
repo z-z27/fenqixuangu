@@ -1,17 +1,18 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from .signal_engine import Signal
 
 
-def write_signal_reports(signals: list[Signal], output_dir: Path, trade_date: str | None = None) -> tuple[Path, Path]:
+def write_signal_reports(signals: list[Signal] | pd.DataFrame, output_dir: Path, trade_date: str | None = None) -> tuple[Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
+    frame = _signals_to_frame(signals)
     if trade_date is None:
-        trade_date = signals[0].trade_date if signals else pd.Timestamp.now().strftime("%Y-%m-%d")
-    frame = pd.DataFrame([signal.to_dict() for signal in signals])
+        trade_date = _infer_trade_date(signals, frame)
     csv_path = output_dir / f"signals_{trade_date}.csv"
     md_path = output_dir / f"signals_{trade_date}.md"
     frame.to_csv(csv_path, index=False, encoding="utf-8-sig")
@@ -27,6 +28,22 @@ def write_data_quality_reports(quality_rows: list[dict], output_dir: Path, trade
     frame.to_csv(csv_path, index=False, encoding="utf-8-sig")
     md_path.write_text(build_data_quality_markdown(frame, trade_date), encoding="utf-8")
     return csv_path, md_path
+
+
+def _signals_to_frame(signals: list[Signal] | pd.DataFrame) -> pd.DataFrame:
+    if isinstance(signals, pd.DataFrame):
+        return signals.copy()
+    return pd.DataFrame([signal.to_dict() for signal in signals])
+
+
+def _infer_trade_date(signals: list[Signal] | pd.DataFrame, frame: pd.DataFrame) -> str:
+    if not frame.empty and "trade_date" in frame.columns:
+        values = frame["trade_date"].dropna().astype(str)
+        if not values.empty:
+            return str(values.max())
+    if isinstance(signals, list) and signals:
+        return signals[0].trade_date
+    return pd.Timestamp.now().strftime("%Y-%m-%d")
 
 
 def build_markdown_report(frame: pd.DataFrame, trade_date: str) -> str:
@@ -57,6 +74,10 @@ def build_markdown_report(frame: pd.DataFrame, trade_date: str) -> str:
         lines.append(f"- 平均总分 (可交易): **{allowed['total_score'].mean():.1f}**")
         lines.append(f"- 总分区间 (可交易): **{allowed['total_score'].min():.1f} ~ {allowed['total_score'].max():.1f}**")
     lines.append("")
+
+    ranking_section = _build_research_topn_section(frame)
+    if ranking_section:
+        lines.extend(ranking_section)
 
     header = "| # | 代码 | 名称 | D0日期 | 连板 | 天数 | 总分 | 图形 | 活跃 | 承接 | 题材 | 低吸区间 | 失效位 |"
     sep    = "|---|---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|"
@@ -202,6 +223,39 @@ def build_data_quality_markdown(frame: pd.DataFrame, trade_date: str) -> str:
     return "\n".join(lines)
 
 
+def _build_research_topn_section(frame: pd.DataFrame) -> list[str]:
+    required = {"ranking_model_id", "research_score", "daily_rank", "model_topn"}
+    if not required.issubset(frame.columns):
+        return []
+
+    top_n = _first_int(frame["model_topn"], default=3)
+    model_id = _first_text(frame["ranking_model_id"])
+    model_label = _model_label(model_id)
+    lines = [f"## {model_label} Top{top_n} 主选", ""]
+
+    allowed = _truthy_series(frame["allowed"]) if "allowed" in frame.columns else pd.Series(False, index=frame.index)
+    signal_type = frame["signal_type"].fillna("").astype(str) if "signal_type" in frame.columns else pd.Series("", index=frame.index)
+    ranked = frame[allowed & signal_type.eq("D2_LOW_ABSORB")].copy()
+    if ranked.empty:
+        lines.extend(["无。", ""])
+        return lines
+
+    ranked["__research_score"] = pd.to_numeric(ranked["research_score"], errors="coerce")
+    ranked["__daily_rank"] = pd.to_numeric(ranked["daily_rank"], errors="coerce")
+    ranked = ranked[ranked["__daily_rank"].notna() & (ranked["__daily_rank"] <= int(top_n))]
+    ranked = ranked.sort_values(["__research_score", "__daily_rank", "code"], ascending=[False, True, True]).reset_index(drop=True)
+    if ranked.empty:
+        lines.extend(["无。", ""])
+        return lines
+
+    lines.append("| # | 日排 | 代码 | 名称 | D0日期 | 天数 | research_score | 原总分 | 图形 | 承接 | 低吸区间 | 失效位 |")
+    lines.append("|---:|---:|---|---|---:|---:|---:|---:|---:|---:|---:|---:|")
+    for rank, (_, row) in enumerate(ranked.iterrows(), 1):
+        lines.append(_render_research_row(rank, row))
+    lines.append("")
+    return lines
+
+
 def _render_row(rank: int, row) -> str:
     zone = format_zone(row.get("low_absorb_min"), row.get("low_absorb_max"))
     invalid = row.get("invalid_price")
@@ -220,6 +274,24 @@ def _render_row(rank: int, row) -> str:
     )
 
 
+def _render_research_row(rank: int, row) -> str:
+    zone = format_zone(row.get("low_absorb_min"), row.get("low_absorb_max"))
+    invalid = row.get("invalid_price")
+    invalid_text = "" if _is_missing(invalid) else f"{float(invalid):.2f}"
+    daily_rank = row.get("daily_rank")
+    daily_rank_text = "" if _is_missing(daily_rank) else str(int(float(daily_rank)))
+    return (
+        f"| {rank} | {daily_rank_text} | {row.get('code', '')} | {row.get('name', '')} | "
+        f"{row.get('d0_date', '')} | "
+        f"{_format_optional_number(row.get('days_since_d0'), 0)} | "
+        f"{_format_optional_number(row.get('research_score'), 4)} | "
+        f"{_format_optional_number(row.get('total_score'), 1)} | "
+        f"{_format_optional_number(row.get('graph_quality_score'), 0)} | "
+        f"{_format_optional_number(row.get('support_score'), 0)} | "
+        f"{zone} | {invalid_text} |"
+    )
+
+
 def format_zone(low, high) -> str:
     if pd.isna(low) or pd.isna(high) or low is None or high is None:
         return ""
@@ -228,6 +300,45 @@ def format_zone(low, high) -> str:
     if abs(lo - hi) < 0.01:
         return f"{lo:.2f}"
     return f"{lo:.2f}~{hi:.2f}"
+
+
+def _truthy_series(series: pd.Series) -> pd.Series:
+    if series.dtype == bool:
+        return series.fillna(False)
+    return series.fillna(False).astype(str).str.lower().isin({"true", "1", "yes"})
+
+
+def _first_text(series: pd.Series) -> str:
+    values = series.dropna().astype(str)
+    values = values[values != ""]
+    return "" if values.empty else str(values.iloc[0])
+
+
+def _first_int(series: pd.Series, default: int) -> int:
+    values = pd.to_numeric(series, errors="coerce").dropna()
+    return int(default) if values.empty else int(values.iloc[0])
+
+
+def _model_label(model_id: str) -> str:
+    for part in str(model_id).split("_"):
+        if len(part) > 1 and part[0].lower() == "v" and part[1:].isdigit():
+            return part
+    return str(model_id or "model")
+
+
+def _format_optional_number(value: Any, digits: int) -> str:
+    if _is_missing(value):
+        return ""
+    return f"{float(value):.{int(digits)}f}"
+
+
+def _is_missing(value: Any) -> bool:
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except TypeError:
+        return False
 
 
 def _bool_count(frame: pd.DataFrame, column: str) -> int:

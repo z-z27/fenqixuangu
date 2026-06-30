@@ -15,3 +15,11 @@ reports/backtest_results/
 reports/backtest_runs/
 reports/data_quality/
 reports/data_acceptance/
+reports/factor_analysis/
+reports/history_samples/
+reports/ranking_backtests/
+reports/research_runs/
+reports/warmup/
+reports/*.zip
+!reports/manual_models/
+!reports/manual_models/*.json

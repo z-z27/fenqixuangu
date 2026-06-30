@@ -8,6 +8,7 @@ import pandas as pd
 from .backtester import run_full_history_backtest, run_history_backtest, run_top3_signal_backtest
 from .config import get_data_config
 from .data_acceptance import run_data_acceptance
+from .daily_ranking import DEFAULT_DAILY_RANKING_MODEL, DEFAULT_DAILY_TOP_N, apply_daily_research_ranking
 from .failure_review import review_failed_data
 from .history_samples import run_history_sample_generation
 from .loaders import DataQualityError, MarketDataService, load_limitup_file
@@ -84,6 +85,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--days", type=int, default=None)
     p.add_argument("--max-codes", type=int, default=None)
     p.add_argument("--force-refresh", action="store_true")
+    p.add_argument("--ranking-model", default=str(DEFAULT_DAILY_RANKING_MODEL))
+    p.add_argument("--top-n", type=int, default=DEFAULT_DAILY_TOP_N)
 
     p = sub.add_parser("validate-data", help="validate cached daily/5m data and MA calculations")
     p.add_argument("--limitup-file", default="data/processed/recent_limitups.csv")
@@ -167,6 +170,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--days", type=int, default=None)
     p.add_argument("--max-codes", type=int, default=None)
     p.add_argument("--force-refresh", action="store_true")
+    p.add_argument("--ranking-model", default=str(DEFAULT_DAILY_RANKING_MODEL))
+    p.add_argument("--top-n", type=int, default=DEFAULT_DAILY_TOP_N)
     return parser
 
 
@@ -256,15 +261,18 @@ def generate_signals(args) -> int:
     service = MarketDataService()
     pool = load_limitup_file(args.limitup_file)
     signals, quality_rows = _build_signals(service, pool, args.days, args.max_codes, args.force_refresh)
+    ranked_signals, ranking_meta = apply_daily_research_ranking(signals, model_file=args.ranking_model, top_n=args.top_n)
     output_dir = get_data_config().reports_dir / "daily_signals"
     trade_date = _latest_trade_date(pool)
-    csv_path, md_path = write_signal_reports(signals, output_dir, trade_date=trade_date)
+    csv_path, md_path = write_signal_reports(ranked_signals, output_dir, trade_date=trade_date)
     quality_csv_path, quality_md_path = write_data_quality_reports(
         quality_rows,
         get_data_config().reports_dir / "data_quality",
         trade_date=trade_date,
     )
     print(f"signals: {len(signals)}")
+    print(f"ranking model: {ranking_meta['model_id']}")
+    print(f"model top_n: {ranking_meta['top_n']}")
     print(f"data quality rows: {len(quality_rows)}")
     print(f"csv: {csv_path}")
     print(f"markdown: {md_path}")
@@ -281,9 +289,10 @@ def run_daily(args) -> int:
         force_refresh=args.force_refresh,
     )
     signals, quality_rows = _build_signals(service, pool, args.days, args.max_codes, args.force_refresh)
+    ranked_signals, ranking_meta = apply_daily_research_ranking(signals, model_file=args.ranking_model, top_n=args.top_n)
     output_dir = get_data_config().reports_dir / "daily_signals"
     trade_date = _latest_trade_date(pool)
-    csv_path, md_path = write_signal_reports(signals, output_dir, trade_date=trade_date)
+    csv_path, md_path = write_signal_reports(ranked_signals, output_dir, trade_date=trade_date)
     quality_csv_path, quality_md_path = write_data_quality_reports(
         quality_rows,
         get_data_config().reports_dir / "data_quality",
@@ -291,6 +300,8 @@ def run_daily(args) -> int:
     )
     print(f"limit-up rows: {len(pool)}")
     print(f"signals: {len(signals)}")
+    print(f"ranking model: {ranking_meta['model_id']}")
+    print(f"model top_n: {ranking_meta['top_n']}")
     print(f"data quality rows: {len(quality_rows)}")
     print(f"csv: {csv_path}")
     print(f"markdown: {md_path}")
