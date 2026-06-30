@@ -407,7 +407,7 @@ def prefetch_future_bars_for_signals(
     for code in signals["code"].astype(str).str.zfill(6).drop_duplicates():
         attempted += 1
         try:
-            service.get_stock_bars(code, days=eval_days, end_date=end_date, force_refresh=force_refresh)
+            service.ensure_minute_cache(code, days=eval_days, end_date=end_date, force_refresh=force_refresh)
             ok += 1
             rows.append(
                 {
@@ -1385,7 +1385,7 @@ def _prefetch_selected_bars(
 ) -> None:
     for code in selected["code"].astype(str).str.zfill(6).drop_duplicates():
         try:
-            service.get_stock_bars(code, days=days, end_date=end_date, force_refresh=force_refresh)
+            service.ensure_minute_cache(code, days=days, end_date=end_date, force_refresh=force_refresh)
         except Exception:
             # The backtest row will still record missing or unusable D2 data.
             continue

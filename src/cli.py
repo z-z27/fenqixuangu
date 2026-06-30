@@ -142,6 +142,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--eval-days", type=int, default=None)
     p.add_argument("--max-codes", type=int, default=None)
     p.add_argument("--force-refresh", action="store_true")
+    p.add_argument("--workers", type=int, default=6, help="涨停池日线反推时的股票级并发数")
     p.add_argument("--hold-days", type=int, default=10)
     p.add_argument("--target-return-pct", type=float, default=7.0)
     p.add_argument("--secondary-target-return-pct", type=float, default=10.0)
@@ -449,6 +450,7 @@ def generate_history_samples(args) -> int:
         eval_days=args.eval_days,
         max_codes=args.max_codes,
         force_refresh=args.force_refresh,
+        workers=args.workers,
         hold_days=args.hold_days,
         target_return_pct=args.target_return_pct,
         secondary_target_return_pct=args.secondary_target_return_pct,

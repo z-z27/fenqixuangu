@@ -106,6 +106,7 @@ def run_history_sample_generation(
     eval_days: int | None = None,
     max_codes: int | None = None,
     force_refresh: bool = False,
+    workers: int = 6,
     hold_days: int = 10,
     target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
     secondary_target_return_pct: float = DEFAULT_SECONDARY_TARGET_RETURN_PCT,
@@ -126,11 +127,13 @@ def run_history_sample_generation(
     for requested_date in _iter_weekdays(start_date, end_date):
         run_row = _empty_generation_row(requested_date)
         try:
-            pool = service.collect_limit_ups(
-                trade_date=requested_date,
+            pool = _collect_limitups_for_history_sample(
+                service=service,
+                requested_date=requested_date,
+                start_date=start_date,
                 lookback_days=lookback_days,
                 force_refresh=force_refresh,
-                write_processed=False,
+                workers=workers,
             )
             actual_date = _latest_trade_date_from_pool(pool)
             run_row["actual_signal_date"] = actual_date
@@ -174,6 +177,8 @@ def run_history_sample_generation(
                 force_refresh=force_refresh,
             )
             future_fetch_rows.extend(future_fetch["rows"])
+            for code in signal_frame.get("code", pd.Series(dtype=str)).astype(str).str.zfill(6).drop_duplicates():
+                minute_cache.pop(code, None)
 
             for _, signal_row in signal_frame.iterrows():
                 candidate_rows.append(
@@ -243,6 +248,50 @@ def run_history_sample_generation(
         end_date=end_date,
     )
     return candidates, summary, run_log, future_fetch_log, candidates_csv, summary_csv, run_log_csv, future_fetch_csv, markdown_path
+
+
+def _collect_limitups_for_history_sample(
+    service: MarketDataService,
+    requested_date: str,
+    start_date: str,
+    lookback_days: int,
+    force_refresh: bool,
+    workers: int,
+) -> pd.DataFrame:
+    """Collect lookback limit-up pools without scanning pre-window holidays."""
+    frames: list[pd.DataFrame] = []
+    anchor = pd.Timestamp(requested_date)
+    start_ts = pd.Timestamp(start_date)
+
+    for offset in range(max(1, int(lookback_days))):
+        current = anchor - pd.Timedelta(days=offset)
+        if current.weekday() >= 5:
+            continue
+        date_text = current.strftime("%Y-%m-%d")
+        cached = None if force_refresh else service.limit_up_cache.read(date_text)
+        if cached is not None and not cached.empty:
+            frames.append(cached.copy())
+            continue
+        if current < start_ts and not force_refresh:
+            print(f"[history-samples] skip pre-window missing limit-up cache {date_text}", flush=True)
+            continue
+
+        frame = service.collect_limit_ups(
+            trade_date=date_text,
+            lookback_days=1,
+            force_refresh=force_refresh,
+            write_processed=False,
+            workers=workers,
+        )
+        if frame is not None and not frame.empty:
+            frames.append(frame)
+
+    if not frames:
+        raise RuntimeError(f"no limit-up data collected for history sample lookback ending {requested_date}")
+
+    result = pd.concat(frames, ignore_index=True)
+    result = result.sort_values(["trade_date", "code"]).drop_duplicates(["trade_date", "code"], keep="last")
+    return result.reset_index(drop=True)
 
 
 def evaluate_history_candidate_only(

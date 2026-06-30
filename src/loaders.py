@@ -199,6 +199,50 @@ class MarketDataService:
             quality=quality,
         )
 
+    def ensure_minute_cache(
+        self,
+        code: str,
+        days: int | None = None,
+        end_date: str | None = None,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        """Ensure 5m cache coverage without daily indicators or raw report writes."""
+        normalized = normalize_stock_code(code)
+        target_5min_days = int(days or self.config.default_5min_days)
+        cached_minute = None if force_refresh else self.minute_cache.read(normalized)
+        end_ts = pd.Timestamp(end_date or datetime.now().strftime("%Y-%m-%d"))
+        end_date_text = end_ts.strftime("%Y-%m-%d")
+
+        if cached_minute is not None and not cached_minute.empty and _cache_covers(
+            cached_minute,
+            "trade_date",
+            target_5min_days,
+            end_date=end_date_text,
+        ):
+            return {
+                "code": normalized,
+                "minute_source": "cache",
+                "from_cache": True,
+                "minute_rows": int(len(_filter_to_end_date(cached_minute, "trade_date", end_date_text))),
+            }
+
+        minute_start_ts = end_ts - pd.Timedelta(days=max(90, int((target_5min_days + 5) * 2.8)))
+        minute_start = minute_start_ts.strftime("%Y-%m-%d 09:30:00")
+        minute_end = end_ts.strftime("%Y-%m-%d 15:00:00")
+        minute, minute_source = self.provider.fetch_5min_history(
+            normalized,
+            minute_start,
+            minute_end,
+            adjust=self.config.adjust,
+        )
+        self.minute_cache.write(normalized, minute)
+        return {
+            "code": normalized,
+            "minute_source": minute_source,
+            "from_cache": False,
+            "minute_rows": int(len(minute)),
+        }
+
     def collect_bars_for_limitups(
         self,
         limit_up_pool: pd.DataFrame,
