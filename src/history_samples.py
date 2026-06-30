@@ -123,9 +123,13 @@ def run_history_sample_generation(
     run_rows: list[dict[str, Any]] = []
     future_fetch_rows: list[dict[str, Any]] = []
     minute_cache: dict[str, pd.DataFrame | None] = {}
+    missing_limitup_dates: set[str] = set()
+    requested_dates = _iter_weekdays(start_date, end_date)
+    total_dates = len(requested_dates)
 
-    for requested_date in _iter_weekdays(start_date, end_date):
+    for date_index, requested_date in enumerate(requested_dates, 1):
         run_row = _empty_generation_row(requested_date)
+        print(f"[history-samples] {date_index}/{total_dates} start {requested_date}", flush=True)
         try:
             pool = _collect_limitups_for_history_sample(
                 service=service,
@@ -134,14 +138,23 @@ def run_history_sample_generation(
                 lookback_days=lookback_days,
                 force_refresh=force_refresh,
                 workers=workers,
+                missing_dates=missing_limitup_dates,
             )
             actual_date = _latest_trade_date_from_pool(pool)
             run_row["actual_signal_date"] = actual_date
             run_row["limitup_rows"] = int(len(pool))
+            print(
+                f"[history-samples] {requested_date} limitups={len(pool)} actual={actual_date}",
+                flush=True,
+            )
             if actual_date != requested_date:
                 run_row["status"] = "skipped"
                 run_row["error"] = "exact signal date limit-up pool missing"
                 run_rows.append(run_row)
+                print(
+                    f"[history-samples] {date_index}/{total_dates} skipped {requested_date}: actual={actual_date}",
+                    flush=True,
+                )
                 continue
 
             signals, quality_rows = build_signals_for_pool(
@@ -151,6 +164,18 @@ def run_history_sample_generation(
                 days=signal_days,
                 max_codes=max_codes,
                 force_refresh=force_refresh,
+            )
+            quality_counts = (
+                pd.Series([row.get("status") for row in quality_rows]).value_counts()
+                if quality_rows
+                else pd.Series(dtype=int)
+            )
+            quality_ok = int(quality_counts.get("ok", 0))
+            quality_failed = int(quality_counts.get("failed", 0))
+            print(
+                f"[history-samples] {requested_date} signals={len(signals)} "
+                f"quality_ok={quality_ok} quality_failed={quality_failed}",
+                flush=True,
             )
             signals_csv, signals_md = write_signal_reports(
                 signals,
@@ -177,6 +202,12 @@ def run_history_sample_generation(
                 force_refresh=force_refresh,
             )
             future_fetch_rows.extend(future_fetch["rows"])
+            print(
+                f"[history-samples] {requested_date} future_fetch "
+                f"attempted={future_fetch['attempted']} ok={future_fetch['ok']} failed={future_fetch['failed']} "
+                f"end={future_end_date}",
+                flush=True,
+            )
             for code in signal_frame.get("code", pd.Series(dtype=str)).astype(str).str.zfill(6).drop_duplicates():
                 minute_cache.pop(code, None)
 
@@ -191,20 +222,20 @@ def run_history_sample_generation(
                         secondary_target_return_pct=secondary_target_return_pct,
                     )
                 )
-
-            quality_counts = (
-                pd.Series([row.get("status") for row in quality_rows]).value_counts()
-                if quality_rows
-                else pd.Series(dtype=int)
+            print(
+                f"[history-samples] {requested_date} evaluated_candidates={len(signal_frame)} "
+                f"total_candidates={len(candidate_rows)}",
+                flush=True,
             )
+
             run_row.update(
                 {
                     "status": "generated",
                     "signal_rows": int(len(signal_frame)),
                     "candidate_rows": int(len(signal_frame)),
                     "quality_rows": int(len(quality_rows)),
-                    "quality_ok": int(quality_counts.get("ok", 0)),
-                    "quality_failed": int(quality_counts.get("failed", 0)),
+                    "quality_ok": quality_ok,
+                    "quality_failed": quality_failed,
                     "future_fetch_end_date": future_end_date,
                     "future_fetch_attempted": int(future_fetch["attempted"]),
                     "future_fetch_ok": int(future_fetch["ok"]),
@@ -218,7 +249,9 @@ def run_history_sample_generation(
         except Exception as exc:
             run_row["status"] = "failed"
             run_row["error"] = str(exc)
+            print(f"[history-samples] {date_index}/{total_dates} failed {requested_date}: {exc}", flush=True)
         run_rows.append(run_row)
+        print(f"[history-samples] {date_index}/{total_dates} done {requested_date} status={run_row['status']}", flush=True)
 
     candidates = pd.DataFrame(candidate_rows)
     if candidates.empty:
@@ -257,9 +290,12 @@ def _collect_limitups_for_history_sample(
     lookback_days: int,
     force_refresh: bool,
     workers: int,
+    missing_dates: set[str] | None = None,
 ) -> pd.DataFrame:
     """Collect lookback limit-up pools without scanning pre-window holidays."""
     frames: list[pd.DataFrame] = []
+    errors: list[str] = []
+    known_missing = missing_dates if missing_dates is not None else set()
     anchor = pd.Timestamp(requested_date)
     start_ts = pd.Timestamp(start_date)
 
@@ -272,26 +308,68 @@ def _collect_limitups_for_history_sample(
         if cached is not None and not cached.empty:
             frames.append(cached.copy())
             continue
+        if date_text in known_missing and not force_refresh:
+            print(f"[history-samples] skip known missing limit-up date {date_text}", flush=True)
+            continue
         if current < start_ts and not force_refresh:
             print(f"[history-samples] skip pre-window missing limit-up cache {date_text}", flush=True)
             continue
+        if not force_refresh and _cached_daily_proves_non_trading(service, date_text):
+            known_missing.add(date_text)
+            print(f"[history-samples] skip non-trading date from cached daily data {date_text}", flush=True)
+            continue
 
-        frame = service.collect_limit_ups(
-            trade_date=date_text,
-            lookback_days=1,
-            force_refresh=force_refresh,
-            write_processed=False,
-            workers=workers,
-        )
+        try:
+            frame = service.collect_limit_ups(
+                trade_date=date_text,
+                lookback_days=1,
+                force_refresh=force_refresh,
+                write_processed=False,
+                workers=workers,
+            )
+        except Exception as exc:
+            message = str(exc)
+            if "date_seen=0" in message and not force_refresh:
+                known_missing.add(date_text)
+                print(f"[history-samples] skip non-trading date after daily scan {date_text}", flush=True)
+                continue
+            errors.append(f"{date_text}: {message}")
+            if offset == 0:
+                raise
+            continue
         if frame is not None and not frame.empty:
             frames.append(frame)
 
     if not frames:
-        raise RuntimeError(f"no limit-up data collected for history sample lookback ending {requested_date}")
+        suffix = "" if not errors else ": " + " | ".join(errors[:5])
+        raise RuntimeError(f"no limit-up data collected for history sample lookback ending {requested_date}{suffix}")
 
     result = pd.concat(frames, ignore_index=True)
     result = result.sort_values(["trade_date", "code"]).drop_duplicates(["trade_date", "code"], keep="last")
     return result.reset_index(drop=True)
+
+
+def _cached_daily_proves_non_trading(service: MarketDataService, date_text: str, sample_size: int = 50) -> bool:
+    target = pd.Timestamp(date_text)
+    covered = 0
+    for cache in (service.daily_unadjusted_cache, service.daily_cache):
+        paths = sorted(cache.root.glob("*.pkl"), key=lambda path: path.stat().st_mtime, reverse=True)
+        for path in paths:
+            try:
+                frame = pd.read_pickle(path)
+            except Exception:
+                continue
+            if frame is None or frame.empty or "date" not in frame.columns:
+                continue
+            dates = pd.to_datetime(frame["date"], errors="coerce").dropna()
+            if dates.empty or dates.max() < target:
+                continue
+            covered += 1
+            if bool((dates == target).any()):
+                return False
+            if covered >= int(sample_size):
+                return True
+    return covered >= 10
 
 
 def evaluate_history_candidate_only(
