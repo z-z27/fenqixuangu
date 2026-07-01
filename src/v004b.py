@@ -12,7 +12,7 @@ from .config import get_data_config
 from .logistic_v003 import _bool_series, _markdown_table, _mean, _safe_rate
 
 
-DEFAULT_SCORED_FILE = Path("reports/v004a/grid_v1/v004a_scored_candidates.csv")
+DEFAULT_SCORED_FILE = Path("reports/v004a/grid_v2_scored/v004a_scored_candidates.csv")
 DEFAULT_TOP_N = 3
 DEFAULT_INITIAL_TRAIN_DAYS = 8
 DEFAULT_CANDIDATE_TOP_K = 10
