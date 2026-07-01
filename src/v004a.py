@@ -136,6 +136,8 @@ def run_v004a_research(
     )
     rankwise = build_rankwise_summary(per_date)
     comparison = build_grid_comparison(scored=scored, top3_combo=top3_combo, rankwise=rankwise)
+    scored = add_scored_model_rank(scored)
+    scored_output = build_scored_candidates_output(scored, feature_info)
 
     data_quality = data_quality.copy()
     data_quality["l2_grid"] = ",".join(_format_grid_value(value) for value in l2_values)
@@ -160,6 +162,7 @@ def run_v004a_research(
     per_date_csv = out_dir / "v004a_per_date_topk_outcomes.csv"
     coefficients_csv = out_dir / "v004a_coefficients.csv"
     data_quality_csv = out_dir / "v004a_data_quality.csv"
+    scored_csv = out_dir / "v004a_scored_candidates.csv"
     report_path = out_dir / "v004a_report.md"
 
     comparison.to_csv(comparison_csv, index=False, encoding="utf-8-sig")
@@ -168,6 +171,8 @@ def run_v004a_research(
     per_date.to_csv(per_date_csv, index=False, encoding="utf-8-sig")
     coefficients.to_csv(coefficients_csv, index=False, encoding="utf-8-sig")
     data_quality.to_csv(data_quality_csv, index=False, encoding="utf-8-sig")
+    scored_output.to_csv(scored_csv, index=False, encoding="utf-8-sig")
+    print(f"scored candidates csv: {scored_csv}")
     report_path.write_text(
         build_v004a_report(
             samples_path=samples_path,
@@ -684,6 +689,66 @@ def build_grid_comparison(scored: pd.DataFrame, top3_combo: pd.DataFrame, rankwi
     return merged[[column for column in preferred if column in merged.columns] + remaining].sort_values(META_COLUMNS).reset_index(drop=True)
 
 
+def add_scored_model_rank(scored: pd.DataFrame) -> pd.DataFrame:
+    if scored.empty:
+        result = scored.copy()
+        result["model_rank"] = pd.Series(dtype="Int64")
+        return result
+    result = scored.copy()
+    result["code"] = result["code"].astype(str).str.zfill(6)
+    result["signal_date"] = result["signal_date"].astype(str)
+    result["model_score"] = pd.to_numeric(result["model_score"], errors="coerce")
+    if "graph_quality_score" not in result.columns:
+        result["graph_quality_score"] = 0.0
+    result["graph_quality_score"] = pd.to_numeric(result["graph_quality_score"], errors="coerce").fillna(0.0)
+    sort_columns = [*SCORE_META_COLUMNS, "signal_date", "model_score", "graph_quality_score", "code"]
+    ascending = [True] * (len(SCORE_META_COLUMNS) + 1) + [False, False, True]
+    result = result.sort_values(sort_columns, ascending=ascending, na_position="last").copy()
+    result["model_rank"] = result.groupby([*SCORE_META_COLUMNS, "signal_date"], dropna=False).cumcount() + 1
+    return result.reset_index(drop=True)
+
+
+def build_scored_candidates_output(scored: pd.DataFrame, feature_info: dict[str, Any]) -> pd.DataFrame:
+    priority_columns = [
+        "model_id",
+        "evaluation_scope",
+        "l2",
+        "positive_weight",
+        "feature_set",
+        "interaction_set",
+        "signal_date",
+        "code",
+        "model_score",
+        "model_probability",
+        "model_rank",
+        DEFAULT_TARGET_COLUMN,
+        DEFAULT_HIGH_RETURN_COLUMN,
+        DEFAULT_CLOSE_RETURN_COLUMN,
+        "realized_return_pct",
+        "eligible_for_trade",
+        "graph_quality_score",
+        "rank_d1_close_ma10_pct",
+        "rank_d1_low_ma10_pct",
+        "rank_trend_hold_score",
+        "rank_total_score",
+        "rank_theme_score",
+        "rank_days_since_d0",
+        "rank_log_candidate_base_price",
+    ]
+    for column in ("rank_active_money_score", "rank_d1_close_vwap_pct"):
+        if column in scored.columns:
+            priority_columns.append(column)
+    for column in feature_info.get("interaction_columns", []) or []:
+        if column in scored.columns and column not in priority_columns:
+            priority_columns.append(column)
+    for column in DAY_BUCKET_COLUMNS:
+        if column in scored.columns and column not in priority_columns:
+            priority_columns.append(column)
+    output_columns = [column for column in priority_columns if column in scored.columns]
+    output_columns.extend(column for column in scored.columns if column not in output_columns)
+    return scored[output_columns].copy()
+
+
 def build_v004a_report(
     samples_path: Path,
     output_dir: Path,
@@ -711,6 +776,7 @@ def build_v004a_report(
             "It does not remove v001 or v002.",
             "Random split is not allowed; this runner uses walk-forward validation only.",
             "The primary decision metrics are walk_forward Top3, realized return, and rank-wise metrics, not train AUC.",
+            "Full scored candidate ranks are written to v004a_scored_candidates.csv.",
             "",
             "## Inputs",
             "",
