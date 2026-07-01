@@ -37,12 +37,16 @@ from .v004a import (
 )
 from .v004b import (
     DEFAULT_CANDIDATE_TOP_K as DEFAULT_V004B_CANDIDATE_TOP_K,
+    DEFAULT_HARD_NEGATIVE_WEIGHT as DEFAULT_V004B_HARD_NEGATIVE_WEIGHT,
     DEFAULT_INITIAL_TRAIN_DAYS as DEFAULT_V004B_INITIAL_TRAIN_DAYS,
+    DEFAULT_PAIRWISE_MODE as DEFAULT_V004B_PAIRWISE_MODE,
     DEFAULT_PAIRWISE_L2 as DEFAULT_V004B_PAIRWISE_L2,
+    DEFAULT_RETURN_GAP_PCT as DEFAULT_V004B_RETURN_GAP_PCT,
     DEFAULT_SCORED_FILE as DEFAULT_V004B_SCORED_FILE,
     DEFAULT_TOP_N as DEFAULT_V004B_TOP_N,
     DEFAULT_V004A_L2 as DEFAULT_V004B_V004A_L2,
     DEFAULT_V004A_POSITIVE_WEIGHT as DEFAULT_V004B_V004A_POSITIVE_WEIGHT,
+    PAIRWISE_MODES as V004B_PAIRWISE_MODES,
     run_v004b_research,
 )
 
@@ -230,6 +234,10 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--v004a-positive-weight", type=float, default=DEFAULT_V004B_V004A_POSITIVE_WEIGHT)
     p.add_argument("--pairwise-l2", type=float, default=DEFAULT_V004B_PAIRWISE_L2)
     p.add_argument("--include-v002-top10", action="store_true")
+    p.add_argument("--use-source-features", action="store_true")
+    p.add_argument("--pairwise-mode", choices=sorted(V004B_PAIRWISE_MODES), default=DEFAULT_V004B_PAIRWISE_MODE)
+    p.add_argument("--return-gap-pct", type=float, default=DEFAULT_V004B_RETURN_GAP_PCT)
+    p.add_argument("--hard-negative-weight", type=float, default=DEFAULT_V004B_HARD_NEGATIVE_WEIGHT)
 
     p = sub.add_parser("run-daily", help="涨停池、补数、信号一键执行")
     p.add_argument("--date", default=None)
@@ -671,6 +679,10 @@ def train_v004b(args) -> int:
         v004a_positive_weight=args.v004a_positive_weight,
         pairwise_l2=args.pairwise_l2,
         include_v002_top10=args.include_v002_top10,
+        use_source_features=args.use_source_features,
+        pairwise_mode=args.pairwise_mode,
+        return_gap_pct=args.return_gap_pct,
+        hard_negative_weight=args.hard_negative_weight,
     )
     print(f"summary rows: {len(summary)}")
     print(f"daily rows: {len(daily_top3)}")

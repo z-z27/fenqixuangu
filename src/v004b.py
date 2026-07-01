@@ -19,13 +19,17 @@ DEFAULT_CANDIDATE_TOP_K = 10
 DEFAULT_V004A_L2 = 0.30
 DEFAULT_V004A_POSITIVE_WEIGHT = 1.5
 DEFAULT_PAIRWISE_L2 = 0.10
+DEFAULT_PAIRWISE_MODE = "target_binary"
+DEFAULT_RETURN_GAP_PCT = 3.0
+DEFAULT_HARD_NEGATIVE_WEIGHT = 1.0
+PAIRWISE_MODES = {"target_binary", "return_gap"}
 
 TARGET_COLUMN = "target7_d2open_d3high"
 HIGH_RETURN_COLUMN = "d2open_d3high_return_pct"
 CLOSE_RETURN_COLUMN = "d2open_d3close_return_pct"
 REALIZED_RETURN_COLUMN = "realized_return_pct"
 
-MODEL_ID = "pairwise_v004b_linear_ranker"
+MODEL_ID = "pairwise_v004b1_linear_ranker"
 SCOPE = "walk_forward"
 V004A_MODEL_ID = "logistic_v004a_weighted"
 V002_MODEL_ID = "ranking_model_v002_core_momentum_support"
@@ -53,6 +57,20 @@ BASE_FEATURE_COLUMNS = [
     "v004a_rank_inverse",
     "v002_score_rank_pct",
     "v002_rank_inverse",
+]
+
+NONLINEAR_FEATURE_COLUMNS = [
+    "extreme_vwap",
+    "extreme_price",
+    "extreme_close_low",
+    "extreme_close_ma10",
+    "extreme_low_ma10",
+    "mid_vwap_55_85",
+    "mid_price_55_85",
+    "mid_close_low_55_90",
+]
+
+SOURCE_FEATURE_COLUMNS = [
     "in_v004a_top10",
     "in_v002_top10",
 ]
@@ -68,7 +86,12 @@ def run_v004b_research(
     v004a_positive_weight: float = DEFAULT_V004A_POSITIVE_WEIGHT,
     pairwise_l2: float = DEFAULT_PAIRWISE_L2,
     include_v002_top10: bool = False,
+    use_source_features: bool = False,
+    pairwise_mode: str = DEFAULT_PAIRWISE_MODE,
+    return_gap_pct: float = DEFAULT_RETURN_GAP_PCT,
+    hard_negative_weight: float = DEFAULT_HARD_NEGATIVE_WEIGHT,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path]:
+    _validate_config(pairwise_mode=pairwise_mode, return_gap_pct=return_gap_pct, hard_negative_weight=hard_negative_weight)
     scored_path = Path(scored_file)
     raw = pd.read_csv(scored_path, dtype={"code": str})
     candidate_union, feature_columns, data_quality = prepare_candidate_union(
@@ -77,6 +100,7 @@ def run_v004b_research(
         v004a_positive_weight=float(v004a_positive_weight),
         candidate_top_k=int(candidate_top_k),
         include_v002_top10=bool(include_v002_top10),
+        use_source_features=bool(use_source_features),
     )
     dates = sorted(candidate_union["signal_date"].dropna().astype(str).unique().tolist())
     if len(dates) <= int(initial_train_days):
@@ -89,17 +113,25 @@ def run_v004b_research(
         top_n=int(top_n),
         initial_train_days=int(initial_train_days),
         pairwise_l2=float(pairwise_l2),
+        pairwise_mode=str(pairwise_mode),
+        return_gap_pct=float(return_gap_pct),
+        hard_negative_weight=float(hard_negative_weight),
     )
     summary = build_summary(daily_top3, top3_rows)
     for frame in (summary, daily_top3, top3_rows, candidate_union, coefficients, data_quality):
         _add_run_meta(
             frame,
             top_n=int(top_n),
+            initial_train_days=int(initial_train_days),
             candidate_top_k=int(candidate_top_k),
             v004a_l2=float(v004a_l2),
             v004a_positive_weight=float(v004a_positive_weight),
             pairwise_l2=float(pairwise_l2),
             include_v002_top10=bool(include_v002_top10),
+            use_source_features=bool(use_source_features),
+            pairwise_mode=str(pairwise_mode),
+            return_gap_pct=float(return_gap_pct),
+            hard_negative_weight=float(hard_negative_weight),
         )
 
     out_dir = Path(output_dir) if output_dir else get_data_config().reports_dir / "v004b" / _suffix_from_scored_path(scored_path)
@@ -139,6 +171,7 @@ def prepare_candidate_union(
     v004a_positive_weight: float,
     candidate_top_k: int,
     include_v002_top10: bool,
+    use_source_features: bool,
 ) -> tuple[pd.DataFrame, list[str], pd.DataFrame]:
     required = [
         "model_id",
@@ -246,8 +279,18 @@ def prepare_candidate_union(
     union["v002_rank_inverse"] = _inverse_rank(union["v002_model_rank"])
     union["in_v004a_top10"] = pd.to_numeric(union["in_v004a_top10"], errors="coerce").fillna(0).astype(int)
     union["in_v002_top10"] = pd.to_numeric(union["in_v002_top10"], errors="coerce").fillna(0).astype(int)
+    union["hard_negative"] = (
+        (pd.to_numeric(union["v004a_model_rank"], errors="coerce") <= 3)
+        & (~union[TARGET_COLUMN].astype(bool))
+    )
+    add_nonlinear_features(union)
 
-    feature_columns = [column for column in BASE_FEATURE_COLUMNS if column in union.columns]
+    feature_columns = [*BASE_FEATURE_COLUMNS, *NONLINEAR_FEATURE_COLUMNS]
+    if use_source_features:
+        feature_columns.extend(SOURCE_FEATURE_COLUMNS)
+    missing_feature_columns = [column for column in feature_columns if column not in union.columns]
+    for column in missing_feature_columns:
+        union[column] = 0.0
     for column in feature_columns:
         union[column] = pd.to_numeric(union[column], errors="coerce").fillna(0.0).astype(float)
     if not feature_columns:
@@ -265,11 +308,32 @@ def prepare_candidate_union(
                 "candidate_union_rows": int(len(union)),
                 "candidate_union_dates": int(union["signal_date"].nunique()),
                 "include_v002_top10": bool(include_v002_top10),
+                "use_source_features": bool(use_source_features),
                 "feature_columns": ",".join(feature_columns),
+                "base_feature_columns": ",".join(BASE_FEATURE_COLUMNS),
+                "nonlinear_feature_columns": ",".join(NONLINEAR_FEATURE_COLUMNS),
+                "source_feature_columns": ",".join(SOURCE_FEATURE_COLUMNS),
+                "missing_feature_columns_filled_zero": ",".join(missing_feature_columns),
             }
         ]
     )
     return union, feature_columns, data_quality
+
+
+def add_nonlinear_features(frame: pd.DataFrame) -> None:
+    vwap = _feature_series(frame, "rank_d1_close_vwap_pct")
+    price = _feature_series(frame, "rank_log_candidate_base_price")
+    close_low = _feature_series(frame, "inter_close_low")
+    close_ma10 = _feature_series(frame, "rank_d1_close_ma10_pct")
+    low_ma10 = _feature_series(frame, "rank_d1_low_ma10_pct")
+    frame["extreme_vwap"] = np.maximum(vwap - 0.85, 0.0)
+    frame["extreme_price"] = np.maximum(price - 0.85, 0.0)
+    frame["extreme_close_low"] = np.maximum(close_low - 0.90, 0.0)
+    frame["extreme_close_ma10"] = np.maximum(close_ma10 - 0.90, 0.0)
+    frame["extreme_low_ma10"] = np.maximum(low_ma10 - 0.90, 0.0)
+    frame["mid_vwap_55_85"] = np.clip(vwap, 0.55, 0.85) - 0.55
+    frame["mid_price_55_85"] = np.clip(price, 0.55, 0.85) - 0.55
+    frame["mid_close_low_55_90"] = np.clip(close_low, 0.55, 0.90) - 0.55
 
 
 def build_walk_forward_predictions(
@@ -279,6 +343,9 @@ def build_walk_forward_predictions(
     top_n: int,
     initial_train_days: int,
     pairwise_l2: float,
+    pairwise_mode: str,
+    return_gap_pct: float,
+    hard_negative_weight: float,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     top_rows: list[pd.DataFrame] = []
     daily_rows: list[dict[str, Any]] = []
@@ -289,7 +356,13 @@ def build_walk_forward_predictions(
         predict_date = dates[fold_index]
         train = candidate_union[candidate_union["signal_date"].isin(train_dates)].copy()
         predict = candidate_union[candidate_union["signal_date"] == predict_date].copy()
-        x_pairs, pair_weight, pair_count_by_date = build_pairwise_training_data(train, feature_columns)
+        x_pairs, pair_weight, pair_count_by_date = build_pairwise_training_data(
+            train,
+            feature_columns,
+            pairwise_mode=pairwise_mode,
+            return_gap_pct=float(return_gap_pct),
+            hard_negative_weight=float(hard_negative_weight),
+        )
         beta = fit_pairwise_logistic_l2(x_pairs, sample_weight=pair_weight, l2=float(pairwise_l2))
         coefficient_rows.append(
             build_coefficients_frame(
@@ -305,7 +378,7 @@ def build_walk_forward_predictions(
         ranked = score_and_rank_predict_date(predict, feature_columns, beta)
         selected = ranked.head(int(top_n)).copy()
         top_rows.append(selected)
-        daily_rows.append(build_daily_row(selected, predict_date, top_n=int(top_n)))
+        daily_rows.append(build_daily_row(selected, predict, predict_date, top_n=int(top_n)))
 
     top3_rows = pd.concat(top_rows, ignore_index=True) if top_rows else pd.DataFrame()
     daily_top3 = pd.DataFrame(daily_rows)
@@ -313,26 +386,90 @@ def build_walk_forward_predictions(
     return top3_rows, daily_top3, coefficients
 
 
-def build_pairwise_training_data(train: pd.DataFrame, feature_columns: list[str]) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
+def build_pairwise_training_data(
+    train: pd.DataFrame,
+    feature_columns: list[str],
+    *,
+    pairwise_mode: str = DEFAULT_PAIRWISE_MODE,
+    return_gap_pct: float = DEFAULT_RETURN_GAP_PCT,
+    hard_negative_weight: float = DEFAULT_HARD_NEGATIVE_WEIGHT,
+) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
+    _validate_config(pairwise_mode=pairwise_mode, return_gap_pct=return_gap_pct, hard_negative_weight=hard_negative_weight)
     pair_frames: list[np.ndarray] = []
     pair_weights: list[np.ndarray] = []
     pair_count_by_date: dict[str, int] = {}
     for signal_date, group in train.groupby("signal_date", dropna=False):
-        positives = group[group[TARGET_COLUMN].astype(bool)]
-        negatives = group[~group[TARGET_COLUMN].astype(bool)]
-        if positives.empty or negatives.empty:
+        if pairwise_mode == "target_binary":
+            diffs, raw_weight = _target_binary_pairs(group, feature_columns, hard_negative_weight=float(hard_negative_weight))
+        elif pairwise_mode == "return_gap":
+            diffs, raw_weight = _return_gap_pairs(
+                group,
+                feature_columns,
+                return_gap_pct=float(return_gap_pct),
+                hard_negative_weight=float(hard_negative_weight),
+            )
+        else:
+            raise RuntimeError(f"unsupported pairwise_mode={pairwise_mode}")
+        pair_count = int(len(diffs))
+        if pair_count <= 0:
             pair_count_by_date[str(signal_date)] = 0
             continue
-        pos_x = positives[feature_columns].to_numpy(dtype=float)
-        neg_x = negatives[feature_columns].to_numpy(dtype=float)
-        diffs = (pos_x[:, None, :] - neg_x[None, :, :]).reshape(-1, len(feature_columns))
-        pair_count = int(len(diffs))
+        raw_weight = np.asarray(raw_weight, dtype=float)
+        raw_weight = np.where(np.isfinite(raw_weight) & (raw_weight > 0), raw_weight, 0.0)
+        raw_sum = float(raw_weight.sum())
+        if raw_sum <= 0:
+            pair_count_by_date[str(signal_date)] = 0
+            continue
         pair_frames.append(diffs)
-        pair_weights.append(np.full(pair_count, 1.0 / float(pair_count), dtype=float))
+        pair_weights.append(raw_weight / raw_sum)
         pair_count_by_date[str(signal_date)] = pair_count
     if not pair_frames:
         return np.zeros((0, len(feature_columns)), dtype=float), np.zeros(0, dtype=float), pair_count_by_date
     return np.vstack(pair_frames), np.concatenate(pair_weights), pair_count_by_date
+
+
+def _target_binary_pairs(group: pd.DataFrame, feature_columns: list[str], hard_negative_weight: float) -> tuple[np.ndarray, np.ndarray]:
+    positives = group[group[TARGET_COLUMN].astype(bool)]
+    negatives = group[~group[TARGET_COLUMN].astype(bool)]
+    if positives.empty or negatives.empty:
+        return np.zeros((0, len(feature_columns)), dtype=float), np.zeros(0, dtype=float)
+    pos_x = positives[feature_columns].to_numpy(dtype=float)
+    neg_x = negatives[feature_columns].to_numpy(dtype=float)
+    diffs = (pos_x[:, None, :] - neg_x[None, :, :]).reshape(-1, len(feature_columns))
+    negative_weight = np.where(negatives["hard_negative"].astype(bool).to_numpy(), float(hard_negative_weight), 1.0)
+    weights = np.tile(negative_weight, len(positives))
+    return diffs, weights.astype(float)
+
+
+def _return_gap_pairs(
+    group: pd.DataFrame,
+    feature_columns: list[str],
+    return_gap_pct: float,
+    hard_negative_weight: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    evaluable = group[pd.to_numeric(group[HIGH_RETURN_COLUMN], errors="coerce").notna()].copy()
+    if len(evaluable) < 2:
+        return np.zeros((0, len(feature_columns)), dtype=float), np.zeros(0, dtype=float)
+    features = evaluable[feature_columns].to_numpy(dtype=float)
+    returns = pd.to_numeric(evaluable[HIGH_RETURN_COLUMN], errors="coerce").to_numpy(dtype=float)
+    hard_negative = evaluable["hard_negative"].astype(bool).to_numpy()
+    diffs: list[np.ndarray] = []
+    weights: list[float] = []
+    for left in range(len(evaluable) - 1):
+        for right in range(left + 1, len(evaluable)):
+            gap = float(returns[left] - returns[right])
+            if gap >= float(return_gap_pct):
+                positive_idx, negative_idx = left, right
+            elif -gap >= float(return_gap_pct):
+                positive_idx, negative_idx = right, left
+            else:
+                continue
+            diffs.append(features[positive_idx] - features[negative_idx])
+            weight = float(hard_negative_weight) if bool(hard_negative[negative_idx]) else 1.0
+            weights.append(weight)
+    if not diffs:
+        return np.zeros((0, len(feature_columns)), dtype=float), np.zeros(0, dtype=float)
+    return np.vstack(diffs).astype(float), np.asarray(weights, dtype=float)
 
 
 def fit_pairwise_logistic_l2(
@@ -394,15 +531,20 @@ def score_and_rank_predict_date(predict: pd.DataFrame, feature_columns: list[str
     return result
 
 
-def build_daily_row(selected: pd.DataFrame, signal_date: str, top_n: int) -> dict[str, Any]:
+def build_daily_row(selected: pd.DataFrame, candidate_pool: pd.DataFrame, signal_date: str, top_n: int) -> dict[str, Any]:
     target = selected[TARGET_COLUMN].astype(bool) if not selected.empty else pd.Series(dtype=bool)
     hit_count = int(target.sum())
+    pool_target = candidate_pool[TARGET_COLUMN].astype(bool) if not candidate_pool.empty else pd.Series(dtype=bool)
+    candidate_pool_hit_count = int(pool_target.sum())
     realized = pd.to_numeric(selected.get(REALIZED_RETURN_COLUMN), errors="coerce") if not selected.empty else pd.Series(dtype=float)
     high_return = pd.to_numeric(selected.get(HIGH_RETURN_COLUMN), errors="coerce") if not selected.empty else pd.Series(dtype=float)
     return {
         "signal_date": str(signal_date),
         "model_id": MODEL_ID,
         "evaluation_scope": SCOPE,
+        "candidate_pool_size": int(len(candidate_pool)),
+        "candidate_pool_hit_count": candidate_pool_hit_count,
+        "candidate_pool_all3_possible": bool(candidate_pool_hit_count >= int(top_n)),
         "selected_count": int(len(selected)),
         "hit_count": hit_count,
         "all_hit": bool(len(selected) == int(top_n) and hit_count == int(top_n)),
@@ -430,6 +572,12 @@ def build_summary(daily_top3: pd.DataFrame, top3_rows: pd.DataFrame) -> pd.DataF
         "hit_count_2_days": int((pd.to_numeric(daily_top3["hit_count"], errors="coerce").fillna(0) == 2).sum()),
         "hit_count_3_days": int((pd.to_numeric(daily_top3["hit_count"], errors="coerce").fillna(0) == 3).sum()),
         "avg_top3_realized_return": _mean(pd.to_numeric(daily_top3["avg_top3_realized_return"], errors="coerce")),
+        "candidate_pool_all3_possible_days": int(daily_top3["candidate_pool_all3_possible"].astype(bool).sum())
+        if "candidate_pool_all3_possible" in daily_top3.columns
+        else 0,
+        "candidate_pool_all3_impossible_days": int((~daily_top3["candidate_pool_all3_possible"].astype(bool)).sum())
+        if "candidate_pool_all3_possible" in daily_top3.columns
+        else 0,
     }
     for rank in (1, 2, 3):
         rank_rows = top3_rows[pd.to_numeric(top3_rows.get("daily_rank"), errors="coerce") == rank] if not top3_rows.empty else pd.DataFrame()
@@ -490,6 +638,32 @@ def build_report(
             f"- output dir: `{output_dir}`",
             f"- feature columns: `{', '.join(feature_columns)}`",
             "",
+            "## Configuration",
+            "",
+        ]
+    )
+    lines.extend(
+        _markdown_table(
+            data_quality,
+            [
+                "pairwise_mode",
+                "return_gap_pct",
+                "hard_negative_weight",
+                "use_source_features",
+                "candidate_top_k",
+                "include_v002_top10",
+                "v004a_l2",
+                "v004a_positive_weight",
+                "pairwise_l2",
+                "initial_train_days",
+                "top_n",
+                "feature_columns",
+            ],
+        )
+    )
+    lines.extend(
+        [
+            "",
             "## Data Quality",
             "",
         ]
@@ -526,6 +700,8 @@ def build_report(
                 "rank2_hit_rate",
                 "rank3_hit_rate",
                 "avg_top3_realized_return",
+                "candidate_pool_all3_possible_days",
+                "candidate_pool_all3_impossible_days",
             ],
         )
     )
@@ -533,7 +709,18 @@ def build_report(
     lines.extend(
         _markdown_table(
             daily_top3,
-            ["signal_date", "selected_count", "hit_count", "all_hit", "avg_top3_realized_return", "top3_codes", "top3_scores"],
+            [
+                "signal_date",
+                "candidate_pool_size",
+                "candidate_pool_hit_count",
+                "candidate_pool_all3_possible",
+                "selected_count",
+                "hit_count",
+                "all_hit",
+                "avg_top3_realized_return",
+                "top3_codes",
+                "top3_scores",
+            ],
         )
     )
     lines.extend(["", "## Top3 Rows Preview", ""])
@@ -549,20 +736,45 @@ def build_report(
 def _add_run_meta(
     frame: pd.DataFrame,
     top_n: int,
+    initial_train_days: int,
     candidate_top_k: int,
     v004a_l2: float,
     v004a_positive_weight: float,
     pairwise_l2: float,
     include_v002_top10: bool,
+    use_source_features: bool,
+    pairwise_mode: str,
+    return_gap_pct: float,
+    hard_negative_weight: float,
 ) -> None:
     if frame.empty:
         return
     frame["top_n"] = int(top_n)
+    frame["initial_train_days"] = int(initial_train_days)
     frame["candidate_top_k"] = int(candidate_top_k)
     frame["v004a_l2"] = float(v004a_l2)
     frame["v004a_positive_weight"] = float(v004a_positive_weight)
     frame["pairwise_l2"] = float(pairwise_l2)
     frame["include_v002_top10"] = bool(include_v002_top10)
+    frame["use_source_features"] = bool(use_source_features)
+    frame["pairwise_mode"] = str(pairwise_mode)
+    frame["return_gap_pct"] = float(return_gap_pct)
+    frame["hard_negative_weight"] = float(hard_negative_weight)
+
+
+def _validate_config(pairwise_mode: str, return_gap_pct: float, hard_negative_weight: float) -> None:
+    if str(pairwise_mode) not in PAIRWISE_MODES:
+        raise RuntimeError(f"unsupported pairwise_mode={pairwise_mode}; supported={sorted(PAIRWISE_MODES)}")
+    if not math.isfinite(float(return_gap_pct)) or float(return_gap_pct) < 0:
+        raise RuntimeError(f"return_gap_pct must be finite and non-negative: {return_gap_pct}")
+    if not math.isfinite(float(hard_negative_weight)) or float(hard_negative_weight) <= 0:
+        raise RuntimeError(f"hard_negative_weight must be finite and positive: {hard_negative_weight}")
+
+
+def _feature_series(frame: pd.DataFrame, column: str) -> pd.Series:
+    if column not in frame.columns:
+        return pd.Series(0.0, index=frame.index, dtype=float)
+    return pd.to_numeric(frame[column], errors="coerce").replace([np.inf, -np.inf], np.nan).fillna(0.0).astype(float)
 
 
 def _rank_pct_by_date(frame: pd.DataFrame, column: str) -> pd.Series:
@@ -613,6 +825,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--v004a-positive-weight", type=float, default=DEFAULT_V004A_POSITIVE_WEIGHT)
     parser.add_argument("--pairwise-l2", type=float, default=DEFAULT_PAIRWISE_L2)
     parser.add_argument("--include-v002-top10", action="store_true")
+    parser.add_argument("--use-source-features", action="store_true")
+    parser.add_argument("--pairwise-mode", choices=sorted(PAIRWISE_MODES), default=DEFAULT_PAIRWISE_MODE)
+    parser.add_argument("--return-gap-pct", type=float, default=DEFAULT_RETURN_GAP_PCT)
+    parser.add_argument("--hard-negative-weight", type=float, default=DEFAULT_HARD_NEGATIVE_WEIGHT)
     args = parser.parse_args(argv)
     summary, daily_top3, top3_rows, candidate_union, coefficients, report_path = run_v004b_research(
         scored_file=args.scored_file,
@@ -624,6 +840,10 @@ def main(argv: list[str] | None = None) -> int:
         v004a_positive_weight=args.v004a_positive_weight,
         pairwise_l2=args.pairwise_l2,
         include_v002_top10=args.include_v002_top10,
+        use_source_features=args.use_source_features,
+        pairwise_mode=args.pairwise_mode,
+        return_gap_pct=args.return_gap_pct,
+        hard_negative_weight=args.hard_negative_weight,
     )
     print(f"summary rows: {len(summary)}")
     print(f"daily rows: {len(daily_top3)}")
