@@ -68,6 +68,7 @@ def run_logistic_v003_research(
     l2: float = DEFAULT_L2,
     target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path]:
+    _validate_target_return_pct(target_return_pct)
     samples_path = Path(samples_file)
     raw = pd.read_csv(samples_path, dtype={"code": str})
     samples, data_quality = prepare_samples(raw, target_return_pct=float(target_return_pct))
@@ -189,6 +190,7 @@ def run_logistic_v003_l2_grid(
     target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
     l2_grid: str | list[float] | tuple[float, ...] = (),
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Path, Path, Path]:
+    _validate_target_return_pct(target_return_pct)
     samples_path = Path(samples_file)
     values = parse_l2_grid(l2_grid)
     if not values:
@@ -243,6 +245,9 @@ def prepare_samples(raw: pd.DataFrame, target_return_pct: float = DEFAULT_TARGET
     frame = raw.copy()
     frame["code"] = frame["code"].astype(str).str.zfill(6)
     frame["signal_date"] = frame["signal_date"].astype(str)
+    if "graph_quality_score" not in frame.columns:
+        frame["graph_quality_score"] = 0.0
+    frame["graph_quality_score"] = pd.to_numeric(frame["graph_quality_score"], errors="coerce").fillna(0.0)
     frame["eligible_for_trade"] = _bool_series(frame["eligible_for_trade"])
     frame[DEFAULT_TARGET_COLUMN] = _bool_series(frame[DEFAULT_TARGET_COLUMN])
     numeric_columns = [
@@ -720,6 +725,11 @@ def _suffix_from_samples_path(path: Path) -> str:
     if stem.startswith(prefix):
         return stem[len(prefix) :]
     return stem
+
+
+def _validate_target_return_pct(target_return_pct: float) -> None:
+    if abs(float(target_return_pct) - DEFAULT_TARGET_RETURN_PCT) > 1e-9:
+        raise RuntimeError("logistic_v003 currently supports only target7_d2open_d3high with target_return_pct=7.0")
 
 
 def parse_l2_grid(raw: str | list[float] | tuple[float, ...] | None) -> list[float]:
