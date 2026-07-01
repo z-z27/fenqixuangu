@@ -129,7 +129,11 @@ def run_v004a_research(
         thresholds=threshold_values,
         target_return_pct=float(target_return_pct),
     )
-    top3_combo = build_top3_combo_summary(per_date, target_return_pct=float(target_return_pct))
+    top3_combo = build_top3_combo_summary(
+        per_date,
+        top_n=int(top_n),
+        target_return_pct=float(target_return_pct),
+    )
     rankwise = build_rankwise_summary(per_date)
     comparison = build_grid_comparison(scored=scored, top3_combo=top3_combo, rankwise=rankwise)
 
@@ -548,7 +552,7 @@ def build_per_date_topk_outcomes(
     ).reset_index(drop=True)
 
 
-def build_top3_combo_summary(per_date: pd.DataFrame, target_return_pct: float) -> pd.DataFrame:
+def build_top3_combo_summary(per_date: pd.DataFrame, top_n: int, target_return_pct: float) -> pd.DataFrame:
     if per_date.empty:
         return pd.DataFrame()
     daily = _daily_rows_from_per_date(per_date)
@@ -558,7 +562,10 @@ def build_top3_combo_summary(per_date: pd.DataFrame, target_return_pct: float) -
         selected_ticket_count = int(pd.to_numeric(group["selected_count"], errors="coerce").fillna(0).sum())
         hit_count_total = int(pd.to_numeric(group["hit_count"], errors="coerce").fillna(0).sum())
         date_count = int(len(group))
-        no_trade_days = int((pd.to_numeric(group["selected_count"], errors="coerce").fillna(0) == 0).sum())
+        selected_count_series = pd.to_numeric(group["selected_count"], errors="coerce").fillna(0)
+        hit_count_series = pd.to_numeric(group["hit_count"], errors="coerce").fillna(0)
+        no_trade_days = int((selected_count_series == 0).sum())
+        underfilled_days = int((selected_count_series < int(top_n)).sum())
         avg_selected = _mean(pd.to_numeric(group["selected_count"], errors="coerce"))
         row = {
             **meta,
@@ -566,18 +573,21 @@ def build_top3_combo_summary(per_date: pd.DataFrame, target_return_pct: float) -
             "selected_ticket_count": selected_ticket_count,
             "top3_target_rate": _safe_rate(hit_count_total, selected_ticket_count),
             "top3_all_hit_rate": _safe_rate(int(group["all_hit"].astype(bool).sum()), date_count),
-            "hit_count_0_days": int((pd.to_numeric(group["hit_count"], errors="coerce").fillna(0) == 0).sum()),
-            "hit_count_1_days": int((pd.to_numeric(group["hit_count"], errors="coerce").fillna(0) == 1).sum()),
-            "hit_count_2_days": int((pd.to_numeric(group["hit_count"], errors="coerce").fillna(0) == 2).sum()),
-            "hit_count_3_days": int((pd.to_numeric(group["hit_count"], errors="coerce").fillna(0) == 3).sum()),
+            "hit_count_0_days": int((hit_count_series == 0).sum()),
+            "hit_count_1_days": int((hit_count_series == 1).sum()),
+            "hit_count_2_days": int((hit_count_series == 2).sum()),
+            "hit_count_3_days": int((hit_count_series == 3).sum()),
             "avg_top3_high_return": _mean(pd.to_numeric(group["avg_high_return"], errors="coerce")),
             "avg_top3_realized_return": _mean(pd.to_numeric(group["avg_realized_return"], errors="coerce")),
             "portfolio_realized_positive_rate": _safe_rate(int(group["portfolio_realized_positive"].astype(bool).sum()), date_count),
             "portfolio_realized_hit7_rate": _safe_rate(int(group["portfolio_realized_hit7"].astype(bool).sum()), date_count),
             "selected_count_per_day": avg_selected,
             "avg_selected_count_per_day": avg_selected,
-            "skip_day_rate": _safe_rate(no_trade_days, date_count),
+            "skip_day_rate": _safe_rate(underfilled_days, date_count),
             "no_trade_days": no_trade_days,
+            "no_trade_day_rate": _safe_rate(no_trade_days, date_count),
+            "underfilled_days": underfilled_days,
+            "underfilled_day_rate": _safe_rate(underfilled_days, date_count),
         }
         rows.append(row)
     return pd.DataFrame(rows).sort_values(META_COLUMNS).reset_index(drop=True)
@@ -666,6 +676,9 @@ def build_grid_comparison(scored: pd.DataFrame, top3_combo: pd.DataFrame, rankwi
         "avg_selected_count_per_day",
         "skip_day_rate",
         "no_trade_days",
+        "no_trade_day_rate",
+        "underfilled_days",
+        "underfilled_day_rate",
     ]
     remaining = [column for column in merged.columns if column not in preferred]
     return merged[[column for column in preferred if column in merged.columns] + remaining].sort_values(META_COLUMNS).reset_index(drop=True)
@@ -766,6 +779,9 @@ def build_v004a_report(
                 "avg_selected_count_per_day",
                 "skip_day_rate",
                 "no_trade_days",
+                "no_trade_day_rate",
+                "underfilled_days",
+                "underfilled_day_rate",
             ],
         )
     )
@@ -799,6 +815,9 @@ def build_v004a_report(
                 "avg_selected_count_per_day",
                 "skip_day_rate",
                 "no_trade_days",
+                "no_trade_day_rate",
+                "underfilled_days",
+                "underfilled_day_rate",
             ],
         )
     )
@@ -1067,6 +1086,8 @@ def parse_float_grid(raw: str | list[float] | tuple[float, ...] | None, default:
             raise RuntimeError(f"{name} values must be positive: {value}")
         if not math.isfinite(value):
             raise RuntimeError(f"{name} values must be finite: {value}")
+        if name == "threshold-grid" and not (0.0 <= value <= 1.0):
+            raise RuntimeError(f"{name} values must be between 0.0 and 1.0: {value}")
         if value in seen:
             continue
         seen.add(value)
