@@ -22,6 +22,7 @@ DEFAULT_CLOSE_RETURN_COLUMN = "d2open_d3close_return_pct"
 DEFAULT_TOP_N = 3
 DEFAULT_INITIAL_TRAIN_DAYS = 18
 DEFAULT_L2 = 1.0
+DEFAULT_TARGET_RETURN_PCT = 7.0
 
 RAW_FEATURE_COLUMNS = [
     "d1_close_ma10_pct",
@@ -65,10 +66,12 @@ def run_logistic_v003_research(
     top_n: int = DEFAULT_TOP_N,
     initial_train_days: int = DEFAULT_INITIAL_TRAIN_DAYS,
     l2: float = DEFAULT_L2,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path]:
+    target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path]:
     samples_path = Path(samples_file)
     raw = pd.read_csv(samples_path, dtype={"code": str})
-    samples = prepare_samples(raw)
+    samples, data_quality = prepare_samples(raw, target_return_pct=float(target_return_pct))
+    data_quality["l2"] = float(l2)
     dates = sorted(samples["signal_date"].dropna().astype(str).unique().tolist())
     if len(dates) < 3:
         raise RuntimeError("logistic_v003 requires at least 3 signal_date values")
@@ -100,12 +103,16 @@ def run_logistic_v003_research(
         l2=float(l2),
     )
     all_scored = pd.concat([scored_train_test_frame, walk_forward_scored], ignore_index=True)
-    daily_top3, top3_rows = build_daily_topn_outputs(all_scored, top_n=int(top_n))
+    daily_top3, top3_rows = build_daily_topn_outputs(all_scored, top_n=int(top_n), target_return_pct=float(target_return_pct))
     train_test_summary = build_model_summary(scored_train_test_frame, daily_top3, top3_rows)
     walk_forward_summary = build_model_summary(walk_forward_scored, daily_top3, top3_rows)
     rankwise = build_rankwise_summary(top3_rows)
     top3_combo = build_top3_combo_summary(daily_top3, top3_rows)
     comparison = pd.concat([train_test_summary, walk_forward_summary], ignore_index=True)
+    for frame in (train_test_summary, walk_forward_summary, rankwise, top3_combo, comparison):
+        if not frame.empty:
+            frame["l2"] = float(l2)
+            frame["target_return_pct"] = float(target_return_pct)
 
     coefficients_csv = out_dir / "logistic_v003_coefficients.csv"
     train_test_csv = out_dir / "logistic_v003_train_test_summary.csv"
@@ -115,6 +122,7 @@ def run_logistic_v003_research(
     rankwise_csv = out_dir / "logistic_v003_rankwise_summary.csv"
     top3_combo_csv = out_dir / "logistic_v003_top3_combo_summary.csv"
     comparison_csv = out_dir / "logistic_v003_comparison_summary.csv"
+    data_quality_csv = out_dir / "logistic_v003_data_quality.csv"
     model_json = out_dir / "logistic_v003_model.json"
     markdown_path = out_dir / "logistic_v003_comparison_report.md"
 
@@ -126,6 +134,7 @@ def run_logistic_v003_research(
     rankwise.to_csv(rankwise_csv, index=False, encoding="utf-8-sig")
     top3_combo.to_csv(top3_combo_csv, index=False, encoding="utf-8-sig")
     comparison.to_csv(comparison_csv, index=False, encoding="utf-8-sig")
+    data_quality.to_csv(data_quality_csv, index=False, encoding="utf-8-sig")
     model_json.write_text(
         json.dumps(
             {
@@ -134,9 +143,12 @@ def run_logistic_v003_research(
                 "target_column": DEFAULT_TARGET_COLUMN,
                 "high_return_column": DEFAULT_HIGH_RETURN_COLUMN,
                 "close_return_column": DEFAULT_CLOSE_RETURN_COLUMN,
+                "target_return_pct": float(target_return_pct),
                 "feature_columns": MODEL_FEATURE_COLUMNS,
                 "raw_feature_columns": RAW_FEATURE_COLUMNS,
                 "l2": float(l2),
+                "research_only": True,
+                "daily_ranking_compatible": False,
                 "train_dates": train_dates,
                 "test_dates": test_dates,
                 "intercept": float(beta[0]),
@@ -156,18 +168,64 @@ def run_logistic_v003_research(
             test_dates=test_dates,
             initial_train_days=int(initial_train_days),
             l2=float(l2),
+            target_return_pct=float(target_return_pct),
             coefficients=coefficients,
             comparison=comparison,
             rankwise=rankwise,
             top3_combo=top3_combo,
             daily_top3=daily_top3,
+            data_quality=data_quality,
         ),
         encoding="utf-8",
     )
-    return coefficients, comparison, rankwise, top3_combo, daily_top3, markdown_path
+    return coefficients, comparison, rankwise, top3_combo, daily_top3, data_quality, markdown_path
 
 
-def prepare_samples(raw: pd.DataFrame) -> pd.DataFrame:
+def run_logistic_v003_l2_grid(
+    samples_file: str | Path = DEFAULT_SAMPLES_FILE,
+    output_dir: str | Path | None = None,
+    top_n: int = DEFAULT_TOP_N,
+    initial_train_days: int = DEFAULT_INITIAL_TRAIN_DAYS,
+    target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
+    l2_grid: str | list[float] | tuple[float, ...] = (),
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Path, Path, Path]:
+    samples_path = Path(samples_file)
+    values = parse_l2_grid(l2_grid)
+    if not values:
+        raise RuntimeError("l2-grid is empty")
+    root_dir = Path(output_dir) if output_dir else get_data_config().reports_dir / "logistic_v003" / f"{_suffix_from_samples_path(samples_path)}_l2_grid"
+    root_dir.mkdir(parents=True, exist_ok=True)
+
+    comparison_frames: list[pd.DataFrame] = []
+    rankwise_frames: list[pd.DataFrame] = []
+    top3_combo_frames: list[pd.DataFrame] = []
+    for value in values:
+        subdir = root_dir / _l2_dir_name(float(value))
+        _, comparison, rankwise, top3_combo, _, _, _ = run_logistic_v003_research(
+            samples_file=samples_path,
+            output_dir=subdir,
+            top_n=top_n,
+            initial_train_days=initial_train_days,
+            l2=float(value),
+            target_return_pct=target_return_pct,
+        )
+        comparison_frames.append(comparison.assign(l2=float(value), l2_dir=subdir.name))
+        rankwise_frames.append(rankwise.assign(l2=float(value), l2_dir=subdir.name))
+        top3_combo_frames.append(top3_combo.assign(l2=float(value), l2_dir=subdir.name))
+
+    comparison_all = pd.concat(comparison_frames, ignore_index=True) if comparison_frames else pd.DataFrame()
+    rankwise_all = pd.concat(rankwise_frames, ignore_index=True) if rankwise_frames else pd.DataFrame()
+    top3_combo_all = pd.concat(top3_combo_frames, ignore_index=True) if top3_combo_frames else pd.DataFrame()
+    comparison_csv = root_dir / "logistic_v003_l2_grid_comparison.csv"
+    rankwise_csv = root_dir / "logistic_v003_l2_grid_rankwise.csv"
+    top3_combo_csv = root_dir / "logistic_v003_l2_grid_top3_combo.csv"
+    comparison_all.to_csv(comparison_csv, index=False, encoding="utf-8-sig")
+    rankwise_all.to_csv(rankwise_csv, index=False, encoding="utf-8-sig")
+    top3_combo_all.to_csv(top3_combo_csv, index=False, encoding="utf-8-sig")
+    return comparison_all, rankwise_all, top3_combo_all, comparison_csv, rankwise_csv, top3_combo_csv
+
+
+def prepare_samples(raw: pd.DataFrame, target_return_pct: float = DEFAULT_TARGET_RETURN_PCT) -> tuple[pd.DataFrame, pd.DataFrame]:
     required = [
         "signal_date",
         "code",
@@ -195,8 +253,24 @@ def prepare_samples(raw: pd.DataFrame) -> pd.DataFrame:
     ]
     for column in numeric_columns:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
-    frame = frame[frame["eligible_for_trade"] & frame[DEFAULT_HIGH_RETURN_COLUMN].notna()].copy()
+    eligible_mask = frame["eligible_for_trade"].fillna(False).astype(bool)
+    high_notna = frame[DEFAULT_HIGH_RETURN_COLUMN].notna()
+    close_notna = frame[DEFAULT_CLOSE_RETURN_COLUMN].notna()
+    frame = frame[eligible_mask & high_notna & close_notna].copy()
     frame = frame[frame["candidate_base_price"].notna() & (frame["candidate_base_price"] > 0)].copy()
+    data_quality = pd.DataFrame(
+        [
+            {
+                "raw_rows": int(len(raw)),
+                "eligible_rows_before_return_filter": int(eligible_mask.sum()),
+                "high_return_notna_rows": int((eligible_mask & high_notna).sum()),
+                "close_return_notna_rows": int((eligible_mask & close_notna).sum()),
+                "final_rows": int(len(frame)),
+                "close_return_missing_count": int((eligible_mask & high_notna & ~close_notna).sum()),
+                "target_return_pct": float(target_return_pct),
+            }
+        ]
+    )
     if frame.empty:
         raise RuntimeError("no logistic_v003 rows remain after eligible/return/base-price filters")
 
@@ -210,10 +284,10 @@ def prepare_samples(raw: pd.DataFrame) -> pd.DataFrame:
         )
     frame["realized_return_pct"] = np.where(
         frame[DEFAULT_TARGET_COLUMN].astype(bool),
-        7.0,
+        float(target_return_pct),
         pd.to_numeric(frame[DEFAULT_CLOSE_RETURN_COLUMN], errors="coerce"),
     )
-    return frame.sort_values(["signal_date", "code"]).reset_index(drop=True)
+    return frame.sort_values(["signal_date", "code"]).reset_index(drop=True), data_quality
 
 
 def score_all_models(frame: pd.DataFrame, beta: np.ndarray | None, scope: str) -> list[pd.DataFrame]:
@@ -322,7 +396,7 @@ def predict_logistic(beta: np.ndarray, x: np.ndarray) -> np.ndarray:
     return _sigmoid(x_aug @ beta)
 
 
-def build_daily_topn_outputs(scored: pd.DataFrame, top_n: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+def build_daily_topn_outputs(scored: pd.DataFrame, top_n: int, target_return_pct: float = DEFAULT_TARGET_RETURN_PCT) -> tuple[pd.DataFrame, pd.DataFrame]:
     if scored.empty:
         return pd.DataFrame(), pd.DataFrame()
     rows: list[pd.DataFrame] = []
@@ -351,7 +425,7 @@ def build_daily_topn_outputs(scored: pd.DataFrame, top_n: int) -> tuple[pd.DataF
                 "avg_top3_high_return": _mean(high_return),
                 "avg_top3_realized_return": _mean(realized),
                 "portfolio_realized_positive": bool(_mean(realized) is not None and (_mean(realized) or 0.0) > 0.0),
-                "portfolio_realized_hit7": bool(_mean(realized) is not None and (_mean(realized) or 0.0) >= 7.0),
+                "portfolio_realized_hit7": bool(_mean(realized) is not None and (_mean(realized) or 0.0) >= float(target_return_pct)),
             }
         )
     top3_rows = pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
@@ -471,11 +545,13 @@ def build_markdown_report(
     test_dates: list[str],
     initial_train_days: int,
     l2: float,
+    target_return_pct: float,
     coefficients: pd.DataFrame,
     comparison: pd.DataFrame,
     rankwise: pd.DataFrame,
     top3_combo: pd.DataFrame,
     daily_top3: pd.DataFrame,
+    data_quality: pd.DataFrame,
 ) -> str:
     lines = ["# logistic_v003 comparison", ""]
     lines.extend(
@@ -483,16 +559,41 @@ def build_markdown_report(
             "## Scope",
             "",
             "This is a research-only training run. It does not replace run-daily or the current daily ranking model.",
+            "logistic_v003_model.json is research-only and is not yet compatible with the existing daily_ranking/ranking_backtest model scorer.",
+            "Do not use it directly as a replacement ranking model for run-daily at this stage.",
             f"- samples file: `{samples_path}`",
             f"- output dir: `{output_dir}`",
             f"- rows after filters: **{len(samples)}**",
             f"- signal dates: **{samples['signal_date'].nunique()}**",
             f"- target column: **{DEFAULT_TARGET_COLUMN}**",
+            f"- target return pct: **{float(target_return_pct):.4f}**",
             f"- high return column: **{DEFAULT_HIGH_RETURN_COLUMN}**",
             f"- close return column: **{DEFAULT_CLOSE_RETURN_COLUMN}**",
             f"- date split: train **{train_dates[0]} to {train_dates[-1]}** ({len(train_dates)} dates), test **{test_dates[0]} to {test_dates[-1]}** ({len(test_dates)} dates)",
             f"- walk-forward initial train days: **{int(initial_train_days)}**",
             f"- logistic L2: **{float(l2):.4f}**",
+            "",
+            "## Data Quality",
+            "",
+        ]
+    )
+    lines.extend(
+        _markdown_table(
+            data_quality,
+            [
+                "raw_rows",
+                "eligible_rows_before_return_filter",
+                "high_return_notna_rows",
+                "close_return_notna_rows",
+                "final_rows",
+                "close_return_missing_count",
+                "target_return_pct",
+                "l2",
+            ],
+        )
+    )
+    lines.extend(
+        [
             "",
             "## Coefficients",
             "",
@@ -621,6 +722,31 @@ def _suffix_from_samples_path(path: Path) -> str:
     return stem
 
 
+def parse_l2_grid(raw: str | list[float] | tuple[float, ...] | None) -> list[float]:
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        parts = [part.strip() for part in raw.split(",") if part.strip()]
+        values = [float(part) for part in parts]
+    else:
+        values = [float(value) for value in raw]
+    result: list[float] = []
+    seen: set[float] = set()
+    for value in values:
+        if value <= 0:
+            raise RuntimeError(f"l2 values must be positive: {value}")
+        if value in seen:
+            continue
+        seen.add(value)
+        result.append(value)
+    return result
+
+
+def _l2_dir_name(value: float) -> str:
+    text = f"{float(value):g}".replace("-", "m").replace(".", "p")
+    return f"l2_{text}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Train and validate logistic_v003 research ranking model.")
     parser.add_argument("--samples-file", default=str(DEFAULT_SAMPLES_FILE))
@@ -628,19 +754,39 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
     parser.add_argument("--initial-train-days", type=int, default=DEFAULT_INITIAL_TRAIN_DAYS)
     parser.add_argument("--l2", type=float, default=DEFAULT_L2)
+    parser.add_argument("--l2-grid", default=None)
+    parser.add_argument("--target-return-pct", type=float, default=DEFAULT_TARGET_RETURN_PCT)
     args = parser.parse_args(argv)
-    coefficients, comparison, rankwise, top3_combo, daily_top3, markdown_path = run_logistic_v003_research(
+    if args.l2_grid:
+        comparison, rankwise, top3_combo, comparison_csv, rankwise_csv, top3_combo_csv = run_logistic_v003_l2_grid(
+            samples_file=args.samples_file,
+            output_dir=args.output_dir,
+            top_n=args.top_n,
+            initial_train_days=args.initial_train_days,
+            target_return_pct=args.target_return_pct,
+            l2_grid=args.l2_grid,
+        )
+        print(f"grid comparison rows: {len(comparison)}")
+        print(f"grid rankwise rows: {len(rankwise)}")
+        print(f"grid top3 combo rows: {len(top3_combo)}")
+        print(f"grid comparison csv: {comparison_csv}")
+        print(f"grid rankwise csv: {rankwise_csv}")
+        print(f"grid top3 combo csv: {top3_combo_csv}")
+        return 0
+    coefficients, comparison, rankwise, top3_combo, daily_top3, data_quality, markdown_path = run_logistic_v003_research(
         samples_file=args.samples_file,
         output_dir=args.output_dir,
         top_n=args.top_n,
         initial_train_days=args.initial_train_days,
         l2=args.l2,
+        target_return_pct=args.target_return_pct,
     )
     print(f"coefficients: {len(coefficients)}")
     print(f"comparison rows: {len(comparison)}")
     print(f"rankwise rows: {len(rankwise)}")
     print(f"top3 combo rows: {len(top3_combo)}")
     print(f"daily top3 rows: {len(daily_top3)}")
+    print(f"data quality rows: {len(data_quality)}")
     print(f"markdown: {markdown_path}")
     return 0
 

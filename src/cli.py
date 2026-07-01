@@ -16,7 +16,9 @@ from .logistic_v003 import (
     DEFAULT_INITIAL_TRAIN_DAYS,
     DEFAULT_L2,
     DEFAULT_SAMPLES_FILE as DEFAULT_LOGISTIC_V003_SAMPLES_FILE,
+    DEFAULT_TARGET_RETURN_PCT as DEFAULT_LOGISTIC_V003_TARGET_RETURN_PCT,
     DEFAULT_TOP_N as DEFAULT_LOGISTIC_V003_TOP_N,
+    run_logistic_v003_l2_grid,
     run_logistic_v003_research,
 )
 from .ranking_backtest import DEFAULT_TARGET_COLUMN, run_ranking_backtest
@@ -181,6 +183,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top-n", type=int, default=DEFAULT_LOGISTIC_V003_TOP_N)
     p.add_argument("--initial-train-days", type=int, default=DEFAULT_INITIAL_TRAIN_DAYS)
     p.add_argument("--l2", type=float, default=DEFAULT_L2)
+    p.add_argument("--l2-grid", default=None)
+    p.add_argument("--target-return-pct", type=float, default=DEFAULT_LOGISTIC_V003_TARGET_RETURN_PCT)
 
     p = sub.add_parser("run-daily", help="涨停池、补数、信号一键执行")
     p.add_argument("--date", default=None)
@@ -555,18 +559,36 @@ def ranking_backtest(args) -> int:
 
 
 def train_logistic_v003(args) -> int:
-    coefficients, comparison, rankwise, top3_combo, daily_top3, markdown_path = run_logistic_v003_research(
+    if args.l2_grid:
+        comparison, rankwise, top3_combo, comparison_csv, rankwise_csv, top3_combo_csv = run_logistic_v003_l2_grid(
+            samples_file=args.samples_file,
+            output_dir=args.output_dir,
+            top_n=args.top_n,
+            initial_train_days=args.initial_train_days,
+            target_return_pct=args.target_return_pct,
+            l2_grid=args.l2_grid,
+        )
+        print(f"grid comparison rows: {len(comparison)}")
+        print(f"grid rankwise rows: {len(rankwise)}")
+        print(f"grid top3 combo rows: {len(top3_combo)}")
+        print(f"grid comparison csv: {comparison_csv}")
+        print(f"grid rankwise csv: {rankwise_csv}")
+        print(f"grid top3 combo csv: {top3_combo_csv}")
+        return 0
+    coefficients, comparison, rankwise, top3_combo, daily_top3, data_quality, markdown_path = run_logistic_v003_research(
         samples_file=args.samples_file,
         output_dir=args.output_dir,
         top_n=args.top_n,
         initial_train_days=args.initial_train_days,
         l2=args.l2,
+        target_return_pct=args.target_return_pct,
     )
     print(f"coefficients: {len(coefficients)}")
     print(f"comparison rows: {len(comparison)}")
     print(f"rankwise rows: {len(rankwise)}")
     print(f"top3 combo rows: {len(top3_combo)}")
     print(f"daily top3 rows: {len(daily_top3)}")
+    print(f"data quality rows: {len(data_quality)}")
     print(f"markdown: {markdown_path}")
     return 0
 
