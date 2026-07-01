@@ -25,6 +25,16 @@ from .ranking_backtest import DEFAULT_TARGET_COLUMN, run_ranking_backtest
 from .report import write_data_quality_reports, write_signal_reports
 from .research_models import run_factor_analysis
 from .signal_engine import generate_signal
+from .v004a import (
+    DEFAULT_INITIAL_TRAIN_DAYS as DEFAULT_V004A_INITIAL_TRAIN_DAYS,
+    DEFAULT_L2_GRID as DEFAULT_V004A_L2_GRID,
+    DEFAULT_POSITIVE_WEIGHT_GRID as DEFAULT_V004A_POSITIVE_WEIGHT_GRID,
+    DEFAULT_SAMPLES_FILE as DEFAULT_V004A_SAMPLES_FILE,
+    DEFAULT_TARGET_RETURN_PCT as DEFAULT_V004A_TARGET_RETURN_PCT,
+    DEFAULT_THRESHOLD_GRID as DEFAULT_V004A_THRESHOLD_GRID,
+    DEFAULT_TOP_N as DEFAULT_V004A_TOP_N,
+    run_v004a_research,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -57,6 +67,8 @@ def main(argv: list[str] | None = None) -> int:
             return ranking_backtest(args)
         if args.command == "train-logistic-v003":
             return train_logistic_v003(args)
+        if args.command == "train-v004a":
+            return train_v004a(args)
         if args.command == "run-daily":
             return run_daily(args)
     except Exception as exc:
@@ -185,6 +197,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--l2", type=float, default=DEFAULT_L2)
     p.add_argument("--l2-grid", default=None)
     p.add_argument("--target-return-pct", type=float, default=DEFAULT_LOGISTIC_V003_TARGET_RETURN_PCT)
+
+    p = sub.add_parser("train-v004a", help="run research-only v004a weighted logistic walk-forward validation")
+    p.add_argument("--samples-file", default=str(DEFAULT_V004A_SAMPLES_FILE))
+    p.add_argument("--output-dir", default=None)
+    p.add_argument("--top-n", type=int, default=DEFAULT_V004A_TOP_N)
+    p.add_argument("--initial-train-days", type=int, default=DEFAULT_V004A_INITIAL_TRAIN_DAYS)
+    p.add_argument("--target-return-pct", type=float, default=DEFAULT_V004A_TARGET_RETURN_PCT)
+    p.add_argument("--l2-grid", default=",".join(f"{float(value):g}" for value in DEFAULT_V004A_L2_GRID))
+    p.add_argument("--positive-weight-grid", default=",".join(f"{float(value):g}" for value in DEFAULT_V004A_POSITIVE_WEIGHT_GRID))
+    p.add_argument("--threshold-grid", default=",".join(f"{float(value):g}" for value in DEFAULT_V004A_THRESHOLD_GRID))
 
     p = sub.add_parser("run-daily", help="涨停池、补数、信号一键执行")
     p.add_argument("--date", default=None)
@@ -590,6 +612,28 @@ def train_logistic_v003(args) -> int:
     print(f"daily top3 rows: {len(daily_top3)}")
     print(f"data quality rows: {len(data_quality)}")
     print(f"markdown: {markdown_path}")
+    return 0
+
+
+def train_v004a(args) -> int:
+    comparison, rankwise, top3_combo, per_date, coefficients, data_quality, scored, report_path = run_v004a_research(
+        samples_file=args.samples_file,
+        output_dir=args.output_dir,
+        top_n=args.top_n,
+        initial_train_days=args.initial_train_days,
+        target_return_pct=args.target_return_pct,
+        l2_grid=args.l2_grid,
+        positive_weight_grid=args.positive_weight_grid,
+        threshold_grid=args.threshold_grid,
+    )
+    print(f"comparison rows: {len(comparison)}")
+    print(f"rankwise rows: {len(rankwise)}")
+    print(f"top3 combo rows: {len(top3_combo)}")
+    print(f"per-date rows: {len(per_date)}")
+    print(f"coefficients rows: {len(coefficients)}")
+    print(f"data quality rows: {len(data_quality)}")
+    print(f"scored candidate rows: {len(scored)}")
+    print(f"markdown: {report_path}")
     return 0
 
 
