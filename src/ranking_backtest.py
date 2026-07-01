@@ -12,6 +12,7 @@ from .config import get_data_config
 
 
 DEFAULT_TARGET_RETURN_PCT = 7.0
+DEFAULT_TARGET_COLUMN = "target7"
 SUPPORTED_MODEL_TYPES = {"linear_score", "bucket_score", "interaction_rules"}
 
 EXECUTION_ONLY_COLUMNS = {
@@ -39,10 +40,31 @@ DEFAULT_FORBIDDEN_INPUT_PATTERNS = [
     "candidate_d3_*",
     "candidate_d5_*",
     "candidate_d10_*",
+    "d2_trade_date",
+    "d3_trade_date",
+    "d2_open_price",
+    "d3_high_price",
+    "d3_close_price",
+    "d2open_d3*",
+    "ranking_target",
+    "ranking_return_pct",
     "target7",
+    "target7_*",
     "target10",
     *sorted(EXECUTION_ONLY_COLUMNS),
 ]
+
+TARGET_RETURN_COLUMNS = {
+    "target7": "candidate_d3_max_return_pct",
+    "target7_d2open_d3high": "d2open_d3high_return_pct",
+    "target7_d2open_d3close": "d2open_d3close_return_pct",
+}
+
+TARGET_DESCRIPTIONS = {
+    "target7": "legacy D1 close proxy target: D2+D3 high window >= target return",
+    "target7_d2open_d3high": "D2 open entry reference, D3 intraday high >= target return",
+    "target7_d2open_d3close": "D2 open entry reference, D3 close >= target return",
+}
 
 
 def run_ranking_backtest(
@@ -51,37 +73,51 @@ def run_ranking_backtest(
     output_dir: str | Path | None = None,
     top_n: int = 3,
     target_return_pct: float | None = None,
+    target_column: str = DEFAULT_TARGET_COLUMN,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path, Path, Path, Path, Path]:
     """Validate a research ranking model against clean history candidate samples.
 
-    This layer does not simulate D2 execution. It only scores D1-night candidates,
-    ranks them by signal_date, selects TopN, and evaluates target7 using
-    candidate_d3_max_return_pct.
+    This layer scores D1-night candidates, ranks them by signal_date, selects
+    TopN, and evaluates the requested target column.
     """
     samples_path = Path(samples_file)
     model_path = Path(model_file)
     model = json.loads(model_path.read_text(encoding="utf-8"))
     target_pct = float(target_return_pct if target_return_pct is not None else model.get("target_return_pct", DEFAULT_TARGET_RETURN_PCT))
+    target_column = str(target_column or DEFAULT_TARGET_COLUMN)
 
     samples = pd.read_csv(samples_path, dtype={"code": str})
-    candidates = prepare_ranking_samples(samples, target_return_pct=target_pct)
+    candidates = prepare_ranking_samples(samples, target_return_pct=target_pct, target_column=target_column)
     validate_ranking_model(model, candidates.columns)
     scored = score_candidates(candidates, model)
     ranked = rank_candidates(scored)
     topn = select_daily_topn(ranked, top_n=top_n)
-    daily = build_daily_ranking_report(ranked, topn, top_n=top_n)
+    return_column = _return_column_for_target(target_column)
+    daily = build_daily_ranking_report(ranked, topn, top_n=top_n, target_column=target_column, return_column=return_column)
     failures = build_failure_report(daily)
-    summary = build_ranking_summary(ranked, topn, daily, model, samples_path, model_path, top_n=top_n, target_return_pct=target_pct)
+    summary = build_ranking_summary(
+        ranked,
+        topn,
+        daily,
+        model,
+        samples_path,
+        model_path,
+        top_n=top_n,
+        target_return_pct=target_pct,
+        target_column=target_column,
+        return_column=return_column,
+    )
 
-    out_dir = Path(output_dir) if output_dir else _default_output_dir(model, samples_path, top_n)
+    out_dir = Path(output_dir) if output_dir else _default_output_dir(model, samples_path, top_n, target_column)
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = _suffix_from_samples_path(samples_path)
     model_id = str(model.get("model_id", model_path.stem))
-    summary_csv = out_dir / f"ranking_backtest_summary_{model_id}_top{top_n}_{suffix}.csv"
-    daily_csv = out_dir / f"ranking_backtest_daily_{model_id}_top{top_n}_{suffix}.csv"
-    topn_csv = out_dir / f"ranking_backtest_topn_{model_id}_top{top_n}_{suffix}.csv"
-    failures_csv = out_dir / f"ranking_backtest_failures_{model_id}_top{top_n}_{suffix}.csv"
-    markdown_path = out_dir / f"ranking_backtest_{model_id}_top{top_n}_{suffix}.md"
+    target_suffix = _target_file_suffix(target_column)
+    summary_csv = out_dir / f"ranking_backtest_summary_{model_id}_top{top_n}_{suffix}{target_suffix}.csv"
+    daily_csv = out_dir / f"ranking_backtest_daily_{model_id}_top{top_n}_{suffix}{target_suffix}.csv"
+    topn_csv = out_dir / f"ranking_backtest_topn_{model_id}_top{top_n}_{suffix}{target_suffix}.csv"
+    failures_csv = out_dir / f"ranking_backtest_failures_{model_id}_top{top_n}_{suffix}{target_suffix}.csv"
+    markdown_path = out_dir / f"ranking_backtest_{model_id}_top{top_n}_{suffix}{target_suffix}.md"
 
     summary.to_csv(summary_csv, index=False, encoding="utf-8-sig")
     daily.to_csv(daily_csv, index=False, encoding="utf-8-sig")
@@ -91,24 +127,38 @@ def run_ranking_backtest(
     return ranked, topn, daily, failures, summary, summary_csv, daily_csv, topn_csv, failures_csv, markdown_path
 
 
-def prepare_ranking_samples(samples: pd.DataFrame, target_return_pct: float) -> pd.DataFrame:
+def prepare_ranking_samples(samples: pd.DataFrame, target_return_pct: float, target_column: str = DEFAULT_TARGET_COLUMN) -> pd.DataFrame:
     frame = samples.copy()
     if frame.empty:
         raise RuntimeError("history candidate sample file is empty")
     leaked = sorted(EXECUTION_ONLY_COLUMNS.intersection(frame.columns))
     if leaked:
         raise RuntimeError(f"ranking_backtest input contains execution-only columns: {leaked}")
-    required = ["signal_date", "code", "candidate_d3_max_return_pct"]
+    target_column = str(target_column or DEFAULT_TARGET_COLUMN)
+    return_column = _return_column_for_target(target_column)
+    required = ["signal_date", "code"]
+    if target_column not in frame.columns and return_column not in frame.columns:
+        required.append(target_column)
     missing = [column for column in required if column not in frame.columns]
     if missing:
         raise RuntimeError(f"ranking_backtest input missing required columns: {missing}")
     frame["code"] = frame["code"].astype(str).str.zfill(6)
     frame["signal_date"] = frame["signal_date"].astype(str)
-    frame["candidate_d3_max_return_pct"] = pd.to_numeric(frame["candidate_d3_max_return_pct"], errors="coerce")
-    if "target7" in frame.columns:
-        frame["target7"] = _bool_series(frame["target7"])
+    if "candidate_d3_max_return_pct" in frame.columns:
+        frame["candidate_d3_max_return_pct"] = pd.to_numeric(frame["candidate_d3_max_return_pct"], errors="coerce")
+    if return_column in frame.columns and return_column != target_column:
+        frame[return_column] = pd.to_numeric(frame[return_column], errors="coerce")
+    if target_column in frame.columns:
+        frame[target_column] = _bool_series(frame[target_column])
     else:
-        frame["target7"] = frame["candidate_d3_max_return_pct"] >= float(target_return_pct)
+        if return_column not in frame.columns:
+            raise RuntimeError(f"ranking_backtest target {target_column} requires missing return column {return_column}")
+        frame[target_column] = frame[return_column] >= float(target_return_pct)
+    frame["ranking_target"] = frame[target_column].fillna(False).astype(bool)
+    if return_column in frame.columns and return_column != target_column:
+        frame["ranking_return_pct"] = pd.to_numeric(frame[return_column], errors="coerce")
+    else:
+        frame["ranking_return_pct"] = pd.NA
     if "eligible_for_trade" in frame.columns:
         frame["eligible_for_trade"] = _bool_series(frame["eligible_for_trade"])
     else:
@@ -129,7 +179,7 @@ def validate_ranking_model(model: dict[str, Any], sample_columns: pd.Index) -> N
     missing = [feature for feature in features if feature not in sample_columns]
     if missing:
         raise RuntimeError(f"ranking model feature columns missing in samples: {missing}")
-    forbidden = model.get("forbidden_input_patterns") or DEFAULT_FORBIDDEN_INPUT_PATTERNS
+    forbidden = sorted(set(DEFAULT_FORBIDDEN_INPUT_PATTERNS).union(model.get("forbidden_input_patterns") or []))
     forbidden_features = [feature for feature in features if _matches_any_pattern(feature, forbidden)]
     if forbidden_features:
         raise RuntimeError(f"ranking model uses forbidden future/label/execution inputs: {forbidden_features}")
@@ -235,7 +285,10 @@ def rank_candidates(scored: pd.DataFrame) -> pd.DataFrame:
     if eligible.empty:
         return eligible
     eligible["research_score"] = pd.to_numeric(eligible["research_score"], errors="coerce").fillna(float("-inf"))
-    eligible["candidate_d3_max_return_pct"] = pd.to_numeric(eligible["candidate_d3_max_return_pct"], errors="coerce")
+    if "candidate_d3_max_return_pct" in eligible.columns:
+        eligible["candidate_d3_max_return_pct"] = pd.to_numeric(eligible["candidate_d3_max_return_pct"], errors="coerce")
+    if "ranking_return_pct" in eligible.columns:
+        eligible["ranking_return_pct"] = pd.to_numeric(eligible["ranking_return_pct"], errors="coerce")
     eligible = eligible.sort_values(
         ["signal_date", "research_score", "graph_quality_score", "code"],
         ascending=[True, False, False, True],
@@ -250,43 +303,53 @@ def select_daily_topn(ranked: pd.DataFrame, top_n: int) -> pd.DataFrame:
     return ranked[ranked["daily_rank"] <= int(top_n)].copy().reset_index(drop=True)
 
 
-def build_daily_ranking_report(ranked: pd.DataFrame, topn: pd.DataFrame, top_n: int) -> pd.DataFrame:
+def build_daily_ranking_report(
+    ranked: pd.DataFrame,
+    topn: pd.DataFrame,
+    top_n: int,
+    target_column: str = DEFAULT_TARGET_COLUMN,
+    return_column: str = "candidate_d3_max_return_pct",
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     dates = sorted(ranked["signal_date"].dropna().astype(str).unique().tolist()) if not ranked.empty else []
     for signal_date in dates:
         day_all = ranked[ranked["signal_date"].astype(str) == signal_date]
         day_top = topn[topn["signal_date"].astype(str) == signal_date]
-        top_target = day_top["target7"].fillna(False).astype(bool) if not day_top.empty else pd.Series(dtype=bool)
-        returns = pd.to_numeric(day_top.get("candidate_d3_max_return_pct"), errors="coerce") if not day_top.empty else pd.Series(dtype=float)
+        top_target = day_top["ranking_target"].fillna(False).astype(bool) if not day_top.empty else pd.Series(dtype=bool)
+        returns = pd.to_numeric(day_top.get("ranking_return_pct"), errors="coerce") if not day_top.empty else pd.Series(dtype=float)
         rows.append(
             {
                 "signal_date": signal_date,
                 "top_n": int(top_n),
+                "target_column": target_column,
+                "return_column": return_column,
                 "eligible_count": int(len(day_all)),
                 "topn_count": int(len(day_top)),
-                "topn_target7_count": int(top_target.sum()) if len(day_top) else 0,
+                "topn_target_count": int(top_target.sum()) if len(day_top) else 0,
+                "topn_target_rate": _safe_rate(int(top_target.sum()), int(len(day_top))) if len(day_top) else None,
                 "daily_hit": bool(top_target.any()) if len(day_top) else False,
                 "top1_code": _joined(day_top.head(1), "code"),
                 "top1_score": _first_number(day_top, "research_score"),
-                "top1_candidate_d3_max_return_pct": _first_number(day_top, "candidate_d3_max_return_pct"),
-                "best_topn_candidate_d3_max_return_pct": _max_number(returns),
-                "avg_topn_candidate_d3_max_return_pct": _mean(returns),
+                "top1_return_pct": _first_number(day_top, "ranking_return_pct"),
+                "best_topn_return_pct": _max_number(returns),
+                "avg_topn_return_pct": _mean(returns),
                 "topn_codes": _joined(day_top, "code"),
                 "topn_scores": _joined_numbers(day_top, "research_score"),
-                "topn_candidate_d3_max_return_pct": _joined_numbers(day_top, "candidate_d3_max_return_pct"),
+                "topn_returns": _joined_numbers(day_top, "ranking_return_pct"),
             }
         )
     return pd.DataFrame(rows)
 
 
 def build_failure_report(daily: pd.DataFrame) -> pd.DataFrame:
+    columns = ["signal_date", "top_n", "target_column", "topn_codes", "topn_scores", "topn_returns", "reason"]
     if daily.empty:
-        return pd.DataFrame(columns=["signal_date", "top_n", "topn_codes", "topn_scores", "topn_candidate_d3_max_return_pct", "reason"])
+        return pd.DataFrame(columns=columns)
     failures = daily[~daily["daily_hit"].fillna(False).astype(bool)].copy()
     if failures.empty:
-        return pd.DataFrame(columns=["signal_date", "top_n", "topn_codes", "topn_scores", "topn_candidate_d3_max_return_pct", "reason"])
-    failures["reason"] = "no_topn_target7"
-    return failures[["signal_date", "top_n", "topn_codes", "topn_scores", "topn_candidate_d3_max_return_pct", "reason"]].reset_index(drop=True)
+        return pd.DataFrame(columns=columns)
+    failures["reason"] = "no_topn_target_hit"
+    return failures[columns].reset_index(drop=True)
 
 
 def build_ranking_summary(
@@ -298,11 +361,24 @@ def build_ranking_summary(
     model_path: Path,
     top_n: int,
     target_return_pct: float,
+    target_column: str = DEFAULT_TARGET_COLUMN,
+    return_column: str = "candidate_d3_max_return_pct",
 ) -> pd.DataFrame:
-    top_targets = topn["target7"].fillna(False).astype(bool) if not topn.empty else pd.Series(dtype=bool)
+    top_targets = topn["ranking_target"].fillna(False).astype(bool) if not topn.empty else pd.Series(dtype=bool)
     daily_hits = daily["daily_hit"].fillna(False).astype(bool) if not daily.empty else pd.Series(dtype=bool)
-    top1_returns = pd.to_numeric(daily.get("top1_candidate_d3_max_return_pct"), errors="coerce") if not daily.empty else pd.Series(dtype=float)
-    topn_returns = pd.to_numeric(topn.get("candidate_d3_max_return_pct"), errors="coerce") if not topn.empty else pd.Series(dtype=float)
+    top1_returns = pd.to_numeric(daily.get("top1_return_pct"), errors="coerce") if not daily.empty else pd.Series(dtype=float)
+    topn_returns = pd.to_numeric(topn.get("ranking_return_pct"), errors="coerce") if not topn.empty else pd.Series(dtype=float)
+    topn_target_rate = _safe_rate(int(top_targets.sum()), int(len(topn)))
+    avg_top1_return = _mean(top1_returns)
+    avg_topn_return = _mean(topn_returns)
+    legacy_fields = {}
+    if target_column == DEFAULT_TARGET_COLUMN:
+        legacy_fields = {
+            "topn_target7_count": int(top_targets.sum()),
+            "topn_target7_rate": topn_target_rate,
+            "avg_top1_candidate_d3_max_return_pct": avg_top1_return,
+            "avg_topn_candidate_d3_max_return_pct": avg_topn_return,
+        }
     return pd.DataFrame(
         [
             {
@@ -315,14 +391,18 @@ def build_ranking_summary(
                 "eligible_count": int(len(ranked)),
                 "top_n": int(top_n),
                 "target_return_pct": float(target_return_pct),
+                "target_column": target_column,
+                "target_description": _target_description(target_column),
+                "return_column": return_column,
                 "topn_row_count": int(len(topn)),
-                "topn_target7_count": int(top_targets.sum()),
-                "topn_target7_rate": _safe_rate(int(top_targets.sum()), int(len(topn))),
+                "topn_target_count": int(top_targets.sum()),
+                "topn_target_rate": topn_target_rate,
                 "daily_hit_count": int(daily_hits.sum()),
                 "daily_fail_count": int((~daily_hits).sum()) if len(daily_hits) else 0,
                 "daily_hit_rate": _safe_rate(int(daily_hits.sum()), int(len(daily_hits))),
-                "avg_top1_candidate_d3_max_return_pct": _mean(top1_returns),
-                "avg_topn_candidate_d3_max_return_pct": _mean(topn_returns),
+                "avg_top1_return_pct": avg_top1_return,
+                "avg_topn_return_pct": avg_topn_return,
+                **legacy_fields,
             }
         ]
     )
@@ -349,36 +429,58 @@ def build_ranking_markdown(
             f"- samples file: `{samples_path}`",
             f"- model file: `{model_path}`",
             f"- model type: **{model.get('model_type')}**",
+            f"- target column: **{item.get('target_column', DEFAULT_TARGET_COLUMN) if len(summary) else DEFAULT_TARGET_COLUMN}**",
+            f"- return column: **{item.get('return_column', '') if len(summary) else ''}**",
+            f"- target definition: {item.get('target_description', '') if len(summary) else ''}",
             "",
             "## Summary",
             "",
             f"- dates: **{int(item.get('date_count', 0)) if len(summary) else 0}**",
             f"- eligible candidates: **{int(item.get('eligible_count', 0)) if len(summary) else 0}**",
             f"- top N: **{int(item.get('top_n', 0)) if len(summary) else 0}**",
-            f"- topN row target7 rate: **{_format_pct(item.get('topn_target7_rate')) if len(summary) else ''}**",
+            f"- topN row target rate: **{_format_pct(item.get('topn_target_rate')) if len(summary) else ''}**",
             f"- daily hit rate: **{_format_pct(item.get('daily_hit_rate')) if len(summary) else ''}**",
-            f"- avg top1 D3 max return: **{_format_number(item.get('avg_top1_candidate_d3_max_return_pct')) if len(summary) else ''}%**",
-            f"- avg topN D3 max return: **{_format_number(item.get('avg_topn_candidate_d3_max_return_pct')) if len(summary) else ''}%**",
+            f"- avg top1 selected return: **{_format_number(item.get('avg_top1_return_pct')) if len(summary) else ''}%**",
+            f"- avg topN selected return: **{_format_number(item.get('avg_topn_return_pct')) if len(summary) else ''}%**",
             "",
         ]
     )
     if not failures.empty:
         lines.extend(["## Failure Dates", "", "| signal_date | top_n | codes | returns |", "|---|---:|---|---|"])
         for _, row in failures.head(80).iterrows():
-            lines.append(f"| {row.get('signal_date', '')} | {row.get('top_n', '')} | {row.get('topn_codes', '')} | {row.get('topn_candidate_d3_max_return_pct', '')} |")
+            lines.append(f"| {row.get('signal_date', '')} | {row.get('top_n', '')} | {row.get('topn_codes', '')} | {row.get('topn_returns', '')} |")
         lines.append("")
     if not daily.empty:
-        lines.extend(["## Daily Snapshot", "", "| date | hit | top codes | best D3 max% | avg D3 max% |", "|---|---|---|---:|---:|"])
+        lines.extend(["## Daily Snapshot", "", "| date | hit | top codes | best return% | avg return% |", "|---|---|---|---:|---:|"])
         for _, row in daily.head(120).iterrows():
             lines.append(
-                f"| {row.get('signal_date', '')} | {bool(row.get('daily_hit'))} | {row.get('topn_codes', '')} | {_format_number(row.get('best_topn_candidate_d3_max_return_pct'))} | {_format_number(row.get('avg_topn_candidate_d3_max_return_pct'))} |"
+                f"| {row.get('signal_date', '')} | {bool(row.get('daily_hit'))} | {row.get('topn_codes', '')} | {_format_number(row.get('best_topn_return_pct'))} | {_format_number(row.get('avg_topn_return_pct'))} |"
             )
     return "\n".join(lines)
 
 
-def _default_output_dir(model: dict[str, Any], samples_path: Path, top_n: int) -> Path:
+def _default_output_dir(model: dict[str, Any], samples_path: Path, top_n: int, target_column: str = DEFAULT_TARGET_COLUMN) -> Path:
     model_id = str(model.get("model_id", "ranking_model"))
-    return get_data_config().reports_dir / "ranking_backtests" / f"{model_id}_top{int(top_n)}_{_suffix_from_samples_path(samples_path)}"
+    target_suffix = _target_file_suffix(target_column)
+    return get_data_config().reports_dir / "ranking_backtests" / f"{model_id}_top{int(top_n)}_{_suffix_from_samples_path(samples_path)}{target_suffix}"
+
+
+def _return_column_for_target(target_column: str) -> str:
+    target_column = str(target_column or DEFAULT_TARGET_COLUMN)
+    return TARGET_RETURN_COLUMNS.get(target_column, target_column)
+
+
+def _target_description(target_column: str) -> str:
+    target_column = str(target_column or DEFAULT_TARGET_COLUMN)
+    return TARGET_DESCRIPTIONS.get(target_column, f"custom boolean target column: {target_column}")
+
+
+def _target_file_suffix(target_column: str) -> str:
+    target_column = str(target_column or DEFAULT_TARGET_COLUMN)
+    if target_column == DEFAULT_TARGET_COLUMN:
+        return ""
+    safe = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in target_column)
+    return f"_{safe}"
 
 
 def _matches_any_pattern(column: str, patterns: list[str]) -> bool:
@@ -460,6 +562,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--top-n", type=int, default=3)
     parser.add_argument("--target-return-pct", type=float, default=None)
+    parser.add_argument("--target-column", default=DEFAULT_TARGET_COLUMN)
     args = parser.parse_args(argv)
     ranked, topn, daily, failures, summary, summary_csv, daily_csv, topn_csv, failures_csv, markdown_path = run_ranking_backtest(
         samples_file=args.samples_file,
@@ -467,12 +570,14 @@ def main(argv: list[str] | None = None) -> int:
         output_dir=args.output_dir,
         top_n=args.top_n,
         target_return_pct=args.target_return_pct,
+        target_column=args.target_column,
     )
     item = summary.iloc[0] if not summary.empty else {}
     print(f"eligible candidates: {len(ranked)}")
     print(f"topn rows: {len(topn)}")
+    print(f"target column: {item.get('target_column', '') if len(summary) else ''}")
     print(f"daily hit rate: {item.get('daily_hit_rate', '') if len(summary) else ''}")
-    print(f"topn target7 rate: {item.get('topn_target7_rate', '') if len(summary) else ''}")
+    print(f"topn target rate: {item.get('topn_target_rate', '') if len(summary) else ''}")
     print(f"summary csv: {summary_csv}")
     print(f"daily csv: {daily_csv}")
     print(f"topn csv: {topn_csv}")

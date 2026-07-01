@@ -79,6 +79,13 @@ HISTORY_CANDIDATE_COLUMNS = [
     "candidate_base_price",
     "candidate_evaluable",
     "future_trade_days_available",
+    "d2_trade_date",
+    "d3_trade_date",
+    "d2_open_price",
+    "d3_high_price",
+    "d3_close_price",
+    "d2open_d3high_return_pct",
+    "d2open_d3close_return_pct",
     "candidate_d2_max_return_pct",
     "candidate_d2_close_return_pct",
     "candidate_d2_max_drawdown_pct",
@@ -93,6 +100,8 @@ HISTORY_CANDIDATE_COLUMNS = [
     "candidate_d10_max_drawdown_pct",
     "target7",
     "target10",
+    "target7_d2open_d3high",
+    "target7_d2open_d3close",
     "reasons",
     "key_zones_json",
 ]
@@ -114,8 +123,8 @@ def run_history_sample_generation(
     """Generate clean historical candidate samples without execution backtest fields.
 
     Each output row is one D1-night candidate. The row contains D1-known factors
-    and future candidate labels such as candidate_d3_max_return_pct. This layer
-    does not simulate D2 execution and must not emit execution-only fields.
+    and future candidate labels such as candidate_d3_max_return_pct and
+    target7_d2open_d3high. This layer does not emit execution-only fields.
     """
     service = MarketDataService()
     run_root = get_data_config().reports_dir / "history_samples" / f"{start_date}_{end_date}"
@@ -434,6 +443,7 @@ def evaluate_history_candidate_only(
     if not future_dates:
         return _finalise_targets(result, target_return_pct, secondary_target_return_pct)
 
+    result.update(_d2open_d3_metrics(code, service, minute, future_dates))
     candidate_metrics = _path_metrics_by_horizon(
         minute,
         future_dates=future_dates,
@@ -470,8 +480,20 @@ def build_history_candidate_summary(
         )
     target7 = candidates["target7"].fillna(False).astype(bool) if "target7" in candidates.columns else pd.Series(dtype=bool)
     target10 = candidates["target10"].fillna(False).astype(bool) if "target10" in candidates.columns else pd.Series(dtype=bool)
+    d2open_d3high = (
+        candidates["target7_d2open_d3high"].fillna(False).astype(bool)
+        if "target7_d2open_d3high" in candidates.columns
+        else pd.Series(dtype=bool)
+    )
+    d2open_d3close = (
+        candidates["target7_d2open_d3close"].fillna(False).astype(bool)
+        if "target7_d2open_d3close" in candidates.columns
+        else pd.Series(dtype=bool)
+    )
     evaluable = candidates["candidate_evaluable"].fillna(False).astype(bool) if "candidate_evaluable" in candidates.columns else pd.Series(dtype=bool)
     eligible = candidates["eligible_for_trade"].fillna(False).astype(bool) if "eligible_for_trade" in candidates.columns else pd.Series(dtype=bool)
+    d2open_d3high_evaluable_count = _numeric_notna_count(candidates, "d2open_d3high_return_pct")
+    d2open_d3close_evaluable_count = _numeric_notna_count(candidates, "d2open_d3close_return_pct")
     return pd.DataFrame(
         [
             {
@@ -488,7 +510,15 @@ def build_history_candidate_summary(
                 "candidate_target7_rate": _safe_rate(int(target7.sum()), int(evaluable.sum())) if len(evaluable) else None,
                 "candidate_target10_count": int(target10.sum()) if len(target10) else 0,
                 "candidate_target10_rate": _safe_rate(int(target10.sum()), int(evaluable.sum())) if len(evaluable) else None,
+                "d2open_d3high_evaluable_count": d2open_d3high_evaluable_count,
+                "target7_d2open_d3high_count": int(d2open_d3high.sum()) if len(d2open_d3high) else 0,
+                "target7_d2open_d3high_rate": _safe_rate(int(d2open_d3high.sum()), d2open_d3high_evaluable_count),
+                "d2open_d3close_evaluable_count": d2open_d3close_evaluable_count,
+                "target7_d2open_d3close_count": int(d2open_d3close.sum()) if len(d2open_d3close) else 0,
+                "target7_d2open_d3close_rate": _safe_rate(int(d2open_d3close.sum()), d2open_d3close_evaluable_count),
                 "candidate_avg_d3_max_return_pct": _mean_or_none(candidates, "candidate_d3_max_return_pct"),
+                "avg_d2open_d3high_return_pct": _mean_or_none(candidates, "d2open_d3high_return_pct"),
+                "avg_d2open_d3close_return_pct": _mean_or_none(candidates, "d2open_d3close_return_pct"),
                 "candidate_avg_d5_max_return_pct": _mean_or_none(candidates, "candidate_d5_max_return_pct"),
                 "candidate_avg_d10_max_return_pct": _mean_or_none(candidates, "candidate_d10_max_return_pct"),
             }
@@ -540,9 +570,13 @@ def build_history_candidates_markdown(
             f"- dates: **{int(item.get('date_count', 0))}**",
             f"- eligible: **{int(item.get('eligible_count', 0))}**",
             f"- candidate evaluable: **{int(item.get('candidate_evaluable_count', 0))}**",
-            f"- candidate target7 rate: **{_format_pct(item.get('candidate_target7_rate'))}**",
+            f"- legacy target7 rate (D1 close proxy, D2+D3 high window): **{_format_pct(item.get('candidate_target7_rate'))}**",
             f"- candidate target10 rate: **{_format_pct(item.get('candidate_target10_rate'))}**",
+            f"- D2 open -> D3 high target7 rate: **{_format_pct(item.get('target7_d2open_d3high_rate'))}**",
+            f"- D2 open -> D3 close target7 rate: **{_format_pct(item.get('target7_d2open_d3close_rate'))}**",
             f"- avg candidate D3 max return: **{_format_number(item.get('candidate_avg_d3_max_return_pct'))}%**",
+            f"- avg D2 open -> D3 high return: **{_format_number(item.get('avg_d2open_d3high_return_pct'))}%**",
+            f"- avg D2 open -> D3 close return: **{_format_number(item.get('avg_d2open_d3close_return_pct'))}%**",
             "",
         ]
     )
@@ -552,11 +586,29 @@ def build_history_candidates_markdown(
             lines.append(f"- {status}: **{int(count)}**")
         lines.append("")
     if not candidates.empty:
-        preview_cols = ["signal_date", "code", "name", "eligible_for_trade", "total_score", "candidate_d3_max_return_pct", "target7"]
-        lines.extend(["## Candidate Preview", "", "| date | code | name | eligible | total | d3 max% | target7 |", "|---|---|---|---:|---:|---:|---:|"])
+        preview_cols = [
+            "signal_date",
+            "code",
+            "name",
+            "eligible_for_trade",
+            "total_score",
+            "candidate_d3_max_return_pct",
+            "target7",
+            "d2open_d3high_return_pct",
+            "target7_d2open_d3high",
+        ]
+        preview_cols = [column for column in preview_cols if column in candidates.columns]
+        lines.extend(
+            [
+                "## Candidate Preview",
+                "",
+                "| date | code | name | eligible | total | legacy d3 max% | legacy target7 | d2open d3high% | d2open d3high target7 |",
+                "|---|---|---|---:|---:|---:|---:|---:|---:|",
+            ]
+        )
         for _, row in candidates[preview_cols].head(30).iterrows():
             lines.append(
-                "| {date} | {code} | {name} | {eligible} | {score} | {d3} | {target7} |".format(
+                "| {date} | {code} | {name} | {eligible} | {score} | {d3} | {target7} | {d2d3} | {d2d3_target} |".format(
                     date=row.get("signal_date", ""),
                     code=row.get("code", ""),
                     name=row.get("name", ""),
@@ -564,6 +616,8 @@ def build_history_candidates_markdown(
                     score=_format_number(row.get("total_score")),
                     d3=_format_number(row.get("candidate_d3_max_return_pct")),
                     target7=row.get("target7", ""),
+                    d2d3=_format_number(row.get("d2open_d3high_return_pct")),
+                    d2d3_target=row.get("target7_d2open_d3high", ""),
                 )
             )
     lines.extend(
@@ -572,6 +626,7 @@ def build_history_candidates_markdown(
             "## Boundary",
             "",
             "This output is a clean historical candidate sample. It contains D1-known factors and future candidate labels only.",
+            "Legacy target7 is a D1-close proxy target based on the D2+D3 high window. target7_d2open_d3high uses D2 open as the entry reference and D3 intraday high as the exit opportunity.",
             "It intentionally excludes execution-only fields such as executed, buy_price, target_hit, and stop_hit.",
         ]
     )
@@ -580,6 +635,17 @@ def build_history_candidates_markdown(
 
 def _empty_candidate_metrics() -> dict[str, Any]:
     result: dict[str, Any] = {}
+    result.update(
+        {
+            "d2_trade_date": None,
+            "d3_trade_date": None,
+            "d2_open_price": None,
+            "d3_high_price": None,
+            "d3_close_price": None,
+            "d2open_d3high_return_pct": None,
+            "d2open_d3close_return_pct": None,
+        }
+    )
     for horizon in (2, 3, 5, 10):
         label = f"candidate_d{horizon}"
         result[f"{label}_max_return_pct"] = None
@@ -588,10 +654,57 @@ def _empty_candidate_metrics() -> dict[str, Any]:
     return result
 
 
+def _d2open_d3_metrics(
+    code: str,
+    service: MarketDataService,
+    minute: pd.DataFrame,
+    future_dates: list[str],
+) -> dict[str, Any]:
+    result = {
+        "d2_trade_date": None,
+        "d3_trade_date": None,
+        "d2_open_price": None,
+        "d3_high_price": None,
+        "d3_close_price": None,
+        "d2open_d3high_return_pct": None,
+        "d2open_d3close_return_pct": None,
+    }
+    if len(future_dates) < 2:
+        return result
+
+    d2_date = str(future_dates[0])
+    d3_date = str(future_dates[1])
+    result["d2_trade_date"] = d2_date
+    result["d3_trade_date"] = d3_date
+
+    d2_rows = minute[minute["trade_date"].astype(str) == d2_date].sort_values("datetime")
+    d3_rows = minute[minute["trade_date"].astype(str) == d3_date].sort_values("datetime")
+    d2_open = _first_numeric(d2_rows, "open")
+    if d2_open is None:
+        d2_open = _daily_price_for_date(code, service, d2_date, "open")
+    d3_high = _max_numeric(d3_rows, "high")
+    d3_close = _last_numeric(d3_rows, "close")
+
+    result["d2_open_price"] = d2_open
+    result["d3_high_price"] = d3_high
+    result["d3_close_price"] = d3_close
+    if d2_open is None or d2_open <= 0:
+        return result
+    if d3_high is not None:
+        result["d2open_d3high_return_pct"] = (d3_high / d2_open - 1.0) * 100.0
+    if d3_close is not None:
+        result["d2open_d3close_return_pct"] = (d3_close / d2_open - 1.0) * 100.0
+    return result
+
+
 def _finalise_targets(result: dict[str, Any], target_return_pct: float, secondary_target_return_pct: float) -> dict[str, Any]:
     d3_max = _to_float(result.get("candidate_d3_max_return_pct"))
     result["target7"] = bool(d3_max is not None and d3_max >= float(target_return_pct))
     result["target10"] = bool(d3_max is not None and d3_max >= float(secondary_target_return_pct))
+    d2open_d3high = _to_float(result.get("d2open_d3high_return_pct"))
+    d2open_d3close = _to_float(result.get("d2open_d3close_return_pct"))
+    result["target7_d2open_d3high"] = bool(d2open_d3high is not None and d2open_d3high >= float(target_return_pct))
+    result["target7_d2open_d3close"] = bool(d2open_d3close is not None and d2open_d3close >= float(target_return_pct))
     return result
 
 
@@ -653,6 +766,50 @@ def _mean_or_none(frame: pd.DataFrame, column: str) -> float | None:
     if values.empty:
         return None
     return float(values.mean())
+
+
+def _numeric_notna_count(frame: pd.DataFrame, column: str) -> int:
+    if frame.empty or column not in frame.columns:
+        return 0
+    return int(pd.to_numeric(frame[column], errors="coerce").notna().sum())
+
+
+def _first_numeric(frame: pd.DataFrame, column: str) -> float | None:
+    if frame.empty or column not in frame.columns:
+        return None
+    values = pd.to_numeric(frame[column], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return float(values.iloc[0])
+
+
+def _last_numeric(frame: pd.DataFrame, column: str) -> float | None:
+    if frame.empty or column not in frame.columns:
+        return None
+    values = pd.to_numeric(frame[column], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return float(values.iloc[-1])
+
+
+def _max_numeric(frame: pd.DataFrame, column: str) -> float | None:
+    if frame.empty or column not in frame.columns:
+        return None
+    values = pd.to_numeric(frame[column], errors="coerce").dropna()
+    if values.empty:
+        return None
+    return float(values.max())
+
+
+def _daily_price_for_date(code: str, service: MarketDataService, trade_date: str, column: str) -> float | None:
+    daily = service.daily_cache.read(code)
+    if daily is None or daily.empty or "date" not in daily.columns or column not in daily.columns:
+        return None
+    dates = pd.to_datetime(daily["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    matched = daily[dates == str(trade_date)]
+    if matched.empty:
+        return None
+    return _to_float(matched.iloc[-1].get(column))
 
 
 def _format_pct(value: Any) -> str:

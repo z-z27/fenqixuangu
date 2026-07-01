@@ -12,7 +12,7 @@ from .daily_ranking import DEFAULT_DAILY_RANKING_MODEL, DEFAULT_DAILY_TOP_N, app
 from .failure_review import review_failed_data
 from .history_samples import run_history_sample_generation
 from .loaders import DataQualityError, MarketDataService, load_limitup_file
-from .ranking_backtest import run_ranking_backtest
+from .ranking_backtest import DEFAULT_TARGET_COLUMN, run_ranking_backtest
 from .report import write_data_quality_reports, write_signal_reports
 from .research_models import run_factor_analysis
 from .signal_engine import generate_signal
@@ -163,6 +163,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", default=None)
     p.add_argument("--top-n", type=int, default=3)
     p.add_argument("--target-return-pct", type=float, default=None)
+    p.add_argument("--target-column", default=DEFAULT_TARGET_COLUMN)
 
     p = sub.add_parser("run-daily", help="涨停池、补数、信号一键执行")
     p.add_argument("--date", default=None)
@@ -517,12 +518,14 @@ def ranking_backtest(args) -> int:
         output_dir=args.output_dir,
         top_n=args.top_n,
         target_return_pct=args.target_return_pct,
+        target_column=args.target_column,
     )
     item = summary.iloc[0] if not summary.empty else {}
     print(f"eligible candidates: {len(ranked)}")
     print(f"topn rows: {len(topn)}")
+    print(f"target column: {item.get('target_column', '') if len(summary) else ''}")
     print(f"daily hit rate: {item.get('daily_hit_rate', '') if len(summary) else ''}")
-    print(f"topn target7 rate: {item.get('topn_target7_rate', '') if len(summary) else ''}")
+    print(f"topn target rate: {item.get('topn_target_rate', '') if len(summary) else ''}")
     print(f"summary csv: {summary_csv}")
     print(f"daily csv: {daily_csv}")
     print(f"topn csv: {topn_csv}")
