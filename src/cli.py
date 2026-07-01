@@ -12,6 +12,13 @@ from .daily_ranking import DEFAULT_DAILY_RANKING_MODEL, DEFAULT_DAILY_TOP_N, app
 from .failure_review import review_failed_data
 from .history_samples import run_history_sample_generation
 from .loaders import DataQualityError, MarketDataService, load_limitup_file
+from .logistic_v003 import (
+    DEFAULT_INITIAL_TRAIN_DAYS,
+    DEFAULT_L2,
+    DEFAULT_SAMPLES_FILE as DEFAULT_LOGISTIC_V003_SAMPLES_FILE,
+    DEFAULT_TOP_N as DEFAULT_LOGISTIC_V003_TOP_N,
+    run_logistic_v003_research,
+)
 from .ranking_backtest import DEFAULT_TARGET_COLUMN, run_ranking_backtest
 from .report import write_data_quality_reports, write_signal_reports
 from .research_models import run_factor_analysis
@@ -46,6 +53,8 @@ def main(argv: list[str] | None = None) -> int:
             return analyze_factors(args)
         if args.command == "ranking-backtest":
             return ranking_backtest(args)
+        if args.command == "train-logistic-v003":
+            return train_logistic_v003(args)
         if args.command == "run-daily":
             return run_daily(args)
     except Exception as exc:
@@ -165,6 +174,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--top-n", type=int, default=3)
     p.add_argument("--target-return-pct", type=float, default=None)
     p.add_argument("--target-column", default=DEFAULT_TARGET_COLUMN)
+
+    p = sub.add_parser("train-logistic-v003", help="train research-only logistic_v003 model for D2 open to D3 high target")
+    p.add_argument("--samples-file", default=str(DEFAULT_LOGISTIC_V003_SAMPLES_FILE))
+    p.add_argument("--output-dir", default=None)
+    p.add_argument("--top-n", type=int, default=DEFAULT_LOGISTIC_V003_TOP_N)
+    p.add_argument("--initial-train-days", type=int, default=DEFAULT_INITIAL_TRAIN_DAYS)
+    p.add_argument("--l2", type=float, default=DEFAULT_L2)
 
     p = sub.add_parser("run-daily", help="涨停池、补数、信号一键执行")
     p.add_argument("--date", default=None)
@@ -534,6 +550,23 @@ def ranking_backtest(args) -> int:
     print(f"daily csv: {daily_csv}")
     print(f"topn csv: {topn_csv}")
     print(f"failures csv: {failures_csv}")
+    print(f"markdown: {markdown_path}")
+    return 0
+
+
+def train_logistic_v003(args) -> int:
+    coefficients, comparison, rankwise, top3_combo, daily_top3, markdown_path = run_logistic_v003_research(
+        samples_file=args.samples_file,
+        output_dir=args.output_dir,
+        top_n=args.top_n,
+        initial_train_days=args.initial_train_days,
+        l2=args.l2,
+    )
+    print(f"coefficients: {len(coefficients)}")
+    print(f"comparison rows: {len(comparison)}")
+    print(f"rankwise rows: {len(rankwise)}")
+    print(f"top3 combo rows: {len(top3_combo)}")
+    print(f"daily top3 rows: {len(daily_top3)}")
     print(f"markdown: {markdown_path}")
     return 0
 
