@@ -35,6 +35,16 @@ from .v004a import (
     DEFAULT_TOP_N as DEFAULT_V004A_TOP_N,
     run_v004a_research,
 )
+from .v004b import (
+    DEFAULT_CANDIDATE_TOP_K as DEFAULT_V004B_CANDIDATE_TOP_K,
+    DEFAULT_INITIAL_TRAIN_DAYS as DEFAULT_V004B_INITIAL_TRAIN_DAYS,
+    DEFAULT_PAIRWISE_L2 as DEFAULT_V004B_PAIRWISE_L2,
+    DEFAULT_SCORED_FILE as DEFAULT_V004B_SCORED_FILE,
+    DEFAULT_TOP_N as DEFAULT_V004B_TOP_N,
+    DEFAULT_V004A_L2 as DEFAULT_V004B_V004A_L2,
+    DEFAULT_V004A_POSITIVE_WEIGHT as DEFAULT_V004B_V004A_POSITIVE_WEIGHT,
+    run_v004b_research,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -69,6 +79,8 @@ def main(argv: list[str] | None = None) -> int:
             return train_logistic_v003(args)
         if args.command == "train-v004a":
             return train_v004a(args)
+        if args.command == "train-v004b":
+            return train_v004b(args)
         if args.command == "run-daily":
             return run_daily(args)
     except Exception as exc:
@@ -207,6 +219,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--l2-grid", default=",".join(f"{float(value):g}" for value in DEFAULT_V004A_L2_GRID))
     p.add_argument("--positive-weight-grid", default=",".join(f"{float(value):g}" for value in DEFAULT_V004A_POSITIVE_WEIGHT_GRID))
     p.add_argument("--threshold-grid", default=",".join(f"{float(value):g}" for value in DEFAULT_V004A_THRESHOLD_GRID))
+
+    p = sub.add_parser("train-v004b", help="run research-only v004b pairwise walk-forward ranker")
+    p.add_argument("--scored-file", default=str(DEFAULT_V004B_SCORED_FILE))
+    p.add_argument("--output-dir", default=None)
+    p.add_argument("--top-n", type=int, default=DEFAULT_V004B_TOP_N)
+    p.add_argument("--initial-train-days", type=int, default=DEFAULT_V004B_INITIAL_TRAIN_DAYS)
+    p.add_argument("--candidate-top-k", type=int, default=DEFAULT_V004B_CANDIDATE_TOP_K)
+    p.add_argument("--v004a-l2", type=float, default=DEFAULT_V004B_V004A_L2)
+    p.add_argument("--v004a-positive-weight", type=float, default=DEFAULT_V004B_V004A_POSITIVE_WEIGHT)
+    p.add_argument("--pairwise-l2", type=float, default=DEFAULT_V004B_PAIRWISE_L2)
+    p.add_argument("--include-v002-top10", action="store_true")
 
     p = sub.add_parser("run-daily", help="涨停池、补数、信号一键执行")
     p.add_argument("--date", default=None)
@@ -633,6 +656,27 @@ def train_v004a(args) -> int:
     print(f"coefficients rows: {len(coefficients)}")
     print(f"data quality rows: {len(data_quality)}")
     print(f"scored candidate rows: {len(scored)}")
+    print(f"markdown: {report_path}")
+    return 0
+
+
+def train_v004b(args) -> int:
+    summary, daily_top3, top3_rows, candidate_union, coefficients, report_path = run_v004b_research(
+        scored_file=args.scored_file,
+        output_dir=args.output_dir,
+        top_n=args.top_n,
+        initial_train_days=args.initial_train_days,
+        candidate_top_k=args.candidate_top_k,
+        v004a_l2=args.v004a_l2,
+        v004a_positive_weight=args.v004a_positive_weight,
+        pairwise_l2=args.pairwise_l2,
+        include_v002_top10=args.include_v002_top10,
+    )
+    print(f"summary rows: {len(summary)}")
+    print(f"daily rows: {len(daily_top3)}")
+    print(f"top3 rows: {len(top3_rows)}")
+    print(f"candidate union rows: {len(candidate_union)}")
+    print(f"coefficients rows: {len(coefficients)}")
     print(f"markdown: {report_path}")
     return 0
 
