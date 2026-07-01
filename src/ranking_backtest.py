@@ -88,6 +88,7 @@ def run_ranking_backtest(
 
     samples = pd.read_csv(samples_path, dtype={"code": str})
     candidates = prepare_ranking_samples(samples, target_return_pct=target_pct, target_column=target_column)
+    evaluable_count = int(len(candidates))
     validate_ranking_model(model, candidates.columns)
     scored = score_candidates(candidates, model)
     ranked = rank_candidates(scored)
@@ -106,6 +107,7 @@ def run_ranking_backtest(
         target_return_pct=target_pct,
         target_column=target_column,
         return_column=return_column,
+        evaluable_count=evaluable_count,
     )
 
     out_dir = Path(output_dir) if output_dir else _default_output_dir(model, samples_path, top_n, target_column)
@@ -137,8 +139,8 @@ def prepare_ranking_samples(samples: pd.DataFrame, target_return_pct: float, tar
     target_column = str(target_column or DEFAULT_TARGET_COLUMN)
     return_column = _return_column_for_target(target_column)
     required = ["signal_date", "code"]
-    if target_column not in frame.columns and return_column not in frame.columns:
-        required.append(target_column)
+    if return_column not in frame.columns:
+        required.append(return_column)
     missing = [column for column in required if column not in frame.columns]
     if missing:
         raise RuntimeError(f"ranking_backtest input missing required columns: {missing}")
@@ -146,19 +148,15 @@ def prepare_ranking_samples(samples: pd.DataFrame, target_return_pct: float, tar
     frame["signal_date"] = frame["signal_date"].astype(str)
     if "candidate_d3_max_return_pct" in frame.columns:
         frame["candidate_d3_max_return_pct"] = pd.to_numeric(frame["candidate_d3_max_return_pct"], errors="coerce")
-    if return_column in frame.columns and return_column != target_column:
-        frame[return_column] = pd.to_numeric(frame[return_column], errors="coerce")
+    frame["ranking_return_pct"] = pd.to_numeric(frame[return_column], errors="coerce")
+    frame = frame[frame["ranking_return_pct"].notna()].copy()
+    if frame.empty:
+        raise RuntimeError(f"no evaluable rows remain after filtering non-null {return_column}")
     if target_column in frame.columns:
         frame[target_column] = _bool_series(frame[target_column])
     else:
-        if return_column not in frame.columns:
-            raise RuntimeError(f"ranking_backtest target {target_column} requires missing return column {return_column}")
-        frame[target_column] = frame[return_column] >= float(target_return_pct)
+        frame[target_column] = frame["ranking_return_pct"] >= float(target_return_pct)
     frame["ranking_target"] = frame[target_column].fillna(False).astype(bool)
-    if return_column in frame.columns and return_column != target_column:
-        frame["ranking_return_pct"] = pd.to_numeric(frame[return_column], errors="coerce")
-    else:
-        frame["ranking_return_pct"] = pd.NA
     if "eligible_for_trade" in frame.columns:
         frame["eligible_for_trade"] = _bool_series(frame["eligible_for_trade"])
     else:
@@ -363,6 +361,7 @@ def build_ranking_summary(
     target_return_pct: float,
     target_column: str = DEFAULT_TARGET_COLUMN,
     return_column: str = "candidate_d3_max_return_pct",
+    evaluable_count: int | None = None,
 ) -> pd.DataFrame:
     top_targets = topn["ranking_target"].fillna(False).astype(bool) if not topn.empty else pd.Series(dtype=bool)
     daily_hits = daily["daily_hit"].fillna(False).astype(bool) if not daily.empty else pd.Series(dtype=bool)
@@ -371,6 +370,7 @@ def build_ranking_summary(
     topn_target_rate = _safe_rate(int(top_targets.sum()), int(len(topn)))
     avg_top1_return = _mean(top1_returns)
     avg_topn_return = _mean(topn_returns)
+    evaluable_count = int(evaluable_count if evaluable_count is not None else len(ranked))
     legacy_fields = {}
     if target_column == DEFAULT_TARGET_COLUMN:
         legacy_fields = {
@@ -387,7 +387,8 @@ def build_ranking_summary(
                 "samples_file": str(samples_path),
                 "model_file": str(model_path),
                 "date_count": int(daily["signal_date"].nunique()) if not daily.empty else 0,
-                "candidate_count": int(len(ranked)),
+                "candidate_count": evaluable_count,
+                "evaluable_count": evaluable_count,
                 "eligible_count": int(len(ranked)),
                 "top_n": int(top_n),
                 "target_return_pct": float(target_return_pct),
@@ -436,6 +437,7 @@ def build_ranking_markdown(
             "## Summary",
             "",
             f"- dates: **{int(item.get('date_count', 0)) if len(summary) else 0}**",
+            f"- evaluable candidates: **{int(item.get('evaluable_count', 0)) if len(summary) else 0}**",
             f"- eligible candidates: **{int(item.get('eligible_count', 0)) if len(summary) else 0}**",
             f"- top N: **{int(item.get('top_n', 0)) if len(summary) else 0}**",
             f"- topN row target rate: **{_format_pct(item.get('topn_target_rate')) if len(summary) else ''}**",
@@ -490,7 +492,9 @@ def _matches_any_pattern(column: str, patterns: list[str]) -> bool:
 def _bool_series(series: pd.Series) -> pd.Series:
     if series.dtype == bool:
         return series.fillna(False)
-    return series.fillna(False).astype(str).str.lower().isin({"true", "1", "yes"})
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_numeric(series, errors="coerce").fillna(0).ne(0)
+    return series.fillna(False).astype(str).str.strip().str.lower().isin({"true", "1", "1.0", "yes"})
 
 
 def _safe_rate(numerator: int, denominator: int) -> float | None:
@@ -573,6 +577,7 @@ def main(argv: list[str] | None = None) -> int:
         target_column=args.target_column,
     )
     item = summary.iloc[0] if not summary.empty else {}
+    print(f"evaluable candidates: {int(item.get('evaluable_count', 0)) if len(summary) else 0}")
     print(f"eligible candidates: {len(ranked)}")
     print(f"topn rows: {len(topn)}")
     print(f"target column: {item.get('target_column', '') if len(summary) else ''}")

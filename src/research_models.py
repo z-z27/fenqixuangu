@@ -8,6 +8,7 @@ from typing import Any
 import pandas as pd
 
 from .config import get_data_config
+from .ranking_backtest import DEFAULT_TARGET_COLUMN, TARGET_DESCRIPTIONS, TARGET_RETURN_COLUMNS
 
 
 DEFAULT_TARGET_RETURN_PCT = 7.0
@@ -37,8 +38,15 @@ CATEGORICAL_FEATURE_COLUMNS = [
 
 LABEL_COLUMNS = [
     "target7",
+    "target7_d2open_d3high",
+    "target7_d2open_d3close",
     "target10",
     "candidate_evaluable",
+    "d2_open_price",
+    "d3_high_price",
+    "d3_close_price",
+    "d2open_d3high_return_pct",
+    "d2open_d3close_return_pct",
     "candidate_d2_max_return_pct",
     "candidate_d2_close_return_pct",
     "candidate_d2_max_drawdown_pct",
@@ -53,12 +61,29 @@ LABEL_COLUMNS = [
     "candidate_d10_max_drawdown_pct",
 ]
 
+BOOLEAN_LABEL_COLUMNS = {
+    "target7",
+    "target7_d2open_d3high",
+    "target7_d2open_d3close",
+    "target10",
+    "candidate_evaluable",
+}
+
 FORBIDDEN_ANALYSIS_INPUT_PATTERNS = [
     "candidate_d2_*",
     "candidate_d3_*",
     "candidate_d5_*",
     "candidate_d10_*",
+    "d2_trade_date",
+    "d3_trade_date",
+    "d2_open_price",
+    "d3_high_price",
+    "d3_close_price",
+    "d2open_d3*",
+    "analysis_target",
+    "analysis_return_pct",
     "target7",
+    "target7_*",
     "target10",
     "executed",
     "selected_for_execution",
@@ -106,6 +131,7 @@ def run_factor_analysis(
     target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
     min_bucket_size: int = 10,
     eligible_only: bool = True,
+    target_column: str = DEFAULT_TARGET_COLUMN,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path, Path, Path, Path, Path]:
     """Run basic factor analysis on clean history candidate samples.
 
@@ -115,23 +141,57 @@ def run_factor_analysis(
     """
     source_path = Path(samples_file)
     samples = pd.read_csv(source_path, dtype={"code": str})
-    prepared = prepare_history_candidates(samples, target_return_pct=target_return_pct, eligible_only=eligible_only)
+    target_column = str(target_column or DEFAULT_TARGET_COLUMN)
+    return_column = _return_column_for_target(target_column)
+    prepared = prepare_history_candidates(
+        samples,
+        target_return_pct=target_return_pct,
+        eligible_only=eligible_only,
+        target_column=target_column,
+    )
     feature_columns = available_feature_columns(prepared)
     validate_analysis_features(feature_columns, prepared.columns)
+    evaluable_count = int(prepared.attrs.get("evaluable_count", len(prepared)))
 
-    factor_summary = build_factor_summary(prepared, feature_columns, target_return_pct=target_return_pct)
-    factor_buckets = build_factor_bucket_report(prepared, feature_columns, min_bucket_size=min_bucket_size)
-    daily_stability = build_factor_daily_stability(prepared, feature_columns, min_bucket_size=min_bucket_size)
-    pair_review = build_factor_pair_review(prepared, feature_columns, min_bucket_size=min_bucket_size)
+    factor_summary = build_factor_summary(
+        prepared,
+        feature_columns,
+        target_return_pct=target_return_pct,
+        target_column=target_column,
+        return_column=return_column,
+        evaluable_count=evaluable_count,
+    )
+    factor_buckets = build_factor_bucket_report(
+        prepared,
+        feature_columns,
+        min_bucket_size=min_bucket_size,
+        target_column=target_column,
+        return_column=return_column,
+    )
+    daily_stability = build_factor_daily_stability(
+        prepared,
+        feature_columns,
+        min_bucket_size=min_bucket_size,
+        target_column=target_column,
+        return_column=return_column,
+    )
+    pair_review = build_factor_pair_review(
+        prepared,
+        feature_columns,
+        min_bucket_size=min_bucket_size,
+        target_column=target_column,
+        return_column=return_column,
+    )
 
-    out_dir = Path(output_dir) if output_dir else get_data_config().reports_dir / "factor_analysis" / _suffix_from_samples_path(source_path)
+    target_suffix = _target_file_suffix(target_column)
+    out_dir = Path(output_dir) if output_dir else get_data_config().reports_dir / "factor_analysis" / f"{_suffix_from_samples_path(source_path)}{target_suffix}"
     out_dir.mkdir(parents=True, exist_ok=True)
     suffix = _suffix_from_samples_path(source_path)
-    factor_summary_csv = out_dir / f"factor_summary_{suffix}.csv"
-    factor_buckets_csv = out_dir / f"factor_buckets_{suffix}.csv"
-    daily_stability_csv = out_dir / f"factor_daily_stability_{suffix}.csv"
-    pair_review_csv = out_dir / f"factor_pair_review_{suffix}.csv"
-    markdown_path = out_dir / f"factor_analysis_report_{suffix}.md"
+    factor_summary_csv = out_dir / f"factor_summary_{suffix}{target_suffix}.csv"
+    factor_buckets_csv = out_dir / f"factor_buckets_{suffix}{target_suffix}.csv"
+    daily_stability_csv = out_dir / f"factor_daily_stability_{suffix}{target_suffix}.csv"
+    pair_review_csv = out_dir / f"factor_pair_review_{suffix}{target_suffix}.csv"
+    markdown_path = out_dir / f"factor_analysis_report_{suffix}{target_suffix}.md"
 
     factor_summary.to_csv(factor_summary_csv, index=False, encoding="utf-8-sig")
     factor_buckets.to_csv(factor_buckets_csv, index=False, encoding="utf-8-sig")
@@ -146,6 +206,9 @@ def run_factor_analysis(
             pair_review=pair_review,
             samples_path=source_path,
             eligible_only=eligible_only,
+            target_column=target_column,
+            return_column=return_column,
+            evaluable_count=evaluable_count,
         ),
         encoding="utf-8",
     )
@@ -162,32 +225,47 @@ def run_factor_analysis(
     )
 
 
-def prepare_history_candidates(samples: pd.DataFrame, target_return_pct: float, eligible_only: bool = True) -> pd.DataFrame:
+def prepare_history_candidates(
+    samples: pd.DataFrame,
+    target_return_pct: float,
+    eligible_only: bool = True,
+    target_column: str = DEFAULT_TARGET_COLUMN,
+) -> pd.DataFrame:
     frame = samples.copy()
     if frame.empty:
         raise RuntimeError("history candidate sample file is empty")
     leaked = sorted(EXECUTION_ONLY_COLUMNS.intersection(frame.columns))
     if leaked:
         raise RuntimeError(f"input appears to be execution/backtest data, not clean history candidates: {leaked}")
+    target_column = str(target_column or DEFAULT_TARGET_COLUMN)
+    return_column = _return_column_for_target(target_column)
+    if return_column not in frame.columns:
+        raise RuntimeError(f"factor analysis target {target_column} requires missing return column {return_column}")
     if "code" in frame.columns:
         frame["code"] = frame["code"].astype(str).str.zfill(6)
     for column in NUMERIC_FEATURE_COLUMNS + LABEL_COLUMNS:
         if column in frame.columns:
+            if column in BOOLEAN_LABEL_COLUMNS:
+                continue
             frame[column] = pd.to_numeric(frame[column], errors="coerce")
     for column in CATEGORICAL_FEATURE_COLUMNS:
         if column in frame.columns:
             frame[column] = frame[column].fillna("").astype(str)
-    if "target7" not in frame.columns:
-        if "candidate_d3_max_return_pct" not in frame.columns:
-            raise RuntimeError("missing target7 and candidate_d3_max_return_pct; cannot build analysis label")
-        frame["target7"] = pd.to_numeric(frame["candidate_d3_max_return_pct"], errors="coerce") >= float(target_return_pct)
+
+    frame["analysis_return_pct"] = pd.to_numeric(frame[return_column], errors="coerce")
+    frame = frame[frame["analysis_return_pct"].notna()].copy()
+    if frame.empty:
+        raise RuntimeError(f"no evaluable rows remain after filtering non-null {return_column}")
+
+    if target_column in frame.columns:
+        analysis_target = _bool_series(frame[target_column])
     else:
-        frame["target7"] = _bool_series(frame["target7"])
-    if "candidate_evaluable" in frame.columns:
-        frame["candidate_evaluable"] = _bool_series(frame["candidate_evaluable"])
-        frame = frame[frame["candidate_evaluable"]].copy()
-    elif "candidate_d3_max_return_pct" in frame.columns:
-        frame = frame[pd.to_numeric(frame["candidate_d3_max_return_pct"], errors="coerce").notna()].copy()
+        analysis_target = frame["analysis_return_pct"] >= float(target_return_pct)
+    frame["analysis_target"] = analysis_target.fillna(False).astype(bool)
+    frame["target7"] = frame["analysis_target"]
+    frame["candidate_d3_max_return_pct"] = frame["analysis_return_pct"]
+    evaluable_count = int(len(frame))
+
     if eligible_only and "eligible_for_trade" in frame.columns:
         frame["eligible_for_trade"] = _bool_series(frame["eligible_for_trade"])
         frame = frame[frame["eligible_for_trade"]].copy()
@@ -195,7 +273,12 @@ def prepare_history_candidates(samples: pd.DataFrame, target_return_pct: float, 
         raise RuntimeError("missing signal_date in history candidates")
     if frame.empty:
         raise RuntimeError("no evaluable rows remain after factor-analysis filters")
-    return frame.reset_index(drop=True)
+    result = frame.reset_index(drop=True)
+    result.attrs["target_column"] = target_column
+    result.attrs["return_column"] = return_column
+    result.attrs["target_description"] = _target_description(target_column)
+    result.attrs["evaluable_count"] = evaluable_count
+    return result
 
 
 def available_feature_columns(samples: pd.DataFrame) -> list[str]:
@@ -211,10 +294,18 @@ def validate_analysis_features(feature_columns: list[str], sample_columns: pd.In
         raise RuntimeError(f"factor feature columns missing in samples: {missing}")
 
 
-def build_factor_summary(samples: pd.DataFrame, feature_columns: list[str], target_return_pct: float) -> pd.DataFrame:
+def build_factor_summary(
+    samples: pd.DataFrame,
+    feature_columns: list[str],
+    target_return_pct: float,
+    target_column: str = DEFAULT_TARGET_COLUMN,
+    return_column: str = "candidate_d3_max_return_pct",
+    evaluable_count: int | None = None,
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     target = samples["target7"].fillna(False).astype(bool)
     d3 = pd.to_numeric(samples.get("candidate_d3_max_return_pct"), errors="coerce")
+    evaluable_count = int(evaluable_count if evaluable_count is not None else len(samples))
     for feature in feature_columns:
         if feature in NUMERIC_FEATURE_COLUMNS:
             numeric = pd.to_numeric(samples[feature], errors="coerce")
@@ -225,6 +316,10 @@ def build_factor_summary(samples: pd.DataFrame, feature_columns: list[str], targ
                     "feature": feature,
                     "feature_type": "numeric",
                     "count": int(len(samples)),
+                    "evaluable_count": evaluable_count,
+                    "target_column": target_column,
+                    "return_column": return_column,
+                    "target_description": _target_description(target_column),
                     "non_null_count": int(numeric.notna().sum()),
                     "target7_count": int(target.sum()),
                     "target7_rate": _safe_rate(int(target.sum()), int(len(target))),
@@ -243,7 +338,17 @@ def build_factor_summary(samples: pd.DataFrame, feature_columns: list[str], targ
                 }
             )
         else:
-            rows.append(_categorical_summary_row(samples, feature, target, target_return_pct=target_return_pct))
+            rows.append(
+                _categorical_summary_row(
+                    samples,
+                    feature,
+                    target,
+                    target_return_pct=target_return_pct,
+                    target_column=target_column,
+                    return_column=return_column,
+                    evaluable_count=evaluable_count,
+                )
+            )
     result = pd.DataFrame(rows)
     if result.empty:
         return result
@@ -251,7 +356,13 @@ def build_factor_summary(samples: pd.DataFrame, feature_columns: list[str], targ
     return result.sort_values(["analysis_signal_strength", "feature"], ascending=[False, True]).reset_index(drop=True)
 
 
-def build_factor_bucket_report(samples: pd.DataFrame, feature_columns: list[str], min_bucket_size: int = 10) -> pd.DataFrame:
+def build_factor_bucket_report(
+    samples: pd.DataFrame,
+    feature_columns: list[str],
+    min_bucket_size: int = 10,
+    target_column: str = DEFAULT_TARGET_COLUMN,
+    return_column: str = "candidate_d3_max_return_pct",
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     target = samples["target7"].fillna(False).astype(bool)
     d3 = pd.to_numeric(samples.get("candidate_d3_max_return_pct"), errors="coerce")
@@ -272,6 +383,8 @@ def build_factor_bucket_report(samples: pd.DataFrame, feature_columns: list[str]
                 {
                     "feature": feature,
                     "feature_type": "numeric" if feature in NUMERIC_FEATURE_COLUMNS else "categorical",
+                    "target_column": target_column,
+                    "return_column": return_column,
                     "bucket": str(bucket_value),
                     "count": count,
                     "target7_count": target_count,
@@ -286,7 +399,13 @@ def build_factor_bucket_report(samples: pd.DataFrame, feature_columns: list[str]
     return result.sort_values(["feature", "target7_rate", "count"], ascending=[True, False, False]).reset_index(drop=True)
 
 
-def build_factor_daily_stability(samples: pd.DataFrame, feature_columns: list[str], min_bucket_size: int = 10) -> pd.DataFrame:
+def build_factor_daily_stability(
+    samples: pd.DataFrame,
+    feature_columns: list[str],
+    min_bucket_size: int = 10,
+    target_column: str = DEFAULT_TARGET_COLUMN,
+    return_column: str = "candidate_d3_max_return_pct",
+) -> pd.DataFrame:
     rows: list[dict[str, Any]] = []
     for feature in feature_columns:
         if feature not in NUMERIC_FEATURE_COLUMNS:
@@ -302,6 +421,8 @@ def build_factor_daily_stability(samples: pd.DataFrame, feature_columns: list[st
                 {
                     "signal_date": str(signal_date),
                     "feature": feature,
+                    "target_column": target_column,
+                    "return_column": return_column,
                     "count": int(len(group)),
                     "target7_rate": _safe_rate(int(target.sum()), int(len(target))),
                     "top_quantile_target7_rate": top_rate,
@@ -317,7 +438,13 @@ def build_factor_daily_stability(samples: pd.DataFrame, feature_columns: list[st
     return result.sort_values(["feature", "signal_date"]).reset_index(drop=True)
 
 
-def build_factor_pair_review(samples: pd.DataFrame, feature_columns: list[str], min_bucket_size: int = 10) -> pd.DataFrame:
+def build_factor_pair_review(
+    samples: pd.DataFrame,
+    feature_columns: list[str],
+    min_bucket_size: int = 10,
+    target_column: str = DEFAULT_TARGET_COLUMN,
+    return_column: str = "candidate_d3_max_return_pct",
+) -> pd.DataFrame:
     numeric_features = [feature for feature in feature_columns if feature in NUMERIC_FEATURE_COLUMNS]
     rows: list[dict[str, Any]] = []
     target = samples["target7"].fillna(False).astype(bool)
@@ -338,6 +465,8 @@ def build_factor_pair_review(samples: pd.DataFrame, feature_columns: list[str], 
                 {
                     "left_feature": left,
                     "right_feature": right,
+                    "target_column": target_column,
+                    "return_column": return_column,
                     "pair_rule": "both_top_30pct",
                     "count": count,
                     "target7_count": pair_target_count,
@@ -360,8 +489,13 @@ def build_factor_analysis_markdown(
     pair_review: pd.DataFrame,
     samples_path: Path,
     eligible_only: bool,
+    target_column: str = DEFAULT_TARGET_COLUMN,
+    return_column: str = "candidate_d3_max_return_pct",
+    evaluable_count: int | None = None,
 ) -> str:
     target = samples["target7"].fillna(False).astype(bool)
+    target_description = _target_description(target_column)
+    evaluable_count = int(evaluable_count if evaluable_count is not None else len(samples))
     lines = ["# Factor Analysis Report", ""]
     lines.extend(
         [
@@ -373,15 +507,19 @@ def build_factor_analysis_markdown(
             "## Sample",
             "",
             f"- samples file: `{samples_path}`",
+            f"- target column: **{target_column}**",
+            f"- return column: **{return_column}**",
+            f"- target definition: {target_description}",
+            f"- evaluable rows: **{evaluable_count}**",
             f"- rows after filters: **{len(samples)}**",
             f"- dates: **{samples['signal_date'].dropna().nunique()}**",
             f"- eligible only: **{eligible_only}**",
-            f"- target7 rows: **{int(target.sum())}**",
-            f"- target7 rate: **{_format_pct(_safe_rate(int(target.sum()), len(samples)))}**",
+            f"- target rows: **{int(target.sum())}**",
+            f"- target rate: **{_format_pct(_safe_rate(int(target.sum()), len(samples)))}**",
             "",
             "## Top Factor Signals",
             "",
-            "| feature | type | strength | corr target7 | corr D3 max | top q rate | bottom q rate | direction |",
+            "| feature | type | strength | corr target | corr return | top q rate | bottom q rate | direction |",
             "|---|---|---:|---:|---:|---:|---:|---|",
         ]
     )
@@ -391,14 +529,14 @@ def build_factor_analysis_markdown(
                 f"| {row.get('feature', '')} | {row.get('feature_type', '')} | {_format_number(row.get('analysis_signal_strength'))} | {_format_number(row.get('corr_target7'))} | {_format_number(row.get('corr_candidate_d3_max'))} | {_format_pct(row.get('top_quantile_target7_rate'))} | {_format_pct(row.get('bottom_quantile_target7_rate'))} | {row.get('direction_hint', '')} |"
             )
     if not factor_buckets.empty:
-        lines.extend(["", "## Strong Buckets", "", "| feature | bucket | count | target7 rate | lift | avg D3 max% |", "|---|---|---:|---:|---:|---:|"])
+        lines.extend(["", "## Strong Buckets", "", "| feature | bucket | count | target rate | lift | avg return% |", "|---|---|---:|---:|---:|---:|"])
         strong = factor_buckets.sort_values(["target7_rate_lift_vs_base", "target7_rate", "count"], ascending=[False, False, False]).head(40)
         for _, row in strong.iterrows():
             lines.append(
                 f"| {row.get('feature', '')} | {row.get('bucket', '')} | {int(row.get('count', 0))} | {_format_pct(row.get('target7_rate'))} | {_format_pct(row.get('target7_rate_lift_vs_base'))} | {_format_number(row.get('avg_candidate_d3_max_return_pct'))} |"
             )
     if not pair_review.empty:
-        lines.extend(["", "## Pair Review", "", "| left | right | rule | count | target7 rate | lift | corr |", "|---|---|---|---:|---:|---:|---:|"])
+        lines.extend(["", "## Pair Review", "", "| left | right | rule | count | target rate | lift | corr |", "|---|---|---|---:|---:|---:|---:|"])
         for _, row in pair_review.head(30).iterrows():
             lines.append(
                 f"| {row.get('left_feature', '')} | {row.get('right_feature', '')} | {row.get('pair_rule', '')} | {int(row.get('count', 0))} | {_format_pct(row.get('target7_rate'))} | {_format_pct(row.get('target7_rate_lift_vs_base'))} | {_format_number(row.get('feature_corr'))} |"
@@ -418,12 +556,21 @@ def build_factor_analysis_markdown(
             "## Boundary",
             "",
             "These outputs are evidence for manual research. They are not a trading model and are not a validated ranking model.",
+            "Legacy target7 is a D1-close proxy target based on the D2+D3 high window.",
         ]
     )
     return "\n".join(lines)
 
 
-def _categorical_summary_row(samples: pd.DataFrame, feature: str, target: pd.Series, target_return_pct: float) -> dict[str, Any]:
+def _categorical_summary_row(
+    samples: pd.DataFrame,
+    feature: str,
+    target: pd.Series,
+    target_return_pct: float,
+    target_column: str = DEFAULT_TARGET_COLUMN,
+    return_column: str = "candidate_d3_max_return_pct",
+    evaluable_count: int | None = None,
+) -> dict[str, Any]:
     values = samples[feature].fillna("").astype(str)
     grouped = pd.DataFrame({"value": values, "target7": target}).groupby("value", dropna=False)
     bucket_rates = []
@@ -436,6 +583,10 @@ def _categorical_summary_row(samples: pd.DataFrame, feature: str, target: pd.Ser
         "feature": feature,
         "feature_type": "categorical",
         "count": int(len(samples)),
+        "evaluable_count": int(evaluable_count if evaluable_count is not None else len(samples)),
+        "target_column": target_column,
+        "return_column": return_column,
+        "target_description": _target_description(target_column),
         "non_null_count": int(values.astype(bool).sum()),
         "target7_count": int(target.sum()),
         "target7_rate": _safe_rate(int(target.sum()), int(len(target))),
@@ -513,11 +664,31 @@ def _direction_hint(values: pd.Series, target: pd.Series) -> str:
 def _bool_series(series: pd.Series) -> pd.Series:
     if series.dtype == bool:
         return series.fillna(False)
-    return series.fillna(False).astype(str).str.lower().isin({"true", "1", "yes"})
+    if pd.api.types.is_numeric_dtype(series):
+        return pd.to_numeric(series, errors="coerce").fillna(0).ne(0)
+    return series.fillna(False).astype(str).str.strip().str.lower().isin({"true", "1", "1.0", "yes"})
 
 
 def _matches_any_pattern(column: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(column, pattern) for pattern in patterns)
+
+
+def _return_column_for_target(target_column: str) -> str:
+    target_column = str(target_column or DEFAULT_TARGET_COLUMN)
+    return TARGET_RETURN_COLUMNS.get(target_column, target_column)
+
+
+def _target_description(target_column: str) -> str:
+    target_column = str(target_column or DEFAULT_TARGET_COLUMN)
+    return TARGET_DESCRIPTIONS.get(target_column, f"custom boolean target column: {target_column}")
+
+
+def _target_file_suffix(target_column: str) -> str:
+    target_column = str(target_column or DEFAULT_TARGET_COLUMN)
+    if target_column == DEFAULT_TARGET_COLUMN:
+        return ""
+    safe = "".join(char if char.isalnum() or char in {"-", "_"} else "_" for char in target_column)
+    return f"_{safe}"
 
 
 def _mean(series: pd.Series) -> float | None:
@@ -578,8 +749,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--samples-file", required=True)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--target-return-pct", type=float, default=DEFAULT_TARGET_RETURN_PCT)
+    parser.add_argument("--target-column", default=DEFAULT_TARGET_COLUMN)
     parser.add_argument("--min-bucket-size", type=int, default=10)
-    parser.add_argument("--all-candidates", action="store_true", help="do not filter to eligible_for_trade rows; candidate_evaluable is still required")
+    parser.add_argument("--all-candidates", action="store_true", help="do not filter to eligible_for_trade rows; target return data is still required")
     args = parser.parse_args(argv)
     factor_summary, factor_buckets, daily_stability, pair_review, summary_csv, buckets_csv, stability_csv, pair_csv, markdown_path = run_factor_analysis(
         samples_file=args.samples_file,
@@ -587,11 +759,13 @@ def main(argv: list[str] | None = None) -> int:
         target_return_pct=args.target_return_pct,
         min_bucket_size=args.min_bucket_size,
         eligible_only=not args.all_candidates,
+        target_column=args.target_column,
     )
     print(f"factor summary rows: {len(factor_summary)}")
     print(f"factor bucket rows: {len(factor_buckets)}")
     print(f"daily stability rows: {len(daily_stability)}")
     print(f"pair review rows: {len(pair_review)}")
+    print(f"target column: {args.target_column}")
     print(f"factor summary csv: {summary_csv}")
     print(f"factor buckets csv: {buckets_csv}")
     print(f"daily stability csv: {stability_csv}")

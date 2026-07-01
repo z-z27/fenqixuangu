@@ -154,8 +154,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--samples-file", required=True)
     p.add_argument("--output-dir", default=None)
     p.add_argument("--target-return-pct", type=float, default=7.0)
+    p.add_argument("--target-column", default=DEFAULT_TARGET_COLUMN)
     p.add_argument("--min-bucket-size", type=int, default=10)
-    p.add_argument("--all-candidates", action="store_true", help="analyze all evaluable candidates instead of eligible_for_trade only")
+    p.add_argument("--all-candidates", action="store_true", help="analyze all candidates with target return data instead of eligible_for_trade only")
 
     p = sub.add_parser("ranking-backtest", help="validate a manually constructed ranking model against history candidates")
     p.add_argument("--samples-file", required=True)
@@ -498,11 +499,13 @@ def analyze_factors(args) -> int:
         target_return_pct=args.target_return_pct,
         min_bucket_size=args.min_bucket_size,
         eligible_only=not args.all_candidates,
+        target_column=args.target_column,
     )
     print(f"factor summary rows: {len(factor_summary)}")
     print(f"factor bucket rows: {len(factor_buckets)}")
     print(f"daily stability rows: {len(daily_stability)}")
     print(f"pair review rows: {len(pair_review)}")
+    print(f"target column: {args.target_column}")
     print(f"factor summary csv: {summary_csv}")
     print(f"factor buckets csv: {buckets_csv}")
     print(f"daily stability csv: {stability_csv}")
@@ -521,6 +524,7 @@ def ranking_backtest(args) -> int:
         target_column=args.target_column,
     )
     item = summary.iloc[0] if not summary.empty else {}
+    print(f"evaluable candidates: {int(item.get('evaluable_count', 0)) if len(summary) else 0}")
     print(f"eligible candidates: {len(ranked)}")
     print(f"topn rows: {len(topn)}")
     print(f"target column: {item.get('target_column', '') if len(summary) else ''}")
