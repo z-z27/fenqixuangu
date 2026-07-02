@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+
 import numpy as np
 import pandas as pd
 
@@ -20,16 +21,13 @@ V004A_MODEL_ID = "logistic_v004a_weighted"
 V002_MODEL_ID = "ranking_model_v002_core_momentum_support"
 SCOPE = "walk_forward"
 
+PRIMARY_POLICY = "policy_v005_v002_regime_fallback"
+
 STRATEGIES = [
     "baseline_v005_realized",
-    "fallback_v002_extreme_confirm",
-    "fallback_v002_extreme_confirm_v005_weak",
-    "fallback_v002_extreme_confirm_plus_risk",
-    "fallback_v002_close_low_dominant_v005_weak",
-    "fallback_v002_extreme_or_close_low_v005_weak",
+    PRIMARY_POLICY,
     "risk_replace_only",
-    "fallback_plus_risk_replace",
-    "fallback_plus_close_low_risk_replace",
+    "hybrid_policy_plus_risk_replace",
 ]
 
 SUMMARY_COLUMNS = [
@@ -60,9 +58,15 @@ REPLACEMENT_COLUMNS = [
 ]
 
 
-def run_fallback_gate(scored_file=DEFAULT_SCORED_FILE, v005_dir=DEFAULT_V005_DIR, output_dir=DEFAULT_OUTPUT_DIR,
-                      objective=DEFAULT_OBJECTIVE, top_n=DEFAULT_TOP_N, v004a_l2=DEFAULT_V004A_L2,
-                      v004a_positive_weight=DEFAULT_V004A_POSITIVE_WEIGHT):
+def run_fallback_gate(
+    scored_file=DEFAULT_SCORED_FILE,
+    v005_dir=DEFAULT_V005_DIR,
+    output_dir=DEFAULT_OUTPUT_DIR,
+    objective=DEFAULT_OBJECTIVE,
+    top_n=DEFAULT_TOP_N,
+    v004a_l2=DEFAULT_V004A_L2,
+    v004a_positive_weight=DEFAULT_V004A_POSITIVE_WEIGHT,
+):
     scored_file = Path(scored_file)
     v005_dir = Path(v005_dir)
     output_dir = Path(output_dir)
@@ -105,9 +109,10 @@ def run_fallback_gate(scored_file=DEFAULT_SCORED_FILE, v005_dir=DEFAULT_V005_DIR
                 "gate_v005_has_risk_ticket": bool(base["v005_has_risk_ticket"]),
                 "gate_triggered": bool(decision["gate_triggered"]),
             })
-            replacement_rows.extend(replacement_detail(strategy, date, decision["action"], decision["selected_codes"],
-                                                       parse_codes(base["codes"]), parse_codes(v002_day["codes"]),
-                                                       parse_codes(v004a_day["codes"]), day_ctx))
+            replacement_rows.extend(replacement_detail(
+                strategy, date, decision["action"], decision["selected_codes"],
+                parse_codes(base["codes"]), parse_codes(v002_day["codes"]), parse_codes(v004a_day["codes"]), day_ctx,
+            ))
 
     daily = pd.DataFrame(daily_rows)[DAILY_COLUMNS]
     summary = summarize(daily, top_n)[SUMMARY_COLUMNS]
@@ -231,37 +236,27 @@ def build_topn(ctx, rank_col, top_n):
     return pd.DataFrame(rows)
 
 
+def is_policy_fallback(base):
+    extreme_confirm = int(base["v002_extreme_vwap_count"]) >= 2 and int(base["v002_extreme_close_low_count"]) >= 2
+    close_low_dominant = int(base["v002_extreme_close_low_count"]) >= 3
+    v005_weak = pd.notna(base["v005_avg_v002_rank"]) and float(base["v005_avg_v002_rank"]) >= 12
+    return (extreme_confirm or close_low_dominant) and v005_weak
+
+
 def decide(strategy, base, v002_codes, day_ctx, top_n):
     baseline = parse_codes(base["codes"])
-    extreme = int(base["v002_extreme_vwap_count"]) >= 2 and int(base["v002_extreme_close_low_count"]) >= 2
-    close_low_dominant = int(base["v002_extreme_close_low_count"]) >= 3
-    weak = pd.notna(base["v005_avg_v002_rank"]) and float(base["v005_avg_v002_rank"]) >= 12
-    risk = bool(base["v005_has_risk_ticket"])
     if strategy == "baseline_v005_realized":
         return decision(baseline, baseline, "baseline", False)
-    if strategy == "fallback_v002_extreme_confirm":
-        return decision(v002_codes, v002_codes, "fallback_to_v002_extreme_confirm", True) if extreme else decision(baseline, baseline, "keep_v005", False)
-    if strategy == "fallback_v002_extreme_confirm_v005_weak":
-        return decision(v002_codes, v002_codes, "fallback_to_v002_extreme_confirm_v005_weak", True) if extreme and weak else decision(baseline, baseline, "keep_v005", False)
-    if strategy == "fallback_v002_extreme_confirm_plus_risk":
-        return decision(v002_codes, v002_codes, "fallback_to_v002_extreme_confirm_plus_risk", True) if extreme and risk else decision(baseline, baseline, "keep_v005", False)
-    if strategy == "fallback_v002_close_low_dominant_v005_weak":
-        return decision(v002_codes, v002_codes, "fallback_to_v002_close_low_dominant_v005_weak", True) if close_low_dominant and weak else decision(baseline, baseline, "keep_v005", False)
-    if strategy == "fallback_v002_extreme_or_close_low_v005_weak":
-        if (extreme or close_low_dominant) and weak:
-            return decision(v002_codes, v002_codes, "fallback_to_v002_extreme_or_close_low_v005_weak", True)
+    if strategy == PRIMARY_POLICY:
+        if is_policy_fallback(base):
+            return decision(v002_codes, v002_codes, "fallback_to_v002_regime_policy", True)
         return decision(baseline, baseline, "keep_v005", False)
     if strategy == "risk_replace_only":
         out = replace_risk(baseline, v002_codes, day_ctx, top_n)
         return decision(out, baseline, "risk_replace_only" if out != baseline else "keep_v005", out != baseline)
-    if strategy == "fallback_plus_risk_replace":
-        if extreme and weak:
-            return decision(v002_codes, v002_codes, "fallback_to_v002_extreme_confirm_v005_weak", True)
-        out = replace_risk(baseline, v002_codes, day_ctx, top_n)
-        return decision(out, baseline, "risk_replace_only" if out != baseline else "keep_v005", out != baseline)
-    if strategy == "fallback_plus_close_low_risk_replace":
-        if (extreme or close_low_dominant) and weak:
-            return decision(v002_codes, v002_codes, "fallback_to_v002_extreme_or_close_low_v005_weak", True)
+    if strategy == "hybrid_policy_plus_risk_replace":
+        if is_policy_fallback(base):
+            return decision(v002_codes, v002_codes, "fallback_to_v002_regime_policy", True)
         out = replace_risk(baseline, v002_codes, day_ctx, top_n)
         return decision(out, baseline, "risk_replace_only" if out != baseline else "keep_v005", out != baseline)
     raise RuntimeError(f"unknown strategy: {strategy}")
@@ -400,19 +395,19 @@ def mean(x):
 def make_report(scored, v005_dir, out_dir, objective, summary, daily, repl):
     lines = [
         "# v005 fallback gate diagnostics", "", "## Scope", "",
-        "Research-only diagnostic for v005 fallback and risk-replacement gates.", "",
+        "Converged research-only diagnostic for the v005 state-aware fallback policy.", "",
         "## Configuration", "", f"- scored file: `{scored}`", f"- v005 dir: `{v005_dir}`",
-        f"- output dir: `{out_dir}`", f"- baseline objective: `{objective}`", "",
+        f"- output dir: `{out_dir}`", f"- baseline objective: `{objective}`", f"- primary policy: `{PRIMARY_POLICY}`", "",
+        "## Converged policy", "",
+        "Use v005 `realized_then_all_hit` by default. Fallback to v002 Top3 only when v002 shows either:",
+        "", "1. extreme confirmation: `v002_extreme_vwap_count >= 2` and `v002_extreme_close_low_count >= 2`; or",
+        "2. close-low dominance: `v002_extreme_close_low_count >= 3`;",
+        "", "and v005 is weak versus v002: `v005_avg_v002_rank >= 12`.", "",
         "## Strategy definitions", "",
         "- `baseline_v005_realized`: keep v005 realized objective selections.",
-        "- `fallback_v002_extreme_confirm`: fallback when v002 Top3 has at least two extreme VWAP and two extreme close-low names.",
-        "- `fallback_v002_extreme_confirm_v005_weak`: same, plus v005 average v002 rank >= 12.",
-        "- `fallback_v002_extreme_confirm_plus_risk`: same extreme confirmation, plus at least one risk ticket in v005.",
-        "- `fallback_v002_close_low_dominant_v005_weak`: fallback when v002 Top3 has 3 extreme close-low names and v005 average v002 rank >= 12.",
-        "- `fallback_v002_extreme_or_close_low_v005_weak`: fallback when either the extreme-confirm gate or the close-low-dominant gate fires, with v005 average v002 rank >= 12.",
-        "- `risk_replace_only`: only replace catastrophic risk tickets with v002 names.",
-        "- `fallback_plus_risk_replace`: cautious fallback first, otherwise risk replacement.",
-        "- `fallback_plus_close_low_risk_replace`: cautious extreme/close-low fallback first, otherwise risk replacement.", "",
+        f"- `{PRIMARY_POLICY}`: clean candidate policy; fallback by the converged v002 regime rule only.",
+        "- `risk_replace_only`: only replace catastrophic risk tickets with v002 names; retained as a control.",
+        "- `hybrid_policy_plus_risk_replace`: apply the clean policy first, otherwise risk replacement; retained to verify whether risk replacement adds value.", "",
         "## Summary", "",
     ]
     lines += md_table(summary, SUMMARY_COLUMNS)
@@ -449,7 +444,10 @@ def main(argv=None):
     parser.add_argument("--v004a-l2", type=float, default=DEFAULT_V004A_L2)
     parser.add_argument("--v004a-positive-weight", type=float, default=DEFAULT_V004A_POSITIVE_WEIGHT)
     args = parser.parse_args(argv)
-    summary, daily, repl, report = run_fallback_gate(args.scored_file, args.v005_dir, args.output_dir, args.objective, args.top_n, args.v004a_l2, args.v004a_positive_weight)
+    summary, daily, repl, report = run_fallback_gate(
+        args.scored_file, args.v005_dir, args.output_dir, args.objective, args.top_n,
+        args.v004a_l2, args.v004a_positive_weight,
+    )
     print(f"strategy rows: {len(summary)}")
     print(f"daily rows: {len(daily)}")
     print(f"replacement rows: {len(repl)}")
