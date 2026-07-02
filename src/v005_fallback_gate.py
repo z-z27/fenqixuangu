@@ -27,7 +27,6 @@ STRATEGIES = [
     "baseline_v005_realized",
     PRIMARY_POLICY,
     "risk_replace_only",
-    "hybrid_policy_plus_risk_replace",
 ]
 
 SUMMARY_COLUMNS = [
@@ -254,11 +253,6 @@ def decide(strategy, base, v002_codes, day_ctx, top_n):
     if strategy == "risk_replace_only":
         out = replace_risk(baseline, v002_codes, day_ctx, top_n)
         return decision(out, baseline, "risk_replace_only" if out != baseline else "keep_v005", out != baseline)
-    if strategy == "hybrid_policy_plus_risk_replace":
-        if is_policy_fallback(base):
-            return decision(v002_codes, v002_codes, "fallback_to_v002_regime_policy", True)
-        out = replace_risk(baseline, v002_codes, day_ctx, top_n)
-        return decision(out, baseline, "risk_replace_only" if out != baseline else "keep_v005", out != baseline)
     raise RuntimeError(f"unknown strategy: {strategy}")
 
 
@@ -406,8 +400,7 @@ def make_report(scored, v005_dir, out_dir, objective, summary, daily, repl):
         "## Strategy definitions", "",
         "- `baseline_v005_realized`: keep v005 realized objective selections.",
         f"- `{PRIMARY_POLICY}`: clean candidate policy; fallback by the converged v002 regime rule only.",
-        "- `risk_replace_only`: only replace catastrophic risk tickets with v002 names; retained as a control.",
-        "- `hybrid_policy_plus_risk_replace`: apply the clean policy first, otherwise risk replacement; retained to verify whether risk replacement adds value.", "",
+        "- `risk_replace_only`: only replace catastrophic risk tickets with v002 names; retained as a control.", "",
         "## Summary", "",
     ]
     lines += md_table(summary, SUMMARY_COLUMNS)
