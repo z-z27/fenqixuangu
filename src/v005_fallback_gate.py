@@ -25,8 +25,11 @@ STRATEGIES = [
     "fallback_v002_extreme_confirm",
     "fallback_v002_extreme_confirm_v005_weak",
     "fallback_v002_extreme_confirm_plus_risk",
+    "fallback_v002_close_low_dominant_v005_weak",
+    "fallback_v002_extreme_or_close_low_v005_weak",
     "risk_replace_only",
     "fallback_plus_risk_replace",
+    "fallback_plus_close_low_risk_replace",
 ]
 
 SUMMARY_COLUMNS = [
@@ -231,6 +234,7 @@ def build_topn(ctx, rank_col, top_n):
 def decide(strategy, base, v002_codes, day_ctx, top_n):
     baseline = parse_codes(base["codes"])
     extreme = int(base["v002_extreme_vwap_count"]) >= 2 and int(base["v002_extreme_close_low_count"]) >= 2
+    close_low_dominant = int(base["v002_extreme_close_low_count"]) >= 3
     weak = pd.notna(base["v005_avg_v002_rank"]) and float(base["v005_avg_v002_rank"]) >= 12
     risk = bool(base["v005_has_risk_ticket"])
     if strategy == "baseline_v005_realized":
@@ -241,12 +245,23 @@ def decide(strategy, base, v002_codes, day_ctx, top_n):
         return decision(v002_codes, v002_codes, "fallback_to_v002_extreme_confirm_v005_weak", True) if extreme and weak else decision(baseline, baseline, "keep_v005", False)
     if strategy == "fallback_v002_extreme_confirm_plus_risk":
         return decision(v002_codes, v002_codes, "fallback_to_v002_extreme_confirm_plus_risk", True) if extreme and risk else decision(baseline, baseline, "keep_v005", False)
+    if strategy == "fallback_v002_close_low_dominant_v005_weak":
+        return decision(v002_codes, v002_codes, "fallback_to_v002_close_low_dominant_v005_weak", True) if close_low_dominant and weak else decision(baseline, baseline, "keep_v005", False)
+    if strategy == "fallback_v002_extreme_or_close_low_v005_weak":
+        if (extreme or close_low_dominant) and weak:
+            return decision(v002_codes, v002_codes, "fallback_to_v002_extreme_or_close_low_v005_weak", True)
+        return decision(baseline, baseline, "keep_v005", False)
     if strategy == "risk_replace_only":
         out = replace_risk(baseline, v002_codes, day_ctx, top_n)
         return decision(out, baseline, "risk_replace_only" if out != baseline else "keep_v005", out != baseline)
     if strategy == "fallback_plus_risk_replace":
         if extreme and weak:
             return decision(v002_codes, v002_codes, "fallback_to_v002_extreme_confirm_v005_weak", True)
+        out = replace_risk(baseline, v002_codes, day_ctx, top_n)
+        return decision(out, baseline, "risk_replace_only" if out != baseline else "keep_v005", out != baseline)
+    if strategy == "fallback_plus_close_low_risk_replace":
+        if (extreme or close_low_dominant) and weak:
+            return decision(v002_codes, v002_codes, "fallback_to_v002_extreme_or_close_low_v005_weak", True)
         out = replace_risk(baseline, v002_codes, day_ctx, top_n)
         return decision(out, baseline, "risk_replace_only" if out != baseline else "keep_v005", out != baseline)
     raise RuntimeError(f"unknown strategy: {strategy}")
@@ -393,8 +408,11 @@ def make_report(scored, v005_dir, out_dir, objective, summary, daily, repl):
         "- `fallback_v002_extreme_confirm`: fallback when v002 Top3 has at least two extreme VWAP and two extreme close-low names.",
         "- `fallback_v002_extreme_confirm_v005_weak`: same, plus v005 average v002 rank >= 12.",
         "- `fallback_v002_extreme_confirm_plus_risk`: same extreme confirmation, plus at least one risk ticket in v005.",
+        "- `fallback_v002_close_low_dominant_v005_weak`: fallback when v002 Top3 has 3 extreme close-low names and v005 average v002 rank >= 12.",
+        "- `fallback_v002_extreme_or_close_low_v005_weak`: fallback when either the extreme-confirm gate or the close-low-dominant gate fires, with v005 average v002 rank >= 12.",
         "- `risk_replace_only`: only replace catastrophic risk tickets with v002 names.",
-        "- `fallback_plus_risk_replace`: cautious fallback first, otherwise risk replacement.", "",
+        "- `fallback_plus_risk_replace`: cautious fallback first, otherwise risk replacement.",
+        "- `fallback_plus_close_low_risk_replace`: cautious extreme/close-low fallback first, otherwise risk replacement.", "",
         "## Summary", "",
     ]
     lines += md_table(summary, SUMMARY_COLUMNS)
