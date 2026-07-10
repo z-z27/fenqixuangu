@@ -7,8 +7,10 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .policy_config import DEFAULT_POLICY, normalized_sha256, validate_model_dates_for_signal_date
+from .daily_ranking import load_ranking_model
+from .policy_config import frozen_policy_input_checks, get_default_policy, normalized_sha256, validate_model_dates_for_signal_date
 from .provenance import file_sha256, runtime_provenance
+from .ranking_backtest import validate_ranking_model
 from .v004a import (
     DEFAULT_TARGET_RETURN_PCT,
     MODEL_ID_V004A,
@@ -35,6 +37,7 @@ from .v005_set_selector import (
     DEFAULT_V004A_POSITIVE_WEIGHT,
     GRID_PARAM_COLUMNS,
     TARGET_COLUMN,
+    V002_MODEL_ID,
     build_candidate_pool,
     build_combo_candidates,
     build_rule_grid,
@@ -60,8 +63,10 @@ from .v005_fallback_gate import (
     summarize,
 )
 
+DEFAULT_POLICY = get_default_policy()
 DEFAULT_SAMPLES_FILE = None
 DEFAULT_COEFFICIENTS_FILE = DEFAULT_POLICY.coefficients_path
+DEFAULT_RANKING_MODEL_FILE = DEFAULT_POLICY.ranking_model_path
 DEFAULT_OUTPUT_DIR = Path("reports/v005_fixed_grid_holdout")
 DEFAULT_GRID_ID = DEFAULT_POLICY.grid_id
 DEFAULT_V002_MODEL_LABEL = "v002_top3_control"
@@ -114,7 +119,15 @@ def run_fixed_grid_holdout(
     v004a_positive_weight: float = DEFAULT_POLICY.v004a_positive_weight,
     target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
     min_forward_dates: int = DEFAULT_POLICY.min_forward_dates,
+    ranking_model_file: str | Path = DEFAULT_RANKING_MODEL_FILE,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path]:
+    if abs(float(target_return_pct) - DEFAULT_POLICY.target_return_pct) > 1e-12:
+        raise RuntimeError(
+            "Frozen v005 policy requires target_return_pct=7.0 because the locked target is "
+            "target7_d2open_d3high."
+        )
+    _, ranking_meta = load_ranking_model(ranking_model_file)
+    ranking_model_id = str(ranking_meta["model_id"])
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -124,7 +137,12 @@ def run_fixed_grid_holdout(
             raise RuntimeError(f"missing scored_file: {scored_path}")
         scored = prepare_scored_candidates(scored_path)
         holdout_scored_path = scored_path
-        coefficient_meta: dict[str, Any] = {"source": "pre_scored_file"}
+        coefficient_meta: dict[str, Any] = {
+            "source": "pre_scored_file",
+            "ranking_model_path": str(ranking_meta["model_path"]),
+            "ranking_model_normalized_sha256": str(ranking_meta["model_normalized_sha256"]),
+            "ranking_model_id": ranking_model_id,
+        }
         data_quality = pd.DataFrame()
     else:
         if not samples_file:
@@ -138,6 +156,7 @@ def run_fixed_grid_holdout(
             v004a_l2=float(v004a_l2),
             v004a_positive_weight=float(v004a_positive_weight),
             target_return_pct=float(target_return_pct),
+            ranking_model_file=Path(ranking_model_file),
         )
 
     candidate_pool = build_candidate_pool(
@@ -145,6 +164,7 @@ def run_fixed_grid_holdout(
         candidate_top_k=int(candidate_top_k),
         v004a_l2=float(v004a_l2),
         v004a_positive_weight=float(v004a_positive_weight),
+        v002_model_id=ranking_model_id,
     )
     if candidate_pool.empty:
         raise RuntimeError("holdout produced no eligible candidate-pool rows")
@@ -167,21 +187,32 @@ def run_fixed_grid_holdout(
         top_n=int(top_n),
         v004a_l2=float(v004a_l2),
         v004a_positive_weight=float(v004a_positive_weight),
+        v002_model_id=ranking_model_id,
     )
-    frozen_policy_inputs_verified = (
-        not bool(scored_file)
-        and str(coefficient_meta.get("coefficients_normalized_sha256", "")) == DEFAULT_POLICY.coefficients_sha256
-        and str(coefficient_meta.get("coefficient_predict_date", "")) == DEFAULT_POLICY.coefficient_predict_date
-        and int(grid_id) == DEFAULT_POLICY.grid_id
-        and int(top_n) == DEFAULT_POLICY.top_n
-        and int(candidate_top_k) == DEFAULT_POLICY.candidate_top_k
-        and abs(float(v004a_l2) - DEFAULT_POLICY.v004a_l2) <= 1e-12
-        and abs(float(v004a_positive_weight) - DEFAULT_POLICY.v004a_positive_weight) <= 1e-12
+    frozen_checks = frozen_policy_input_checks(
+        DEFAULT_POLICY,
+        coefficients_file=coefficients_file,
+        coefficient_predict_date=str(coefficient_meta.get("coefficient_predict_date", "")),
+        coefficient_train_end=str(coefficient_meta.get("coefficient_train_end", "")),
+        v004a_l2=float(v004a_l2),
+        v004a_positive_weight=float(v004a_positive_weight),
+        ranking_model_file=ranking_model_file,
+        ranking_model_id=ranking_model_id,
+        target_column=TARGET_COLUMN,
+        target_return_pct=float(target_return_pct),
+        grid_id=int(grid_id),
+        candidate_top_k=int(candidate_top_k),
+        top_n=int(top_n),
+        min_forward_dates=int(min_forward_dates),
     )
+    frozen_checks["samples_input_scored_in_this_run"] = not bool(scored_file)
+    frozen_policy_inputs_verified = all(frozen_checks.values())
+    deployment_status = DEFAULT_POLICY.deployment_status if frozen_policy_inputs_verified else "custom_research_only"
     readiness = assess_holdout_readiness(
         policy_daily,
         min_forward_dates=int(min_forward_dates),
         frozen_policy_inputs_verified=frozen_policy_inputs_verified,
+        deployment_status=deployment_status,
     )
     samples_path = Path(samples_file) if samples_file else None
     run_meta = pd.DataFrame(
@@ -189,12 +220,39 @@ def run_fixed_grid_holdout(
             {
                 **DEFAULT_POLICY.provenance(),
                 **runtime_provenance(),
+                "policy_version": (
+                    DEFAULT_POLICY.policy_version
+                    if frozen_policy_inputs_verified
+                    else f"{DEFAULT_POLICY.policy_version}+custom_override"
+                ),
+                "deployment_status": deployment_status,
                 "input_mode": "pre_scored" if scored_file else "samples",
                 "samples_file": str(samples_path) if samples_path else "",
                 "samples_file_sha256": file_sha256(samples_path) if samples_path and samples_path.is_file() else "",
                 "scored_file": str(holdout_scored_path),
                 "scored_file_sha256": file_sha256(holdout_scored_path),
                 "frozen_policy_inputs_verified": frozen_policy_inputs_verified,
+                "matches_frozen_manifest": frozen_policy_inputs_verified,
+                "failed_frozen_policy_checks": ",".join(
+                    key for key, passed in frozen_checks.items() if not passed
+                ),
+                "coefficients_file": str(coefficients_file),
+                "coefficients_normalized_sha256": (
+                    normalized_sha256(coefficients_file) if Path(coefficients_file).is_file() else ""
+                ),
+                "coefficient_predict_date": str(coefficient_meta.get("coefficient_predict_date", "")),
+                "coefficient_train_end": str(coefficient_meta.get("coefficient_train_end", "")),
+                "v004a_l2": float(v004a_l2),
+                "v004a_positive_weight": float(v004a_positive_weight),
+                "ranking_model_path": str(ranking_meta["model_path"]),
+                "ranking_model_normalized_sha256": str(ranking_meta["model_normalized_sha256"]),
+                "ranking_model_id": ranking_model_id,
+                "v002_source_model_id": ranking_model_id,
+                "target_return_pct": float(target_return_pct),
+                "grid_id": int(grid_id),
+                "candidate_top_k": int(candidate_top_k),
+                "top_n": int(top_n),
+                "min_forward_dates": int(min_forward_dates),
                 "target_metric_kind": "d2open_to_d3_intraday_high_opportunity_proxy",
                 "transaction_costs_included": False,
                 "slippage_included": False,
@@ -247,6 +305,7 @@ def build_holdout_scored_candidates(
     v004a_l2: float,
     v004a_positive_weight: float,
     target_return_pct: float,
+    ranking_model_file: Path = DEFAULT_RANKING_MODEL_FILE,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     if not samples_file.exists():
         raise RuntimeError(f"missing samples file: {samples_file}")
@@ -267,6 +326,10 @@ def build_holdout_scored_candidates(
         )
 
     manual_models = _load_manual_models()
+    ranking_model, ranking_meta = load_ranking_model(ranking_model_file)
+    validate_ranking_model(ranking_model, samples.columns)
+    manual_models.pop(V002_MODEL_ID, None)
+    manual_models[str(ranking_meta["model_id"])] = ranking_model
     scored_frames = _score_manual_and_hand_models(samples, manual_models)
     scored_frames.append(
         _score_logistic_frame(
@@ -285,6 +348,13 @@ def build_holdout_scored_candidates(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output.to_csv(output_path, index=False, encoding="utf-8-sig")
     prepared = prepare_scored_candidates(output_path)
+    coefficient_meta.update(
+        {
+            "ranking_model_path": str(ranking_meta["model_path"]),
+            "ranking_model_normalized_sha256": str(ranking_meta["model_normalized_sha256"]),
+            "ranking_model_id": str(ranking_meta["model_id"]),
+        }
+    )
     return prepared, data_quality, coefficient_meta
 
 
@@ -374,8 +444,9 @@ def apply_fixed_policy(
     top_n: int,
     v004a_l2: float,
     v004a_positive_weight: float,
+    v002_model_id: str = V002_MODEL_ID,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    ctx = build_context(scored_path, v004a_l2, v004a_positive_weight)
+    ctx = build_context(scored_path, v004a_l2, v004a_positive_weight, v002_model_id=v002_model_id)
     history = selected_combos[["signal_date", "grid_id"]].copy().rename(columns={"grid_id": "selected_grid_id"})
     history["grid_id"] = history["selected_grid_id"]
     baseline = build_baseline(history[["signal_date", "grid_id"]], selected_combos, ctx, top_n)
@@ -463,10 +534,12 @@ def assess_holdout_readiness(
     policy_daily: pd.DataFrame,
     min_forward_dates: int,
     frozen_policy_inputs_verified: bool = True,
+    deployment_status: str | None = None,
 ) -> pd.DataFrame:
     threshold = int(min_forward_dates)
     if threshold <= 0:
         raise ValueError("min_forward_dates must be positive")
+    frozen_policy_inputs_verified = bool(frozen_policy_inputs_verified) and threshold == DEFAULT_POLICY.min_forward_dates
     rows = policy_daily.copy()
     if not rows.empty and "strategy" in rows.columns:
         rows = rows[rows["strategy"].astype(str) == PRIMARY_POLICY].copy()
@@ -475,20 +548,28 @@ def assess_holdout_readiness(
     threshold_met = date_count >= threshold
     if not frozen_policy_inputs_verified:
         readiness_status = "UNVERIFIED_POLICY_INPUTS"
-        reason = "Pre-scored input cannot prove which coefficient artifact produced its v004a scores; rerun from samples to verify the frozen policy."
+        reason = "Frozen policy inputs are not fully verified; this result is custom research only."
     elif threshold_met:
         readiness_status = "FORWARD_SAMPLE_THRESHOLD_MET"
-        reason = "Forward-date count meets the review threshold; deployment still requires independent execution and risk review."
+        reason = "Unique signal dates in this holdout input meet the review threshold; deployment still requires execution and risk review."
     else:
         readiness_status = "INSUFFICIENT_FORWARD_SAMPLE"
-        reason = f"Only {date_count} independent forward dates are present; at least {threshold} are required before deployment review."
+        reason = f"Only {date_count} unique signal dates are present in this holdout input; at least {threshold} are required before deployment review."
+    effective_deployment_status = deployment_status or (
+        DEFAULT_POLICY.deployment_status if frozen_policy_inputs_verified else "custom_research_only"
+    )
     return pd.DataFrame(
         [
             {
-                "policy_version": DEFAULT_POLICY.policy_version,
-                "deployment_status": DEFAULT_POLICY.deployment_status,
+                "policy_version": (
+                    DEFAULT_POLICY.policy_version
+                    if frozen_policy_inputs_verified
+                    else f"{DEFAULT_POLICY.policy_version}+custom_override"
+                ),
+                "deployment_status": effective_deployment_status,
                 "research_only": True,
                 "forward_date_count": date_count,
+                "forward_signal_date_count": date_count,
                 "min_forward_dates": threshold,
                 "frozen_policy_inputs_verified": bool(frozen_policy_inputs_verified),
                 "sample_threshold_met": threshold_met,
@@ -528,6 +609,7 @@ def make_report(
         "This report evaluates the locked v005 set selector on a holdout samples file.",
         "It does not run factor discovery, does not select a new grid, and does not tune the fallback policy.",
         "The D2-open to D3-high target is an opportunity proxy, not executable net PnL.",
+        "Readiness counts unique signal dates in this holdout input; it does not claim stock, D0, or sample independence.",
         "",
         "## Readiness gate",
         "",
@@ -626,6 +708,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--v004a-positive-weight", type=float, default=DEFAULT_POLICY.v004a_positive_weight)
     parser.add_argument("--target-return-pct", type=float, default=DEFAULT_TARGET_RETURN_PCT)
     parser.add_argument("--min-forward-dates", type=int, default=DEFAULT_POLICY.min_forward_dates)
+    parser.add_argument("--ranking-model", default=str(DEFAULT_RANKING_MODEL_FILE))
     args = parser.parse_args(argv)
 
     summary, daily, replacement, daily_top3, report_path = run_fixed_grid_holdout(
@@ -641,6 +724,7 @@ def main(argv: list[str] | None = None) -> int:
         v004a_positive_weight=args.v004a_positive_weight,
         target_return_pct=args.target_return_pct,
         min_forward_dates=args.min_forward_dates,
+        ranking_model_file=args.ranking_model,
     )
     print(f"summary rows: {len(summary)}")
     print(f"daily rows: {len(daily)}")
@@ -648,7 +732,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"daily top3 rows: {len(daily_top3)}")
     readiness_path = Path(args.output_dir) / "v005_fixed_grid_holdout_readiness.csv"
     readiness = pd.read_csv(readiness_path).iloc[0]
-    print(f"readiness: {readiness['readiness_status']} ({int(readiness['forward_date_count'])}/{int(readiness['min_forward_dates'])} dates)")
+    print(f"readiness: {readiness['readiness_status']} ({int(readiness['forward_signal_date_count'])}/{int(readiness['min_forward_dates'])} unique signal dates)")
     if not summary.empty:
         best = summary.iloc[0]
         print(f"best strategy: {best['strategy']}")

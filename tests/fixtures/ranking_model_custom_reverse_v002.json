@@ -1,0 +1,25 @@
+{
+  "model_id": "fixture_custom_reverse_v002",
+  "model_type": "linear_score",
+  "score_column": "research_score",
+  "target_return_pct": 7.0,
+  "feature_columns": [
+    "total_score",
+    "trend_hold_score",
+    "d1_close_ma10_pct",
+    "d1_low_ma10_pct",
+    "graph_quality_score",
+    "support_score"
+  ],
+  "model": {
+    "intercept": 0.0,
+    "weights": {
+      "total_score": -0.35,
+      "trend_hold_score": -0.20,
+      "d1_close_ma10_pct": -0.20,
+      "d1_low_ma10_pct": -0.15,
+      "graph_quality_score": -0.10,
+      "support_score": -0.08
+    }
+  }
+}

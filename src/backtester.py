@@ -16,7 +16,15 @@ from .signal_engine import Signal, generate_signal
 DEFAULT_TOP_N = 3
 DEFAULT_TARGET_RETURN_PCT = 7.0
 DEFAULT_ENTRY_PRICE_MODE = "confirmation_close"
+EXECUTION_MODEL_VERSION = "conservative_confirmation_close_v1"
+LEGACY_ZONE_MAX_EXECUTION_MODEL_VERSION = "legacy_zone_max_v0"
 HISTORY_HORIZONS = (2, 3, 5, 10)
+
+
+def execution_model_version(entry_price_mode: str) -> str:
+    if str(entry_price_mode) == DEFAULT_ENTRY_PRICE_MODE:
+        return EXECUTION_MODEL_VERSION
+    return LEGACY_ZONE_MAX_EXECUTION_MODEL_VERSION
 
 
 def simulate_d2_execution(
@@ -730,6 +738,7 @@ def build_history_summary(
                     "start_date": start_date,
                     "end_date": end_date,
                     "top_n": int(top_n),
+                    "execution_model_version": execution_model_version(entry_price_mode),
                     "entry_price_mode": entry_price_mode,
                     "execution_bar_resolution": "5m",
                     "confirmation_bar_excluded": True,
@@ -761,6 +770,7 @@ def build_history_summary(
             "stop_loss_pct": float(stop_loss_pct),
             "include_all_allowed": bool(include_all_allowed),
             "include_small": bool(include_small),
+            "execution_model_version": execution_model_version(entry_price_mode),
             "entry_price_mode": entry_price_mode,
             "execution_bar_resolution": "5m",
             "confirmation_bar_excluded": True,
@@ -923,6 +933,7 @@ def build_history_review_markdown(
             f"- execution rate: **{_format_pct(item.get('execution_rate'))}**",
             f"- target hit rate: **{_format_pct(item.get('target_hit_rate'))}**",
             f"- stop hit rate: **{_format_pct(item.get('stop_hit_rate'))}**",
+            f"- execution model version: **{item.get('execution_model_version', EXECUTION_MODEL_VERSION)}**",
             f"- entry price mode: **{item.get('entry_price_mode', DEFAULT_ENTRY_PRICE_MODE)}**",
             "- confirmation bar excluded: **True**",
             "- same-bar target/stop policy: **stop_first**",
@@ -1044,6 +1055,7 @@ def _base_history_result(
         "buy_price": None,
         "zone_buy_price": None,
         "confirmation_price": None,
+        "execution_model_version": execution_model_version(entry_price_mode),
         "entry_price_mode": entry_price_mode,
         "execution_bar_resolution": "5m",
         "confirmation_bar_excluded": True,
@@ -1463,6 +1475,7 @@ def evaluate_top_signal(
         "buy_time": "",
         "buy_price": None,
         "confirmation_price": None,
+        "execution_model_version": execution_model_version(entry_price_mode),
         "entry_price_mode": entry_price_mode,
         "execution_bar_resolution": "5m",
         "confirmation_bar_excluded": True,
@@ -1542,6 +1555,7 @@ def build_top3_summary(
                 {
                     "top_n": int(top_n),
                     "target_return_pct": float(target_return_pct),
+                    "execution_model_version": EXECUTION_MODEL_VERSION,
                     "entry_price_mode": DEFAULT_ENTRY_PRICE_MODE,
                     "execution_bar_resolution": "5m",
                     "confirmation_bar_excluded": True,
@@ -1560,6 +1574,15 @@ def build_top3_summary(
             {
                 "top_n": int(top_n),
                 "target_return_pct": float(target_return_pct),
+                "execution_model_version": (
+                    str(trades["execution_model_version"].iloc[0])
+                    if "execution_model_version" in trades.columns
+                    else execution_model_version(
+                        str(trades["entry_price_mode"].iloc[0])
+                        if "entry_price_mode" in trades.columns
+                        else DEFAULT_ENTRY_PRICE_MODE
+                    )
+                ),
                 "entry_price_mode": str(trades["entry_price_mode"].iloc[0]) if "entry_price_mode" in trades.columns else DEFAULT_ENTRY_PRICE_MODE,
                 "execution_bar_resolution": "5m",
                 "confirmation_bar_excluded": True,
@@ -1612,8 +1635,10 @@ def build_top3_backtest_markdown(trades: pd.DataFrame, summary: pd.DataFrame, tr
             f"- executed: **{int(item.get('executed_count', 0))}**",
             f"- execution rate: **{_format_pct(item.get('execution_rate'))}**",
             f"- target hit rate: **{_format_pct(item.get('target_hit_rate'))}**",
+            f"- execution model version: **{item.get('execution_model_version', EXECUTION_MODEL_VERSION)}**",
             f"- entry price mode: **{item.get('entry_price_mode', DEFAULT_ENTRY_PRICE_MODE)}**",
             "- confirmation bar excluded: **True**",
+            "- same-bar target/stop policy: **stop_first**",
             "- transaction costs and slippage included: **False**",
             f"- avg D2 max return: **{_format_number(item.get('avg_d2_max_return_pct'))}%**",
             f"- avg D2 close return: **{_format_number(item.get('avg_d2_close_return_pct'))}%**",

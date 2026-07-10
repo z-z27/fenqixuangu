@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import argparse
 
-from .daily_ranking import DEFAULT_DAILY_RANKING_MODEL
 from .v005_daily_selector import (
     DEFAULT_CANDIDATE_TOP_K,
     DEFAULT_COEFFICIENT_PREDICT_DATE,
     DEFAULT_COEFFICIENTS_FILE,
     DEFAULT_GRID_ID,
     DEFAULT_OUTPUT_ROOT,
+    DEFAULT_RANKING_MODEL_FILE,
     DEFAULT_TOP_N,
     run_v005_daily_from_market,
 )
@@ -25,7 +25,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force-refresh", action="store_true")
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
-    parser.add_argument("--ranking-model", default=str(DEFAULT_DAILY_RANKING_MODEL))
+    parser.add_argument("--ranking-model", default=str(DEFAULT_RANKING_MODEL_FILE))
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
     parser.add_argument("--candidate-top-k", type=int, default=DEFAULT_CANDIDATE_TOP_K)
     parser.add_argument("--coefficients-file", default=str(DEFAULT_COEFFICIENTS_FILE))

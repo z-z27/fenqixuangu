@@ -6,7 +6,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .policy_config import DEFAULT_POLICY, FallbackGateConfig
+from .policy_config import FallbackGateConfig, get_default_policy
+
+DEFAULT_POLICY = get_default_policy()
 
 DEFAULT_SCORED_FILE = Path("reports/v004a/grid_v2_scored/v004a_scored_candidates.csv")
 DEFAULT_V005_DIR = Path("reports/v005_set_selector")
@@ -131,7 +133,7 @@ def run_fallback_gate(
     return summary, daily, repl, report_path
 
 
-def build_context(path, l2, positive_weight):
+def build_context(path, l2, positive_weight, v002_model_id=V002_MODEL_ID):
     if not Path(path).exists():
         raise RuntimeError(f"missing scored file: {path}")
     df = pd.read_csv(path, dtype={"code": str})
@@ -152,14 +154,15 @@ def build_context(path, l2, positive_weight):
     v4 = df[(df["model_id"].astype(str) == V004A_MODEL_ID) & (df["evaluation_scope"].astype(str) == SCOPE)
             & (df["l2"].sub(float(l2)).abs() <= 1e-9)
             & (df["positive_weight"].sub(float(positive_weight)).abs() <= 1e-9)].copy()
-    v2 = df[(df["model_id"].astype(str) == V002_MODEL_ID) & (df["evaluation_scope"].astype(str) == SCOPE)].copy()
+    v2 = df[(df["model_id"].astype(str) == str(v002_model_id)) & (df["evaluation_scope"].astype(str) == SCOPE)].copy()
     if v4.empty:
         raise RuntimeError("no v004a rows found for configured l2/positive_weight")
     if v2.empty:
-        raise RuntimeError("no v002 rows found")
+        raise RuntimeError(f"no v002 rows found for model_id={v002_model_id}")
     v4 = v4.rename(columns={"model_score": "v004a_score", "model_rank": "v004a_model_rank"})
     v2 = v2[["signal_date", "code", "model_score", "model_rank"]].rename(columns={"model_score": "v002_score", "model_rank": "v002_model_rank"})
     out = v4.merge(v2, on=["signal_date", "code"], how="left")
+    out["v002_source_model_id"] = str(v002_model_id)
     out["v004a_model_rank"] = pd.to_numeric(out["v004a_model_rank"], errors="coerce")
     out["v002_model_rank"] = pd.to_numeric(out["v002_model_rank"], errors="coerce")
     out["extreme_price"] = out["rank_log_candidate_base_price"] >= 0.85

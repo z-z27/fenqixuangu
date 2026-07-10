@@ -4,7 +4,7 @@
 
 本项目不是自动交易系统，也不构成投资建议。所有输出都应作为研究和人工复核材料使用。
 
-从 2026-07-10 起，默认运行策略由版本化清单 `configs/policy_v005_v1.json` 管理。所有 daily 输出固定标记为 `research_only=true`、`deployment_status=shadow_only`，旧的 `primary_buy_*` 字段只为兼容历史分析保留，语义是“研究观察清单”，不是委托或实盘买入指令。
+从 2026-07-10 起，默认运行策略由版本化清单 `configs/policy_v005_v1.json` 管理。默认冻结 daily 输出标记为 `research_only=true`、`deployment_status=shadow_only`；参数覆盖运行标记为 `deployment_status=custom_research_only`。旧的 `primary_buy_*` 字段只为兼容历史分析保留，语义是“研究观察清单”，不是委托或实盘买入指令。
 
 ---
 
@@ -484,7 +484,9 @@ python -m src.run_daily_v005 `
   --workers 6
 ```
 
-模型日期、grid、TopN 和 fallback 阈值默认从冻结 manifest 读取。显式覆盖这些参数仍然允许用于研究，但输出会被标记成 `custom_research_only` 和 `matches_frozen_manifest=False`。
+模型日期、grid、TopN 和 fallback 阈值默认从冻结 manifest 读取。默认冻结 daily 命令不需要手工传 `coefficient_predict_date` 或 `grid_id`。显式覆盖可覆盖的参数只用于研究，输出会被标记成 `custom_research_only`、`frozen_policy_inputs_verified=False` 和 `matches_frozen_manifest=False`。
+
+显式传入 `--ranking-model <custom-model.json>` 属于 custom research mode。该模型会同时用于 daily `research_score/daily_rank`、v005 内部的 v002 rows、v002 Top3 control 和 fallback gate，不会再隐式混用仓库默认 v002；输出 metadata 会记录实际 `v002_source_model_id`。
 
 输出终端会直接打印：
 
@@ -658,7 +660,9 @@ python -m src.v005_fixed_grid_holdout `
   --output-dir reports/v005_fixed_grid_holdout_2026-07-01_2026-07-03
 ```
 
-同时检查 `v005_fixed_grid_holdout_readiness.csv` 和 `v005_fixed_grid_holdout_run_meta.csv`。少于 30 个独立 forward 日期时，状态固定为 `INSUFFICIENT_FORWARD_SAMPLE`；达到 30 日也只表示可以进入进一步审查，`deployable` 仍为 `False`。使用 `--scored-file` 时无法证明原始系数来源，readiness 会标记为 `UNVERIFIED_POLICY_INPUTS`。
+冻结 holdout 的目标固定为 `target7_d2open_d3high`，因此 `target_return_pct` 只能是 `7.0`；其他阈值会被明确拒绝，当前不支持临时重算任意阈值目标。
+
+同时检查 `v005_fixed_grid_holdout_readiness.csv` 和 `v005_fixed_grid_holdout_run_meta.csv`。readiness 的 `forward_signal_date_count` 仅表示当前 holdout 输入中的 unique signal dates，不声称股票、D0 或样本相互独立。少于 30 个 signal date 时，状态固定为 `INSUFFICIENT_FORWARD_SAMPLE`；达到 30 日也只表示 `FORWARD_SAMPLE_THRESHOLD_MET`，`deployable` 仍为 `False`。使用 `--scored-file` 时无法证明原始系数来源，readiness 会标记为 `UNVERIFIED_POLICY_INPUTS`。
 
 ### 3. 看结果
 
@@ -921,8 +925,9 @@ configs/models/v004a_coefficients_2026-06-26.csv
 4. daily 输出必须人工复核，尤其要检查一字板、流动性、公告、监管风险、题材退潮和极端高位风险。
 5. 后续最重要的工作不是频繁调参，而是严格记录 fixed policy 的 forward 表现。
 6. 行情来自 AkShare、东方财富、腾讯和新浪等公开接口，缓存与上游数据都可能修订；run meta 的哈希能复现当次 selector 输入，但不等于完整不可变行情快照。
-7. 默认执行回测采用 `confirmation_close`，排除确认 K 线并对同 K 止盈止损按止损优先；研究标签和历史报告仍不能替代真实成交、滑点和费用回测。
+7. 默认执行回测采用 `execution_model_version=conservative_confirmation_close_v1`：`entry_price_mode=confirmation_close`、排除确认 K 线、同 K 止盈止损按 `stop_first`。旧 `zone_max` 回测结果不能和新 `confirmation_close` 回测结果直接比较；研究标签和历史报告仍不能替代真实成交、滑点和费用回测。
 8. forward 日期少于 30 时 readiness 必须是 `INSUFFICIENT_FORWARD_SAMPLE`；达到门槛也不会自动把策略改成 deployable。
+9. 当前 D0+1 到 D0+3 rolling scan、策略公式、冻结模型参数和选股逻辑在本轮配置一致性修复中均未修改。
 
 ---
 

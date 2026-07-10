@@ -282,7 +282,13 @@ def prepare_scored_candidates(path: Path) -> pd.DataFrame:
     return frame
 
 
-def build_candidate_pool(scored: pd.DataFrame, candidate_top_k: int, v004a_l2: float, v004a_positive_weight: float) -> pd.DataFrame:
+def build_candidate_pool(
+    scored: pd.DataFrame,
+    candidate_top_k: int,
+    v004a_l2: float,
+    v004a_positive_weight: float,
+    v002_model_id: str = V002_MODEL_ID,
+) -> pd.DataFrame:
     v004a_mask = (
         (scored["model_id"] == V004A_MODEL_ID)
         & (scored["evaluation_scope"] == SCOPE)
@@ -298,14 +304,15 @@ def build_candidate_pool(scored: pd.DataFrame, candidate_top_k: int, v004a_l2: f
     if v004a_top.empty:
         raise RuntimeError(f"no v004a Top{candidate_top_k} rows found")
 
-    v002 = scored[(scored["model_id"] == V002_MODEL_ID) & (scored["evaluation_scope"] == SCOPE)].copy()
+    v002 = scored[(scored["model_id"] == str(v002_model_id)) & (scored["evaluation_scope"] == SCOPE)].copy()
     if v002.empty:
-        raise RuntimeError(f"no v002 rows found for model_id={V002_MODEL_ID}, scope={SCOPE}")
+        raise RuntimeError(f"no v002 rows found for model_id={v002_model_id}, scope={SCOPE}")
     v002 = v002[["signal_date", "code", "model_score", "model_rank"]].rename(
         columns={"model_score": "v002_score", "model_rank": "v002_model_rank"}
     )
 
     pool = v004a_top.merge(v002, on=["signal_date", "code"], how="left")
+    pool["v002_source_model_id"] = str(v002_model_id)
     pool["v002_model_rank"] = pd.to_numeric(pool["v002_model_rank"], errors="coerce").fillna(999999.0)
     pool["v002_score"] = pd.to_numeric(pool["v002_score"], errors="coerce")
     pool["v004a_model_rank"] = pd.to_numeric(pool["v004a_model_rank"], errors="coerce")

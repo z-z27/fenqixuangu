@@ -6,13 +6,26 @@ from typing import Any
 
 import pandas as pd
 
-from .policy_config import DEFAULT_POLICY
+from .policy_config import PROJECT_ROOT, normalized_sha256
 from .ranking_backtest import score_candidates, validate_ranking_model
 from .signal_engine import Signal
 
 
-DEFAULT_DAILY_RANKING_MODEL = DEFAULT_POLICY.ranking_model_path
+DEFAULT_DAILY_RANKING_MODEL = PROJECT_ROOT / "reports" / "manual_models" / "ranking_model_v002_core_momentum_support.json"
 DEFAULT_DAILY_TOP_N = 3
+
+
+def load_ranking_model(model_file: str | Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    model_path = Path(model_file)
+    if not model_path.is_file():
+        raise RuntimeError(f"missing ranking model: {model_path}")
+    model = json.loads(model_path.read_text(encoding="utf-8"))
+    model_id = str(model.get("model_id", model_path.stem))
+    return model, {
+        "model_id": model_id,
+        "model_path": str(model_path),
+        "model_normalized_sha256": normalized_sha256(model_path),
+    }
 
 
 def apply_daily_research_ranking(
@@ -25,11 +38,10 @@ def apply_daily_research_ranking(
     This is intentionally a daily-output layer. Historical sample generation
     keeps writing raw Signal rows and does not call this function.
     """
-    model_path = Path(model_file)
-    model = json.loads(model_path.read_text(encoding="utf-8"))
-    model_id = str(model.get("model_id", model_path.stem))
+    model, loaded_meta = load_ranking_model(model_file)
+    model_id = str(loaded_meta["model_id"])
     score_column = str(model.get("score_column", "research_score"))
-    meta = {"model_id": model_id, "model_path": str(model_path), "top_n": int(top_n)}
+    meta = {**loaded_meta, "top_n": int(top_n)}
 
     frame = _signals_to_frame(signals)
     frame["ranking_model_id"] = model_id

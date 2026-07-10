@@ -5,6 +5,10 @@
   "deployment_status": "shadow_only",
   "research_only": true,
   "metric_scope": "opportunity_proxy_d2open_d3high",
+  "target": {
+    "column": "target7_d2open_d3high",
+    "return_pct": 7.0
+  },
   "ranking_model": {
     "path": "reports/manual_models/ranking_model_v002_core_momentum_support.json",
     "normalized_sha256": "f4a0eaaf60341e4a9a3e729aed879c4a4d84b3dbf107282957493b252f7e07f3",

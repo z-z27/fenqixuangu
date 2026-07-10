@@ -25,6 +25,7 @@ EXECUTION_ONLY_COLUMNS = {
     "execution_date",
     "buy_time",
     "entry_price_mode",
+    "execution_model_version",
     "execution_bar_resolution",
     "confirmation_bar_excluded",
     "same_bar_policy",

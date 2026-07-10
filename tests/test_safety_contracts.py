@@ -2,18 +2,31 @@ from __future__ import annotations
 
 import unittest
 import tomllib
+import subprocess
+import sys
 
 import numpy as np
 import pandas as pd
 
-from src.backtester import _after_buy_rows, _first_outcome, _path_metrics_by_horizon, simulate_d2_execution
+from src.backtester import (
+    EXECUTION_MODEL_VERSION,
+    _after_buy_rows,
+    _base_history_result,
+    _first_outcome,
+    _path_metrics_by_horizon,
+    build_top3_summary,
+    simulate_d2_execution,
+)
 from src.loaders import _cache_covers, _filter_to_end_date
-from src.policy_config import DEFAULT_POLICY, PROJECT_ROOT, load_policy_config, normalized_sha256, validate_policy_for_signal_date
+from src.policy_config import PROJECT_ROOT, get_default_policy, load_policy_config, normalized_sha256, validate_policy_for_signal_date
 from src.provenance import source_tree_sha256
 from src.ranking_backtest import validate_ranking_model
 from src.v005_daily_selector import build_daily_policy_outputs, build_runtime_policy_meta, prepare_live_v004a_features
 from src.v005_fallback_gate import PRIMARY_POLICY, is_policy_fallback
 from src.v005_fixed_grid_holdout import assess_holdout_readiness, load_fixed_v004a_beta
+
+
+DEFAULT_POLICY = get_default_policy()
 
 
 class FrozenPolicyTests(unittest.TestCase):
@@ -38,6 +51,9 @@ class FrozenPolicyTests(unittest.TestCase):
         self.assertEqual(normalized_sha256(policy.coefficients_path), policy.coefficients_sha256)
         self.assertTrue(policy.ranking_model_path.is_file())
         self.assertEqual(normalized_sha256(policy.ranking_model_path), policy.ranking_model_sha256)
+        self.assertEqual(normalized_sha256(policy.manifest_path), policy.manifest_sha256)
+        self.assertEqual(policy.target_column, "target7_d2open_d3high")
+        self.assertEqual(policy.target_return_pct, 7.0)
         self.assertEqual(policy.deployment_status, "shadow_only")
         self.assertTrue(policy.research_only)
         self.assertTrue(build_runtime_policy_meta()["matches_frozen_manifest"])
@@ -58,6 +74,22 @@ class FrozenPolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "future-model use"):
             validate_policy_for_signal_date(DEFAULT_POLICY, "2026-06-25")
         validate_policy_for_signal_date(DEFAULT_POLICY, "2026-06-26")
+
+    def test_generic_cli_import_does_not_load_frozen_policy(self) -> None:
+        code = (
+            "import src.policy_config as policy_config; "
+            "policy_config.load_policy_config = lambda *args, **kwargs: "
+            "(_ for _ in ()).throw(RuntimeError('unexpected frozen policy load')); "
+            "import src.cli"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code],
+            cwd=PROJECT_ROOT,
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 class NoLeakageTests(unittest.TestCase):
@@ -186,6 +218,26 @@ class ConservativeExecutionTests(unittest.TestCase):
         self.assertTrue(outcome["stop_hit"])
         self.assertTrue(outcome["same_bar_ambiguous"])
 
+    def test_execution_model_metadata_is_explicit(self) -> None:
+        row = _base_history_result(
+            pd.Series(),
+            code="000001",
+            signal_date="2026-07-10",
+            base_price=10.0,
+            hold_days=3,
+            target_return_pct=7.0,
+            stop_loss_pct=3.0,
+            entry_price_mode="confirmation_close",
+            top_n=3,
+            include_all_allowed=False,
+        )
+        self.assertEqual(row["execution_model_version"], EXECUTION_MODEL_VERSION)
+        self.assertEqual(row["entry_price_mode"], "confirmation_close")
+        self.assertTrue(row["confirmation_bar_excluded"])
+        self.assertEqual(row["same_bar_policy"], "stop_first")
+        summary = build_top3_summary(pd.DataFrame()).iloc[0]
+        self.assertEqual(summary["execution_model_version"], EXECUTION_MODEL_VERSION)
+
 
 class PolicyGateTests(unittest.TestCase):
     def test_daily_output_is_explicitly_a_research_watchlist(self) -> None:
@@ -224,7 +276,7 @@ class PolicyGateTests(unittest.TestCase):
         base["v005_avg_v002_rank"] = np.nextafter(12.0, 0.0)
         self.assertFalse(is_policy_fallback(base))
 
-    def test_holdout_sample_gate_requires_thirty_independent_dates(self) -> None:
+    def test_holdout_sample_gate_requires_thirty_unique_signal_dates(self) -> None:
         rows = pd.DataFrame(
             {
                 "strategy": [PRIMARY_POLICY] * 29,
@@ -233,11 +285,17 @@ class PolicyGateTests(unittest.TestCase):
         )
         readiness = assess_holdout_readiness(rows, min_forward_dates=30).iloc[0]
         self.assertEqual(readiness["readiness_status"], "INSUFFICIENT_FORWARD_SAMPLE")
+        self.assertEqual(int(readiness["forward_signal_date_count"]), 29)
         self.assertFalse(bool(readiness["deployable"]))
         rows.loc[len(rows)] = [PRIMARY_POLICY, "2026-01-30"]
         readiness = assess_holdout_readiness(rows, min_forward_dates=30).iloc[0]
         self.assertEqual(readiness["readiness_status"], "FORWARD_SAMPLE_THRESHOLD_MET")
+        self.assertEqual(int(readiness["forward_signal_date_count"]), 30)
         self.assertFalse(bool(readiness["deployable"]))
+        custom_threshold = assess_holdout_readiness(rows, min_forward_dates=1).iloc[0]
+        self.assertFalse(bool(custom_threshold["frozen_policy_inputs_verified"]))
+        self.assertEqual(custom_threshold["deployment_status"], "custom_research_only")
+        self.assertEqual(custom_threshold["readiness_status"], "UNVERIFIED_POLICY_INPUTS")
 
 
 if __name__ == "__main__":
