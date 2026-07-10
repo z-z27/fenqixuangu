@@ -6,6 +6,8 @@ import sys
 import time
 from pathlib import Path
 
+from .backtester import DEFAULT_ENTRY_PRICE_MODE
+
 
 DEFAULT_5MIN_TARGET_DAYS = 40
 
@@ -128,7 +130,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force-refresh", action="store_true")
     parser.add_argument("--include-all-allowed", action="store_true")
     parser.add_argument("--include-small", action="store_true")
-    parser.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default="zone_max")
+    parser.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default=DEFAULT_ENTRY_PRICE_MODE)
     parser.add_argument("--interval-seconds", type=int, default=5)
     return parser
 

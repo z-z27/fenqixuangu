@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import argparse
 
-from .daily_ranking import DEFAULT_DAILY_RANKING_MODEL, DEFAULT_DAILY_TOP_N
+from .daily_ranking import DEFAULT_DAILY_RANKING_MODEL
 from .v005_daily_selector import (
     DEFAULT_CANDIDATE_TOP_K,
+    DEFAULT_COEFFICIENT_PREDICT_DATE,
     DEFAULT_COEFFICIENTS_FILE,
     DEFAULT_GRID_ID,
     DEFAULT_OUTPUT_ROOT,
+    DEFAULT_TOP_N,
     run_v005_daily_from_market,
 )
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run daily v2 signals plus fixed-grid v005 primary buy-list shadow flow."
+        description="Run daily v2 signals plus the fixed-grid v005 research-watchlist shadow flow."
     )
     parser.add_argument("--date", default=None, help="Signal date, e.g. 2026-07-03; default latest available/today.")
     parser.add_argument("--lookback-days", type=int, default=5)
@@ -24,10 +26,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--ranking-model", default=str(DEFAULT_DAILY_RANKING_MODEL))
-    parser.add_argument("--top-n", type=int, default=DEFAULT_DAILY_TOP_N)
+    parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
     parser.add_argument("--candidate-top-k", type=int, default=DEFAULT_CANDIDATE_TOP_K)
     parser.add_argument("--coefficients-file", default=str(DEFAULT_COEFFICIENTS_FILE))
-    parser.add_argument("--coefficient-predict-date", default="2026-06-26")
+    parser.add_argument("--coefficient-predict-date", default=DEFAULT_COEFFICIENT_PREDICT_DATE)
     parser.add_argument("--grid-id", type=int, default=DEFAULT_GRID_ID)
     return parser
 
@@ -53,12 +55,16 @@ def main(argv: list[str] | None = None) -> int:
     print(f"selection rows: {len(selections)}")
     print(f"combo rows: {len(combos)}")
     print(f"scored rows: {len(scored)}")
+    print("status: RESEARCH ONLY / SHADOW FLOW; manual review required")
     if not decisions.empty:
         item = decisions.iloc[0]
+        print(f"policy version: {item.get('policy_version', '')}")
+        print(f"deployment status: {item.get('deployment_status', '')}")
         print(f"primary strategy: {item.get('final_strategy', '')}")
         print(f"action: {item.get('action', '')}")
         print(f"fallback_triggered: {item.get('fallback_triggered', '')}")
-        print(f"primary_buy_codes: {item.get('primary_buy_codes', '')}")
+        print(f"research_watchlist_codes: {item.get('research_watchlist_codes', item.get('primary_buy_codes', ''))}")
+        print(f"primary_buy_codes (legacy field): {item.get('primary_buy_codes', '')}")
         print(f"v005_baseline_codes: {item.get('v005_baseline_codes', '')}")
         print(f"v002_codes: {item.get('v002_codes', '')}")
         print(f"v004a_codes: {item.get('v004a_codes', '')}")

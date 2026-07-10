@@ -7,6 +7,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from .policy_config import DEFAULT_POLICY, normalized_sha256, validate_model_dates_for_signal_date
+from .provenance import file_sha256, runtime_provenance
 from .v004a import (
     DEFAULT_TARGET_RETURN_PCT,
     MODEL_ID_V004A,
@@ -58,10 +60,10 @@ from .v005_fallback_gate import (
     summarize,
 )
 
-DEFAULT_SAMPLES_FILE = Path("reports/history_samples/2026-06-26_2026-06-30/history_candidates_2026-06-26_2026-06-30.csv")
-DEFAULT_COEFFICIENTS_FILE = Path("reports/v004a/grid_v2_scored/v004a_coefficients.csv")
+DEFAULT_SAMPLES_FILE = None
+DEFAULT_COEFFICIENTS_FILE = DEFAULT_POLICY.coefficients_path
 DEFAULT_OUTPUT_DIR = Path("reports/v005_fixed_grid_holdout")
-DEFAULT_GRID_ID = 4
+DEFAULT_GRID_ID = DEFAULT_POLICY.grid_id
 DEFAULT_V002_MODEL_LABEL = "v002_top3_control"
 DEFAULT_V004A_MODEL_LABEL = "v004a_top3_control"
 
@@ -104,13 +106,14 @@ def run_fixed_grid_holdout(
     scored_file: str | Path | None = None,
     coefficients_file: str | Path = DEFAULT_COEFFICIENTS_FILE,
     output_dir: str | Path = DEFAULT_OUTPUT_DIR,
-    top_n: int = DEFAULT_TOP_N,
-    candidate_top_k: int = DEFAULT_CANDIDATE_TOP_K,
+    top_n: int = DEFAULT_POLICY.top_n,
+    candidate_top_k: int = DEFAULT_POLICY.candidate_top_k,
     grid_id: int = DEFAULT_GRID_ID,
-    coefficient_predict_date: str = "latest",
-    v004a_l2: float = DEFAULT_V004A_L2,
-    v004a_positive_weight: float = DEFAULT_V004A_POSITIVE_WEIGHT,
+    coefficient_predict_date: str = DEFAULT_POLICY.coefficient_predict_date,
+    v004a_l2: float = DEFAULT_POLICY.v004a_l2,
+    v004a_positive_weight: float = DEFAULT_POLICY.v004a_positive_weight,
     target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
+    min_forward_dates: int = DEFAULT_POLICY.min_forward_dates,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path]:
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -143,6 +146,15 @@ def run_fixed_grid_holdout(
         v004a_l2=float(v004a_l2),
         v004a_positive_weight=float(v004a_positive_weight),
     )
+    if candidate_pool.empty:
+        raise RuntimeError("holdout produced no eligible candidate-pool rows")
+    if coefficient_meta.get("coefficient_predict_date") and coefficient_meta.get("coefficient_train_end"):
+        first_signal_date = str(candidate_pool["signal_date"].dropna().astype(str).min())
+        validate_model_dates_for_signal_date(
+            predict_date=str(coefficient_meta["coefficient_predict_date"]),
+            train_end=str(coefficient_meta["coefficient_train_end"]),
+            signal_date=first_signal_date,
+        )
     combo_candidates = build_combo_candidates(candidate_pool, top_n=int(top_n))
     grid = build_default_grid()
     fixed_params = select_grid_params(grid, grid_id=int(grid_id))
@@ -156,6 +168,40 @@ def run_fixed_grid_holdout(
         v004a_l2=float(v004a_l2),
         v004a_positive_weight=float(v004a_positive_weight),
     )
+    frozen_policy_inputs_verified = (
+        not bool(scored_file)
+        and str(coefficient_meta.get("coefficients_normalized_sha256", "")) == DEFAULT_POLICY.coefficients_sha256
+        and str(coefficient_meta.get("coefficient_predict_date", "")) == DEFAULT_POLICY.coefficient_predict_date
+        and int(grid_id) == DEFAULT_POLICY.grid_id
+        and int(top_n) == DEFAULT_POLICY.top_n
+        and int(candidate_top_k) == DEFAULT_POLICY.candidate_top_k
+        and abs(float(v004a_l2) - DEFAULT_POLICY.v004a_l2) <= 1e-12
+        and abs(float(v004a_positive_weight) - DEFAULT_POLICY.v004a_positive_weight) <= 1e-12
+    )
+    readiness = assess_holdout_readiness(
+        policy_daily,
+        min_forward_dates=int(min_forward_dates),
+        frozen_policy_inputs_verified=frozen_policy_inputs_verified,
+    )
+    samples_path = Path(samples_file) if samples_file else None
+    run_meta = pd.DataFrame(
+        [
+            {
+                **DEFAULT_POLICY.provenance(),
+                **runtime_provenance(),
+                "input_mode": "pre_scored" if scored_file else "samples",
+                "samples_file": str(samples_path) if samples_path else "",
+                "samples_file_sha256": file_sha256(samples_path) if samples_path and samples_path.is_file() else "",
+                "scored_file": str(holdout_scored_path),
+                "scored_file_sha256": file_sha256(holdout_scored_path),
+                "frozen_policy_inputs_verified": frozen_policy_inputs_verified,
+                "target_metric_kind": "d2open_to_d3_intraday_high_opportunity_proxy",
+                "transaction_costs_included": False,
+                "slippage_included": False,
+                "cache_snapshot_complete": False,
+            }
+        ]
+    )
 
     combo_candidates.to_csv(out_dir / "v005_fixed_grid_combo_candidates.csv", index=False, encoding="utf-8-sig")
     selected_combos.to_csv(out_dir / "v005_fixed_grid_selected_combos.csv", index=False, encoding="utf-8-sig")
@@ -163,6 +209,8 @@ def run_fixed_grid_holdout(
     summary.to_csv(out_dir / "v005_fixed_grid_holdout_summary.csv", index=False, encoding="utf-8-sig")
     policy_daily.to_csv(out_dir / "v005_fixed_grid_holdout_daily.csv", index=False, encoding="utf-8-sig")
     replacement.to_csv(out_dir / "v005_fixed_grid_holdout_replacement.csv", index=False, encoding="utf-8-sig")
+    readiness.to_csv(out_dir / "v005_fixed_grid_holdout_readiness.csv", index=False, encoding="utf-8-sig")
+    run_meta.to_csv(out_dir / "v005_fixed_grid_holdout_run_meta.csv", index=False, encoding="utf-8-sig")
     if not data_quality.empty:
         data_quality.to_csv(out_dir / "v005_fixed_grid_holdout_data_quality.csv", index=False, encoding="utf-8-sig")
 
@@ -183,6 +231,8 @@ def run_fixed_grid_holdout(
             summary=summary,
             policy_daily=policy_daily,
             replacement=replacement,
+            readiness=readiness,
+            run_meta=run_meta,
         ),
         encoding="utf-8",
     )
@@ -285,6 +335,7 @@ def load_fixed_v004a_beta(
     beta = np.array([float(coef_by_term["intercept"]), *[float(coef_by_term[column]) for column in feature_columns]], dtype=float)
     meta = {
         "coefficients_file": str(coefficients_file),
+        "coefficients_normalized_sha256": normalized_sha256(coefficients_file),
         "coefficient_predict_date": chosen_date,
         "coefficient_terms": len(feature_columns),
         "v004a_l2": float(v004a_l2),
@@ -408,6 +459,49 @@ def _one_date_row(frame: pd.DataFrame, date: str, label: str) -> pd.Series:
     return row.iloc[0]
 
 
+def assess_holdout_readiness(
+    policy_daily: pd.DataFrame,
+    min_forward_dates: int,
+    frozen_policy_inputs_verified: bool = True,
+) -> pd.DataFrame:
+    threshold = int(min_forward_dates)
+    if threshold <= 0:
+        raise ValueError("min_forward_dates must be positive")
+    rows = policy_daily.copy()
+    if not rows.empty and "strategy" in rows.columns:
+        rows = rows[rows["strategy"].astype(str) == PRIMARY_POLICY].copy()
+    dates = sorted(rows.get("signal_date", pd.Series(dtype=str)).dropna().astype(str).unique().tolist())
+    date_count = len(dates)
+    threshold_met = date_count >= threshold
+    if not frozen_policy_inputs_verified:
+        readiness_status = "UNVERIFIED_POLICY_INPUTS"
+        reason = "Pre-scored input cannot prove which coefficient artifact produced its v004a scores; rerun from samples to verify the frozen policy."
+    elif threshold_met:
+        readiness_status = "FORWARD_SAMPLE_THRESHOLD_MET"
+        reason = "Forward-date count meets the review threshold; deployment still requires independent execution and risk review."
+    else:
+        readiness_status = "INSUFFICIENT_FORWARD_SAMPLE"
+        reason = f"Only {date_count} independent forward dates are present; at least {threshold} are required before deployment review."
+    return pd.DataFrame(
+        [
+            {
+                "policy_version": DEFAULT_POLICY.policy_version,
+                "deployment_status": DEFAULT_POLICY.deployment_status,
+                "research_only": True,
+                "forward_date_count": date_count,
+                "min_forward_dates": threshold,
+                "frozen_policy_inputs_verified": bool(frozen_policy_inputs_verified),
+                "sample_threshold_met": threshold_met,
+                "readiness_status": readiness_status,
+                "deployable": False,
+                "first_forward_date": dates[0] if dates else "",
+                "last_forward_date": dates[-1] if dates else "",
+                "reason": reason,
+            }
+        ]
+    )
+
+
 def make_report(
     samples_file: str | Path | None,
     scored_file: Path,
@@ -423,6 +517,8 @@ def make_report(
     summary: pd.DataFrame,
     policy_daily: pd.DataFrame,
     replacement: pd.DataFrame,
+    readiness: pd.DataFrame,
+    run_meta: pd.DataFrame,
 ) -> str:
     lines = [
         "# v005 fixed-grid holdout test",
@@ -431,6 +527,19 @@ def make_report(
         "",
         "This report evaluates the locked v005 set selector on a holdout samples file.",
         "It does not run factor discovery, does not select a new grid, and does not tune the fallback policy.",
+        "The D2-open to D3-high target is an opportunity proxy, not executable net PnL.",
+        "",
+        "## Readiness gate",
+        "",
+    ]
+    lines.extend(md_table(readiness, list(readiness.columns)))
+    lines.extend(["", "## Run provenance", ""])
+    if run_meta.empty:
+        lines.append("_No provenance metadata._")
+    else:
+        for key, value in run_meta.iloc[0].items():
+            lines.append(f"- {key}: `{value}`")
+    lines.extend([
         "",
         "## Configuration",
         "",
@@ -446,7 +555,7 @@ def make_report(
         "",
         "## Fixed coefficient metadata",
         "",
-    ]
+    ])
     for key, value in coefficient_meta.items():
         lines.append(f"- {key}: `{value}`")
     lines.extend(["", "## Fixed grid params", ""])
@@ -505,17 +614,18 @@ def fmt(value: Any) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run fixed-grid v005 holdout evaluation without retuning.")
-    parser.add_argument("--samples-file", default=str(DEFAULT_SAMPLES_FILE), help="Holdout history_candidates CSV. Ignored when --scored-file is provided.")
+    parser.add_argument("--samples-file", default=DEFAULT_SAMPLES_FILE, help="Holdout history_candidates CSV. Required unless --scored-file is provided.")
     parser.add_argument("--scored-file", default=None, help="Optional pre-scored holdout candidates CSV; skips v004a/v002 holdout scoring.")
     parser.add_argument("--coefficients-file", default=str(DEFAULT_COEFFICIENTS_FILE), help="Existing v004a_coefficients.csv used to score holdout samples.")
     parser.add_argument("--output-dir", default=str(DEFAULT_OUTPUT_DIR))
-    parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
-    parser.add_argument("--candidate-top-k", type=int, default=DEFAULT_CANDIDATE_TOP_K)
+    parser.add_argument("--top-n", type=int, default=DEFAULT_POLICY.top_n)
+    parser.add_argument("--candidate-top-k", type=int, default=DEFAULT_POLICY.candidate_top_k)
     parser.add_argument("--grid-id", type=int, default=DEFAULT_GRID_ID)
-    parser.add_argument("--coefficient-predict-date", default="latest", help="Use coefficients from this predict_date, or 'latest'.")
-    parser.add_argument("--v004a-l2", type=float, default=DEFAULT_V004A_L2)
-    parser.add_argument("--v004a-positive-weight", type=float, default=DEFAULT_V004A_POSITIVE_WEIGHT)
+    parser.add_argument("--coefficient-predict-date", default=DEFAULT_POLICY.coefficient_predict_date)
+    parser.add_argument("--v004a-l2", type=float, default=DEFAULT_POLICY.v004a_l2)
+    parser.add_argument("--v004a-positive-weight", type=float, default=DEFAULT_POLICY.v004a_positive_weight)
     parser.add_argument("--target-return-pct", type=float, default=DEFAULT_TARGET_RETURN_PCT)
+    parser.add_argument("--min-forward-dates", type=int, default=DEFAULT_POLICY.min_forward_dates)
     args = parser.parse_args(argv)
 
     summary, daily, replacement, daily_top3, report_path = run_fixed_grid_holdout(
@@ -530,11 +640,15 @@ def main(argv: list[str] | None = None) -> int:
         v004a_l2=args.v004a_l2,
         v004a_positive_weight=args.v004a_positive_weight,
         target_return_pct=args.target_return_pct,
+        min_forward_dates=args.min_forward_dates,
     )
     print(f"summary rows: {len(summary)}")
     print(f"daily rows: {len(daily)}")
     print(f"replacement rows: {len(replacement)}")
     print(f"daily top3 rows: {len(daily_top3)}")
+    readiness_path = Path(args.output_dir) / "v005_fixed_grid_holdout_readiness.csv"
+    readiness = pd.read_csv(readiness_path).iloc[0]
+    print(f"readiness: {readiness['readiness_status']} ({int(readiness['forward_date_count'])}/{int(readiness['min_forward_dates'])} dates)")
     if not summary.empty:
         best = summary.iloc[0]
         print(f"best strategy: {best['strategy']}")

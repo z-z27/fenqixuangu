@@ -4,6 +4,23 @@
 
 本项目不是自动交易系统，也不构成投资建议。所有输出都应作为研究和人工复核材料使用。
 
+从 2026-07-10 起，默认运行策略由版本化清单 `configs/policy_v005_v1.json` 管理。所有 daily 输出固定标记为 `research_only=true`、`deployment_status=shadow_only`，旧的 `primary_buy_*` 字段只为兼容历史分析保留，语义是“研究观察清单”，不是委托或实盘买入指令。
+
+---
+
+## 运行环境
+
+项目支持 Python 3.11 到 3.13，当前验证版本记录在 `.python-version`。`pyproject.toml` 是 Python/依赖范围的规范来源，`requirements.txt` 保留给现有脚本化安装流程。
+
+```powershell
+py -3.13 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+.\tools\verify.ps1
+```
+
+建议始终使用独立 `.venv`，避免共享 Python 中其他项目的依赖冲突。验证脚本会执行源码编译、安全契约测试和主要 CLI 导入检查，不联网、不抓行情。
+
 ---
 
 ## 当前项目状态
@@ -37,7 +54,7 @@ policy_v005_v002_regime_fallback
 当前日常输出已经支持同时生成：
 
 ```text
-v5 policy final Top3     # 主买入观察清单
+v5 policy final Top3     # 研究观察清单，非交易指令
 v5 baseline Top3         # v005 裸 fixed-grid 对照
 v2 Top3                  # 旧主流程模型，对照 + fallback 来源
 v004a Top3               # logistic 模型直接 Top3，对照
@@ -46,7 +63,18 @@ v004a Top3               # logistic 模型直接 Top3，对照
 日常使用时，只应优先看：
 
 ```text
-Primary buy list = policy_v005_v002_regime_fallback
+Research watchlist = policy_v005_v002_regime_fallback
+```
+
+当前 `total_score` 的代码口径以 `src/config.py` 为准：
+
+```text
+trend_hold       0.35
+graph_quality    0.25
+active_cooling   0.20
+entry_width      0.10
+theme            0.10
+support          0.00
 ```
 
 ---
@@ -74,6 +102,8 @@ target7_d2open_d3high
 从 D2 open 到 D3 high 的最大收益是否达到 7%
 ```
 
+这是“盘中曾出现的机会”标签，不是可成交净收益。它没有验证排队成交、流动性、滑点、手续费、停牌、公告和一字板约束；daily 报告会明确输出这些限制。
+
 结算研究中常用的 realized 口径是：
 
 ```text
@@ -89,7 +119,7 @@ target7_d2open_d3high
 top3_target_rate              # Top3 单票命中率
 top3_all_hit_rate             # Top3 全中率
 hit_count_0_days              # 0-hit 天数
-avg_top3_realized_return      # Top3 等权结算收益
+avg_top3_realized_return      # Top3 等权研究结算代理，不是实盘净收益
 fallback_days                 # fallback 触发天数
 changed_from_baseline_days    # policy 相对 v005 baseline 是否改变
 ```
@@ -145,8 +175,10 @@ src/v004a.py
 当前固定 daily 使用的系数文件：
 
 ```text
-reports/v004a/grid_v2_scored/v004a_coefficients.csv
+configs/models/v004a_coefficients_2026-06-26.csv
 ```
+
+该文件只包含冻结策略实际使用的一折 19 行系数，哈希、训练区间、grid、TopN 和 fallback 阈值都记录在 `configs/policy_v005_v1.json`。完整 `reports/v004a/` 仍是可忽略的研究产物，不再是 fresh clone 的运行依赖。
 
 当前固定参数：
 
@@ -411,11 +443,11 @@ reports/history_samples/<start>_<end>/history_candidates_<start>_<end>.csv
 
 ---
 
-### daily v005 生产观察层
+### daily v005 shadow 研究层
 
 | 模块 | 作用 |
 |---|---|
-| `src/v005_daily_selector.py` | 基于当天 signals 生成 v005 primary buy list 和对照组 |
+| `src/v005_daily_selector.py` | 基于当天 signals 生成 v005 research watchlist 和对照组 |
 | `src/run_daily_v005.py` | CLI 包装模块，一键生成 v2 daily signals + v005 daily 输出 |
 
 当前推荐日常入口是：
@@ -430,15 +462,14 @@ python -m src.run_daily_v005
 
 ## 日常运行方式
 
-### 1. 更新代码并做语法检查
+### 1. 更新代码并做完整本地检查
 
 ```powershell
 cd F:\fenqixuangu
 git checkout research-sample-analysis
 git pull
 
-python -m py_compile src/v005_daily_selector.py
-python -m py_compile src/run_daily_v005.py
+.\tools\verify.ps1
 ```
 
 ---
@@ -450,32 +481,33 @@ python -m src.run_daily_v005 `
   --date 2026-07-03 `
   --lookback-days 5 `
   --days 10 `
-  --workers 6 `
-  --coefficient-predict-date 2026-06-26 `
-  --grid-id 4
+  --workers 6
 ```
 
-日期换成当天交易日即可。
+模型日期、grid、TopN 和 fallback 阈值默认从冻结 manifest 读取。显式覆盖这些参数仍然允许用于研究，但输出会被标记成 `custom_research_only` 和 `matches_frozen_manifest=False`。
 
 输出终端会直接打印：
 
 ```text
-primary strategy
+status: RESEARCH ONLY / SHADOW FLOW
+policy version
+deployment status
+research_watchlist_codes
 fallback_triggered
-primary_buy_codes
+primary_buy_codes (legacy field)
 v005_baseline_codes
 v002_codes
 v004a_codes
 markdown
 ```
 
-其中最重要的是：
+研究观察字段是：
 
 ```text
-primary_buy_codes
+research_watchlist_codes
 ```
 
-它就是当天 `policy_v005_v002_regime_fallback` 的最终 Top3。
+它是当天 `policy_v005_v002_regime_fallback` 的 Top3 研究输出，不是交易指令。
 
 ---
 
@@ -503,6 +535,7 @@ v005_daily_selection_YYYY-MM-DD.csv
 v005_daily_selected_combos_YYYY-MM-DD.csv
 v005_daily_baseline_top3_YYYY-MM-DD.csv
 v005_daily_scored_candidates_YYYY-MM-DD.csv
+v005_daily_selector_meta_YYYY-MM-DD.csv
 v005_daily_run_meta_YYYY-MM-DD.csv
 ```
 
@@ -515,10 +548,10 @@ reports/daily_v005/YYYY-MM-DD/v005_daily_report_YYYY-MM-DD.md
 报告第一块是：
 
 ```text
-Primary buy list
+Research watchlist
 ```
 
-这一块才是主买入观察清单。
+`v005_daily_run_meta_YYYY-MM-DD.csv` 同时记录 Git commit、dirty 状态、源码树哈希、Python/依赖版本、模型/信号/质量文件哈希和数据源，用于复现与排错。
 
 ---
 
@@ -528,16 +561,14 @@ Primary buy list
 
 ```powershell
 python -m src.v005_daily_selector `
-  --signals-file reports/daily_signals/signals_2026-07-03.csv `
-  --coefficient-predict-date 2026-06-26 `
-  --grid-id 4
+  --signals-file reports/daily_signals/signals_2026-07-03.csv
 ```
 
 ---
 
 ## 日常输出如何解读
 
-### Primary buy list
+### Research watchlist
 
 只看：
 
@@ -545,9 +576,12 @@ python -m src.v005_daily_selector `
 strategy_role = primary_buy
 strategy = policy_v005_v002_regime_fallback
 is_primary_buy = True
+selection_intent = research_watchlist
+research_only = True
+deployment_status = shadow_only
 ```
 
-这些行才是主买入观察清单。
+`strategy_role` 和 `is_primary_buy` 是兼容旧报告的字段，不能按字面理解为实盘操作。
 
 ---
 
@@ -561,7 +595,7 @@ fallback_source_control     # v002 Top3
 model_control               # v004a Top3
 ```
 
-不要把 control rows 误当成买入清单。
+不要把 control rows 或 research watchlist 当成买入指令。
 
 ---
 
@@ -621,10 +655,10 @@ python -m src.cli generate-history-samples `
 ```powershell
 python -m src.v005_fixed_grid_holdout `
   --samples-file reports/history_samples/2026-07-01_2026-07-03/history_candidates_2026-07-01_2026-07-03.csv `
-  --output-dir reports/v005_fixed_grid_holdout_2026-07-01_2026-07-03 `
-  --coefficient-predict-date 2026-06-26 `
-  --grid-id 4
+  --output-dir reports/v005_fixed_grid_holdout_2026-07-01_2026-07-03
 ```
+
+同时检查 `v005_fixed_grid_holdout_readiness.csv` 和 `v005_fixed_grid_holdout_run_meta.csv`。少于 30 个独立 forward 日期时，状态固定为 `INSUFFICIENT_FORWARD_SAMPLE`；达到 30 日也只表示可以进入进一步审查，`deployable` 仍为 `False`。使用 `--scored-file` 时无法证明原始系数来源，readiness 会标记为 `UNVERIFIED_POLICY_INPUTS`。
 
 ### 3. 看结果
 
@@ -700,9 +734,7 @@ python -m src.run_daily_v005 `
   --date YYYY-MM-DD `
   --lookback-days 5 `
   --days 10 `
-  --workers 6 `
-  --coefficient-predict-date 2026-06-26 `
-  --grid-id 4
+  --workers 6
 ```
 
 查看：
@@ -714,7 +746,7 @@ reports/daily_v005/YYYY-MM-DD/v005_daily_report_YYYY-MM-DD.md
 只看第一块：
 
 ```text
-Primary buy list
+Research watchlist
 ```
 
 ---
@@ -745,6 +777,9 @@ v004a l2: 0.30
 v004a positive_weight: 1.5
 v004a coefficient_predict_date: 2026-06-26
 v2 model: reports/manual_models/ranking_model_v002_core_momentum_support.json
+manifest: configs/policy_v005_v1.json
+deployment_status: shadow_only
+minimum forward dates for review: 30
 ```
 
 ---
@@ -766,18 +801,14 @@ python -m src.run_daily_v005 `
   --date YYYY-MM-DD `
   --lookback-days 5 `
   --days 10 `
-  --workers 6 `
-  --coefficient-predict-date 2026-06-26 `
-  --grid-id 4
+  --workers 6
 ```
 
 ### 基于已有 signals 文件生成 v005
 
 ```powershell
 python -m src.v005_daily_selector `
-  --signals-file reports/daily_signals/signals_YYYY-MM-DD.csv `
-  --coefficient-predict-date 2026-06-26 `
-  --grid-id 4
+  --signals-file reports/daily_signals/signals_YYYY-MM-DD.csv
 ```
 
 ### 生成历史样本
@@ -798,9 +829,7 @@ python -m src.cli generate-history-samples `
 ```powershell
 python -m src.v005_fixed_grid_holdout `
   --samples-file reports/history_samples/YYYY-MM-DD_YYYY-MM-DD/history_candidates_YYYY-MM-DD_YYYY-MM-DD.csv `
-  --output-dir reports/v005_fixed_grid_holdout_YYYY-MM-DD_YYYY-MM-DD `
-  --coefficient-predict-date 2026-06-26 `
-  --grid-id 4
+  --output-dir reports/v005_fixed_grid_holdout_YYYY-MM-DD_YYYY-MM-DD
 ```
 
 ### v004a 研究重跑
@@ -841,7 +870,7 @@ src/
 reports/
   manual_models/                 # v001/v002 manual model JSON
   daily_signals/                 # 原 v2 daily signals 输出
-  daily_v005/                    # v005 daily primary buy list + controls
+  daily_v005/                    # v005 daily research watchlist + controls
   history_samples/               # 历史候选样本
   v004a/                         # v004a 研究输出
   v005_set_selector/             # v005 set selector 研究输出
@@ -876,10 +905,11 @@ __pycache__/
 
 ```text
 reports/manual_models/*.json
-reports/v004a/grid_v2_scored/v004a_coefficients.csv
+configs/policy_v005_v1.json
+configs/models/v004a_coefficients_2026-06-26.csv
 ```
 
-是否保留 scored candidates / research reports，视仓库大小和复现实验需要决定。
+完整 coefficients、scored candidates 和 research reports 仍是研究产物，可按体积决定是否归档，不是默认 daily 运行依赖。
 
 ---
 
@@ -890,6 +920,9 @@ reports/v004a/grid_v2_scored/v004a_coefficients.csv
 3. A 股短线策略受行情阶段、题材强度、流动性、停牌/复牌、数据质量、涨停池构造影响很大。
 4. daily 输出必须人工复核，尤其要检查一字板、流动性、公告、监管风险、题材退潮和极端高位风险。
 5. 后续最重要的工作不是频繁调参，而是严格记录 fixed policy 的 forward 表现。
+6. 行情来自 AkShare、东方财富、腾讯和新浪等公开接口，缓存与上游数据都可能修订；run meta 的哈希能复现当次 selector 输入，但不等于完整不可变行情快照。
+7. 默认执行回测采用 `confirmation_close`，排除确认 K 线并对同 K 止盈止损按止损优先；研究标签和历史报告仍不能替代真实成交、滑点和费用回测。
+8. forward 日期少于 30 时 readiness 必须是 `INSUFFICIENT_FORWARD_SAMPLE`；达到门槛也不会自动把策略改成 deployable。
 
 ---
 

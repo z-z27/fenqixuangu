@@ -5,7 +5,7 @@ import sys
 
 import pandas as pd
 
-from .backtester import run_full_history_backtest, run_history_backtest, run_top3_signal_backtest
+from .backtester import DEFAULT_ENTRY_PRICE_MODE, run_full_history_backtest, run_history_backtest, run_top3_signal_backtest
 from .config import get_data_config
 from .data_acceptance import run_data_acceptance
 from .daily_ranking import DEFAULT_DAILY_RANKING_MODEL, DEFAULT_DAILY_TOP_N, apply_daily_research_ranking
@@ -15,7 +15,6 @@ from .loaders import DataQualityError, MarketDataService, load_limitup_file
 from .logistic_v003 import (
     DEFAULT_INITIAL_TRAIN_DAYS,
     DEFAULT_L2,
-    DEFAULT_SAMPLES_FILE as DEFAULT_LOGISTIC_V003_SAMPLES_FILE,
     DEFAULT_TARGET_RETURN_PCT as DEFAULT_LOGISTIC_V003_TARGET_RETURN_PCT,
     DEFAULT_TOP_N as DEFAULT_LOGISTIC_V003_TOP_N,
     run_logistic_v003_l2_grid,
@@ -29,7 +28,6 @@ from .v004a import (
     DEFAULT_INITIAL_TRAIN_DAYS as DEFAULT_V004A_INITIAL_TRAIN_DAYS,
     DEFAULT_L2_GRID as DEFAULT_V004A_L2_GRID,
     DEFAULT_POSITIVE_WEIGHT_GRID as DEFAULT_V004A_POSITIVE_WEIGHT_GRID,
-    DEFAULT_SAMPLES_FILE as DEFAULT_V004A_SAMPLES_FILE,
     DEFAULT_TARGET_RETURN_PCT as DEFAULT_V004A_TARGET_RETURN_PCT,
     DEFAULT_THRESHOLD_GRID as DEFAULT_V004A_THRESHOLD_GRID,
     DEFAULT_TOP_N as DEFAULT_V004A_TOP_N,
@@ -139,14 +137,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force-refresh", action="store_true")
 
     p = sub.add_parser("backtest-top3", help="backtest daily top 3 ranked tradable signals")
-    p.add_argument("--signals-file", default="reports/daily_signals/signals_2026-06-25.csv")
+    p.add_argument("--signals-file", required=True)
     p.add_argument("--top-n", type=int, default=3)
     p.add_argument("--target-return-pct", type=float, default=7.0)
     p.add_argument("--include-small", action="store_true")
     p.add_argument("--fetch-through-date", default=None)
     p.add_argument("--days", type=int, default=None)
     p.add_argument("--force-refresh", action="store_true")
-    p.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default="zone_max")
+    p.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default=DEFAULT_ENTRY_PRICE_MODE)
 
     p = sub.add_parser("backtest-history", help="backtest multiple daily signal files and write full records")
     p.add_argument("--signals-dir", default="reports/daily_signals")
@@ -158,7 +156,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stop-loss-pct", type=float, default=3.0)
     p.add_argument("--include-all-allowed", action="store_true")
     p.add_argument("--include-small", action="store_true")
-    p.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default="zone_max")
+    p.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default=DEFAULT_ENTRY_PRICE_MODE)
 
     p = sub.add_parser("backtest-run", help="run full historical backtest from data collection to evaluation")
     p.add_argument("--start-date", required=True)
@@ -174,7 +172,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force-refresh", action="store_true")
     p.add_argument("--include-all-allowed", action="store_true")
     p.add_argument("--include-small", action="store_true")
-    p.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default="zone_max")
+    p.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default=DEFAULT_ENTRY_PRICE_MODE)
 
     p = sub.add_parser("generate-history-samples", help="generate clean historical candidate samples without execution backtest")
     p.add_argument("--start-date", required=True)
@@ -206,7 +204,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--target-column", default=DEFAULT_TARGET_COLUMN)
 
     p = sub.add_parser("train-logistic-v003", help="train research-only logistic_v003 model for D2 open to D3 high target")
-    p.add_argument("--samples-file", default=str(DEFAULT_LOGISTIC_V003_SAMPLES_FILE))
+    p.add_argument("--samples-file", required=True)
     p.add_argument("--output-dir", default=None)
     p.add_argument("--top-n", type=int, default=DEFAULT_LOGISTIC_V003_TOP_N)
     p.add_argument("--initial-train-days", type=int, default=DEFAULT_INITIAL_TRAIN_DAYS)
@@ -215,7 +213,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--target-return-pct", type=float, default=DEFAULT_LOGISTIC_V003_TARGET_RETURN_PCT)
 
     p = sub.add_parser("train-v004a", help="run research-only v004a weighted logistic walk-forward validation")
-    p.add_argument("--samples-file", default=str(DEFAULT_V004A_SAMPLES_FILE))
+    p.add_argument("--samples-file", required=True)
     p.add_argument("--output-dir", default=None)
     p.add_argument("--top-n", type=int, default=DEFAULT_V004A_TOP_N)
     p.add_argument("--initial-train-days", type=int, default=DEFAULT_V004A_INITIAL_TRAIN_DAYS)
@@ -239,7 +237,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--return-gap-pct", type=float, default=DEFAULT_V004B_RETURN_GAP_PCT)
     p.add_argument("--hard-negative-weight", type=float, default=DEFAULT_V004B_HARD_NEGATIVE_WEIGHT)
 
-    p = sub.add_parser("run-daily", help="涨停池、补数、信号一键执行")
+    p = sub.add_parser("run-daily", help="旧版 v2-only 日报；v005 shadow flow 请用 python -m src.run_daily_v005")
     p.add_argument("--date", default=None)
     p.add_argument("--lookback-days", type=int, default=5)
     p.add_argument("--days", type=int, default=None)
@@ -357,6 +355,7 @@ def generate_signals(args) -> int:
 
 
 def run_daily(args) -> int:
+    print("NOTICE: src.cli run-daily is the legacy v2-only flow; use python -m src.run_daily_v005 for the frozen v005 research watchlist.")
     service = MarketDataService()
     pool = service.collect_limit_ups(
         trade_date=args.date,

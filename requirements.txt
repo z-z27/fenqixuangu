@@ -1,3 +1,4 @@
+# Compatibility install file. Dependency ranges must match pyproject.toml; tests enforce this.
 pandas>=2.2,<4.0
 numpy>=1.26,<3.0
 requests>=2.32,<3.0

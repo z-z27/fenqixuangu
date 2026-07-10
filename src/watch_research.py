@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from .backtester import DEFAULT_ENTRY_PRICE_MODE
 from .factor_discovery import run_factor_discovery
 from .research_analysis import (
     DEFAULT_TARGET_MAX_RETURN_PCT,
@@ -309,7 +310,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--force-refresh", action="store_true")
     parser.add_argument("--include-all-allowed", action="store_true")
     parser.add_argument("--include-small", action="store_true")
-    parser.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default="zone_max")
+    parser.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default=DEFAULT_ENTRY_PRICE_MODE)
     parser.add_argument("--interval-seconds", type=int, default=5)
     parser.add_argument("--output-root", default="reports/research_runs")
     parser.add_argument("--run-name", default=None, help="Optional folder name under output-root; auto-suffixed if it already exists")

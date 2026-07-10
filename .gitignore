@@ -11,6 +11,7 @@ data/raw/
 data/processed/*.csv
 data/research/
 reports/daily_signals/
+reports/daily_v005/
 reports/backtest_results/
 reports/backtest_runs/
 reports/data_quality/
@@ -23,6 +24,11 @@ reports/v004b/
 reports/ranking_backtests/
 reports/research_runs/
 reports/warmup/
+reports/*_pack/
+reports/rb_*/
+reports/top3_diagnostics/
+reports/v005_*/
 reports/*.zip
+/*.zip
 !reports/manual_models/
 !reports/manual_models/*.json

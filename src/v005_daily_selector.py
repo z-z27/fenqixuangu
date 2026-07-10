@@ -9,8 +9,10 @@ import pandas as pd
 
 from .backtester import _candidate_base_price, build_signals_for_pool
 from .config import get_data_config
-from .daily_ranking import DEFAULT_DAILY_RANKING_MODEL, DEFAULT_DAILY_TOP_N, apply_daily_research_ranking
+from .daily_ranking import DEFAULT_DAILY_RANKING_MODEL, apply_daily_research_ranking
 from .loaders import MarketDataService
+from .policy_config import DEFAULT_POLICY, normalized_sha256, validate_model_dates_for_signal_date
+from .provenance import file_sha256, runtime_provenance
 from .report import write_data_quality_reports, write_signal_reports
 from .signal_engine import Signal
 from .v004a import (
@@ -20,6 +22,8 @@ from .v004a import (
     DEFAULT_CLOSE_RETURN_COLUMN,
     DEFAULT_HIGH_RETURN_COLUMN,
     DEFAULT_TARGET_COLUMN,
+    REALIZED_RETURN_KIND,
+    TARGET_METRIC_KIND,
     MODEL_ID_V004A,
     SCOPE_WALK_FORWARD,
     _score_logistic_frame,
@@ -31,7 +35,7 @@ from .v005_fixed_grid_holdout import load_fixed_v004a_beta
 from .v005_fallback_gate import PRIMARY_POLICY, ctx_for_codes, is_policy_fallback, is_risk_ticket, norm, parse_codes
 from .v005_set_selector import (
     DEFAULT_AVG_TOTAL_RANK_WEIGHT_GRID,
-    DEFAULT_CANDIDATE_TOP_K,
+    DEFAULT_CANDIDATE_TOP_K as RESEARCH_DEFAULT_CANDIDATE_TOP_K,
     DEFAULT_CONTAINS_V002_TOP3_BONUS_GRID,
     DEFAULT_CONTAINS_V004A_TOP3_BONUS_GRID,
     DEFAULT_EXTREME_CLOSE_LOW_PENALTY_GRID,
@@ -39,9 +43,9 @@ from .v005_set_selector import (
     DEFAULT_EXTREME_VWAP_PENALTY_GRID,
     DEFAULT_MIN_TOTAL_RANK_WEIGHT_GRID,
     DEFAULT_RANK_DISPERSION_WEIGHT_GRID,
-    DEFAULT_TOP_N,
-    DEFAULT_V004A_L2,
-    DEFAULT_V004A_POSITIVE_WEIGHT,
+    DEFAULT_TOP_N as RESEARCH_DEFAULT_TOP_N,
+    DEFAULT_V004A_L2 as RESEARCH_DEFAULT_V004A_L2,
+    DEFAULT_V004A_POSITIVE_WEIGHT as RESEARCH_DEFAULT_V004A_POSITIVE_WEIGHT,
     GRID_PARAM_COLUMNS,
     V002_MODEL_ID,
     V004A_MODEL_ID,
@@ -54,9 +58,22 @@ from .v005_set_selector import (
     select_best_combo_by_date,
 )
 
-DEFAULT_COEFFICIENTS_FILE = Path("reports/v004a/grid_v2_scored/v004a_coefficients.csv")
+DEFAULT_COEFFICIENTS_FILE = DEFAULT_POLICY.coefficients_path
 DEFAULT_OUTPUT_ROOT = Path("reports/daily_v005")
-DEFAULT_GRID_ID = 4
+DEFAULT_GRID_ID = DEFAULT_POLICY.grid_id
+DEFAULT_COEFFICIENT_PREDICT_DATE = DEFAULT_POLICY.coefficient_predict_date
+DEFAULT_CANDIDATE_TOP_K = DEFAULT_POLICY.candidate_top_k
+DEFAULT_TOP_N = DEFAULT_POLICY.top_n
+DEFAULT_V004A_L2 = DEFAULT_POLICY.v004a_l2
+DEFAULT_V004A_POSITIVE_WEIGHT = DEFAULT_POLICY.v004a_positive_weight
+
+if (
+    RESEARCH_DEFAULT_CANDIDATE_TOP_K != DEFAULT_CANDIDATE_TOP_K
+    or RESEARCH_DEFAULT_TOP_N != DEFAULT_TOP_N
+    or RESEARCH_DEFAULT_V004A_L2 != DEFAULT_V004A_L2
+    or RESEARCH_DEFAULT_V004A_POSITIVE_WEIGHT != DEFAULT_V004A_POSITIVE_WEIGHT
+):
+    raise RuntimeError("frozen policy manifest disagrees with v005 research defaults")
 
 STRATEGY_PRIMARY = PRIMARY_POLICY
 STRATEGY_BASELINE = "baseline_v005_fixed_grid"
@@ -64,6 +81,13 @@ STRATEGY_V002 = "v002_top3_control"
 STRATEGY_V004A = "v004a_top3_control"
 
 SELECTION_COLUMNS = [
+    "policy_version",
+    "deployment_status",
+    "research_only",
+    "selection_intent",
+    "manual_review_required",
+    "transaction_costs_included",
+    "liquidity_execution_validated",
     "strategy_role",
     "strategy",
     "is_primary_buy",
@@ -96,9 +120,18 @@ SELECTION_COLUMNS = [
 
 DECISION_COLUMNS = [
     "signal_date",
+    "policy_version",
+    "deployment_status",
+    "research_only",
+    "metric_scope",
+    "manual_review_required",
+    "transaction_costs_included",
+    "liquidity_execution_validated",
+    "matches_frozen_manifest",
     "final_strategy",
     "action",
     "fallback_triggered",
+    "research_watchlist_codes",
     "primary_buy_codes",
     "v005_baseline_codes",
     "v002_codes",
@@ -118,11 +151,13 @@ def run_v005_daily_selector(
     output_dir: str | Path | None = None,
     coefficients_file: str | Path = DEFAULT_COEFFICIENTS_FILE,
     grid_id: int = DEFAULT_GRID_ID,
-    coefficient_predict_date: str = "2026-06-26",
+    coefficient_predict_date: str = DEFAULT_COEFFICIENT_PREDICT_DATE,
     top_n: int = DEFAULT_TOP_N,
     candidate_top_k: int = DEFAULT_CANDIDATE_TOP_K,
     v004a_l2: float = DEFAULT_V004A_L2,
     v004a_positive_weight: float = DEFAULT_V004A_POSITIVE_WEIGHT,
+    ranking_model_file: str | Path = DEFAULT_DAILY_RANKING_MODEL,
+    source_signals_file: str | Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path]:
     signal_frame = signals_to_frame(signals)
     if signal_frame.empty:
@@ -137,6 +172,26 @@ def run_v005_daily_selector(
         coefficient_predict_date=str(coefficient_predict_date),
         v004a_l2=float(v004a_l2),
         v004a_positive_weight=float(v004a_positive_weight),
+    )
+    validate_model_dates_for_signal_date(
+        predict_date=str(coefficient_meta["coefficient_predict_date"]),
+        train_end=str(coefficient_meta["coefficient_train_end"]),
+        signal_date=signal_date,
+    )
+    policy_meta = build_runtime_policy_meta(
+        coefficients_file=Path(coefficients_file),
+        coefficient_meta=coefficient_meta,
+        grid_id=int(grid_id),
+        top_n=int(top_n),
+        candidate_top_k=int(candidate_top_k),
+        v004a_l2=float(v004a_l2),
+        v004a_positive_weight=float(v004a_positive_weight),
+        ranking_model_file=Path(ranking_model_file),
+        ranking_model_ids=(
+            sorted(signal_frame["ranking_model_id"].dropna().astype(str).unique().tolist())
+            if "ranking_model_id" in signal_frame.columns
+            else []
+        ),
     )
     missing_features = [column for column in feature_columns if column not in live_features.columns]
     if missing_features:
@@ -160,16 +215,23 @@ def run_v005_daily_selector(
         v004a_l2=float(v004a_l2),
         v004a_positive_weight=float(v004a_positive_weight),
     )
+    if len(candidate_pool) < int(top_n):
+        raise RuntimeError(f"v005 daily candidate pool has {len(candidate_pool)} rows; at least top_n={top_n} are required")
     combo_candidates = build_combo_candidates(candidate_pool, top_n=int(top_n))
+    if combo_candidates.empty:
+        raise RuntimeError("v005 daily selector produced no valid TopN combinations")
     grid = build_default_grid()
     fixed_params = select_grid_params(grid, grid_id=int(grid_id))
     selected_combos = select_best_combo_by_date(score_combos(combo_candidates, fixed_params))
+    if selected_combos.empty:
+        raise RuntimeError("v005 daily selector did not select a combination")
     baseline_top3 = explode_selected_combos(selected_combos, candidate_pool, top_n=int(top_n))
 
     decisions, selections = build_daily_policy_outputs(
         selected_combos=selected_combos,
         candidate_pool=candidate_pool,
         top_n=int(top_n),
+        policy_meta=policy_meta,
     )
     decisions["candidate_pool_count"] = int(len(candidate_pool))
     decisions["combo_candidate_count"] = int(len(combo_candidates))
@@ -195,9 +257,30 @@ def run_v005_daily_selector(
             grid_params=fixed_params,
             decisions=decisions,
             selections=selections,
+            policy_meta=policy_meta,
         ),
         encoding="utf-8",
     )
+    source_signals_path = Path(source_signals_file) if source_signals_file else None
+    selector_meta = pd.DataFrame(
+        [
+            {
+                **DEFAULT_POLICY.provenance(),
+                **runtime_provenance(),
+                **policy_meta,
+                "signal_date": signal_date,
+                "source_signals_file": str(source_signals_path) if source_signals_path else "in_memory",
+                "source_signals_sha256": (
+                    file_sha256(source_signals_path) if source_signals_path and source_signals_path.is_file() else ""
+                ),
+                "scored_candidates_sha256": file_sha256(scored_path),
+                "decision_sha256": file_sha256(decision_path),
+                "selection_sha256": file_sha256(selection_path),
+                "cache_snapshot_complete": False,
+            }
+        ]
+    )
+    selector_meta.to_csv(out_dir / f"v005_daily_selector_meta_{signal_date}.csv", index=False, encoding="utf-8-sig")
     return decisions, selections, selected_combos, scored, report_path
 
 
@@ -213,7 +296,7 @@ def run_v005_daily_from_market(
     top_n: int = DEFAULT_TOP_N,
     candidate_top_k: int = DEFAULT_CANDIDATE_TOP_K,
     coefficients_file: str | Path = DEFAULT_COEFFICIENTS_FILE,
-    coefficient_predict_date: str = "2026-06-26",
+    coefficient_predict_date: str = DEFAULT_COEFFICIENT_PREDICT_DATE,
     grid_id: int = DEFAULT_GRID_ID,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path, Path, Path]:
     service = MarketDataService()
@@ -246,11 +329,24 @@ def run_v005_daily_from_market(
         coefficient_predict_date=coefficient_predict_date,
         top_n=int(top_n),
         candidate_top_k=int(candidate_top_k),
+        ranking_model_file=ranking_model,
+        source_signals_file=signal_csv,
     )
+    runtime_meta = runtime_provenance()
+    decision_meta = decisions.iloc[0].to_dict() if not decisions.empty else {}
+    ranking_model_path = Path(ranking_model)
+    coefficients_path = Path(coefficients_file)
     meta = pd.DataFrame(
         [
             {
                 "signal_date": signal_date,
+                "policy_version": decision_meta.get("policy_version", ""),
+                "deployment_status": decision_meta.get("deployment_status", ""),
+                "research_only": True,
+                "metric_scope": decision_meta.get("metric_scope", DEFAULT_POLICY.metric_scope),
+                "manual_review_required": True,
+                "transaction_costs_included": False,
+                "liquidity_execution_validated": False,
                 "limitup_rows": int(len(pool)),
                 "signals": int(len(ranked_signals)),
                 "quality_rows": int(len(quality_rows)),
@@ -261,6 +357,15 @@ def run_v005_daily_from_market(
                 "quality_csv": str(quality_csv),
                 "quality_md": str(quality_md),
                 "v005_report": str(report_path),
+                "signal_csv_sha256": file_sha256(signal_csv),
+                "quality_csv_sha256": file_sha256(quality_csv),
+                "ranking_model_sha256": file_sha256(ranking_model_path) if ranking_model_path.is_file() else "missing",
+                "ranking_model_normalized_sha256": normalized_sha256(ranking_model_path) if ranking_model_path.is_file() else "missing",
+                "coefficients_normalized_sha256": normalized_sha256(coefficients_path) if coefficients_path.is_file() else "missing",
+                "policy_manifest_sha256": file_sha256(DEFAULT_POLICY.manifest_path),
+                "market_data_sources": "akshare,eastmoney,tencent,sina",
+                "cache_snapshot_complete": False,
+                **runtime_meta,
             }
         ]
     )
@@ -407,6 +512,9 @@ def prepare_live_v004a_features(signals: pd.DataFrame) -> tuple[pd.DataFrame, di
     eligible[DEFAULT_HIGH_RETURN_COLUMN] = np.nan
     eligible[DEFAULT_CLOSE_RETURN_COLUMN] = np.nan
     eligible["realized_return_pct"] = np.nan
+    eligible["outcome_labels_available"] = False
+    eligible["target_metric_kind"] = TARGET_METRIC_KIND
+    eligible["realized_return_kind"] = REALIZED_RETURN_KIND
 
     feature_info = {
         "v004a_feature_columns": v004a_feature_columns,
@@ -459,7 +567,64 @@ def _load_manual_models_safe() -> dict[str, dict[str, Any]]:
     return _load_manual_models()
 
 
-def build_daily_policy_outputs(selected_combos: pd.DataFrame, candidate_pool: pd.DataFrame, top_n: int) -> tuple[pd.DataFrame, pd.DataFrame]:
+def build_runtime_policy_meta(
+    coefficients_file: Path = DEFAULT_COEFFICIENTS_FILE,
+    coefficient_meta: dict[str, Any] | None = None,
+    grid_id: int = DEFAULT_GRID_ID,
+    top_n: int = DEFAULT_TOP_N,
+    candidate_top_k: int = DEFAULT_CANDIDATE_TOP_K,
+    v004a_l2: float = DEFAULT_V004A_L2,
+    v004a_positive_weight: float = DEFAULT_V004A_POSITIVE_WEIGHT,
+    ranking_model_file: Path = DEFAULT_DAILY_RANKING_MODEL,
+    ranking_model_ids: list[str] | None = None,
+) -> dict[str, Any]:
+    coefficient_meta = coefficient_meta or {
+        "coefficient_predict_date": DEFAULT_POLICY.coefficient_predict_date,
+        "coefficient_train_end": DEFAULT_POLICY.coefficient_train_end,
+    }
+    coefficients_path = Path(coefficients_file).resolve()
+    coefficients_hash = normalized_sha256(coefficients_path) if coefficients_path.is_file() else ""
+    ranking_model_path = Path(ranking_model_file).resolve()
+    ranking_model_hash = normalized_sha256(ranking_model_path) if ranking_model_path.is_file() else ""
+    observed_ranking_ids = set(ranking_model_ids or [])
+    observed_ranking_matches = ranking_model_ids is None or observed_ranking_ids == {DEFAULT_POLICY.ranking_model_id}
+    matches = (
+        coefficients_path == DEFAULT_POLICY.coefficients_path.resolve()
+        and coefficients_hash == DEFAULT_POLICY.coefficients_sha256
+        and ranking_model_path == DEFAULT_POLICY.ranking_model_path.resolve()
+        and ranking_model_hash == DEFAULT_POLICY.ranking_model_sha256
+        and observed_ranking_matches
+        and str(coefficient_meta.get("coefficient_predict_date", "")) == DEFAULT_POLICY.coefficient_predict_date
+        and str(coefficient_meta.get("coefficient_train_end", "")) == DEFAULT_POLICY.coefficient_train_end
+        and int(grid_id) == DEFAULT_POLICY.grid_id
+        and int(top_n) == DEFAULT_POLICY.top_n
+        and int(candidate_top_k) == DEFAULT_POLICY.candidate_top_k
+        and abs(float(v004a_l2) - DEFAULT_POLICY.v004a_l2) <= 1e-12
+        and abs(float(v004a_positive_weight) - DEFAULT_POLICY.v004a_positive_weight) <= 1e-12
+    )
+    return {
+        "policy_version": DEFAULT_POLICY.policy_version if matches else f"{DEFAULT_POLICY.policy_version}+custom_override",
+        "policy_manifest": str(DEFAULT_POLICY.manifest_path),
+        "deployment_status": DEFAULT_POLICY.deployment_status if matches else "custom_research_only",
+        "research_only": True,
+        "metric_scope": DEFAULT_POLICY.metric_scope,
+        "manual_review_required": True,
+        "transaction_costs_included": False,
+        "liquidity_execution_validated": False,
+        "matches_frozen_manifest": bool(matches),
+        "coefficients_normalized_sha256": coefficients_hash,
+        "ranking_model_normalized_sha256": ranking_model_hash,
+        "observed_ranking_model_ids": ",".join(sorted(observed_ranking_ids)),
+    }
+
+
+def build_daily_policy_outputs(
+    selected_combos: pd.DataFrame,
+    candidate_pool: pd.DataFrame,
+    top_n: int,
+    policy_meta: dict[str, Any] | None = None,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    policy_meta = policy_meta or build_runtime_policy_meta()
     decision_rows: list[dict[str, Any]] = []
     selection_frames: list[pd.DataFrame] = []
     for _, combo in selected_combos.sort_values("signal_date").iterrows():
@@ -487,9 +652,18 @@ def build_daily_policy_outputs(selected_combos: pd.DataFrame, candidate_pool: pd
         decision_rows.append(
             {
                 "signal_date": date,
+                "policy_version": policy_meta["policy_version"],
+                "deployment_status": policy_meta["deployment_status"],
+                "research_only": True,
+                "metric_scope": policy_meta["metric_scope"],
+                "manual_review_required": True,
+                "transaction_costs_included": False,
+                "liquidity_execution_validated": False,
+                "matches_frozen_manifest": bool(policy_meta["matches_frozen_manifest"]),
                 "final_strategy": STRATEGY_PRIMARY,
                 "action": action,
                 "fallback_triggered": triggered,
+                "research_watchlist_codes": ",".join(norm(primary_codes)),
                 "primary_buy_codes": ",".join(norm(primary_codes)),
                 "v005_baseline_codes": ",".join(norm(baseline_codes)),
                 "v002_codes": ",".join(norm(v002_codes)),
@@ -513,16 +687,17 @@ def build_daily_policy_outputs(selected_combos: pd.DataFrame, candidate_pool: pd
                 grid_id=grid_id,
                 display_order=1,
                 is_primary=True,
+                policy_meta=policy_meta,
             )
         )
         selection_frames.append(
-            selection_rows(day_pool, baseline_codes, date, STRATEGY_BASELINE, "baseline_control", "control_v005_baseline", False, grid_id, 2, False)
+            selection_rows(day_pool, baseline_codes, date, STRATEGY_BASELINE, "baseline_control", "control_v005_baseline", False, grid_id, 2, False, policy_meta)
         )
         selection_frames.append(
-            selection_rows(day_pool, v002_codes, date, STRATEGY_V002, "fallback_source_control", "control_v002_top3", False, grid_id, 3, False)
+            selection_rows(day_pool, v002_codes, date, STRATEGY_V002, "fallback_source_control", "control_v002_top3", False, grid_id, 3, False, policy_meta)
         )
         selection_frames.append(
-            selection_rows(day_pool, v004a_codes, date, STRATEGY_V004A, "model_control", "control_v004a_top3", False, grid_id, 4, False)
+            selection_rows(day_pool, v004a_codes, date, STRATEGY_V004A, "model_control", "control_v004a_top3", False, grid_id, 4, False, policy_meta)
         )
     decisions = pd.DataFrame(decision_rows)
     if decisions.empty:
@@ -548,10 +723,19 @@ def selection_rows(
     grid_id: int,
     display_order: int,
     is_primary: bool,
+    policy_meta: dict[str, Any] | None = None,
 ) -> pd.DataFrame:
+    policy_meta = policy_meta or build_runtime_policy_meta()
     selected = ctx_for_codes(day_pool, codes).copy()
     if selected.empty:
         return pd.DataFrame(columns=SELECTION_COLUMNS)
+    selected["policy_version"] = policy_meta["policy_version"]
+    selected["deployment_status"] = policy_meta["deployment_status"]
+    selected["research_only"] = True
+    selected["selection_intent"] = "research_watchlist" if is_primary else "research_control"
+    selected["manual_review_required"] = True
+    selected["transaction_costs_included"] = False
+    selected["liquidity_execution_validated"] = False
     selected["strategy_role"] = role
     selected["strategy"] = strategy
     selected["is_primary_buy"] = bool(is_primary)
@@ -595,30 +779,43 @@ def build_daily_report(
     grid_params: pd.Series,
     decisions: pd.DataFrame,
     selections: pd.DataFrame,
+    policy_meta: dict[str, Any] | None = None,
 ) -> str:
+    policy_meta = policy_meta or build_runtime_policy_meta()
     lines = [
-        "# v005 daily selector",
+        "# v005 daily research watchlist",
         "",
-        "## Scope",
+        "## Safety status",
         "",
-        "Daily shadow-flow output for the fixed-grid v005 policy. It does not use future target or realized-return labels.",
-        "The primary buy list is always `policy_v005_v002_regime_fallback`; all other rows are controls.",
+        "**RESEARCH ONLY / SHADOW FLOW. This is not an order list or evidence of deployable profitability. Manual review is required.**",
+        "",
+        "This daily inference does not use future target or realized-return labels. The historical target is an opportunity proxy based on D2 open to D3 high, not executable net PnL.",
+        "Transaction costs, slippage, queue priority, one-price limit-up liquidity, suspensions, and announcements are not validated by this output.",
+        "The legacy `primary_buy_*` CSV fields are retained for compatibility; interpret them only as a research watchlist.",
         "",
         "## Configuration",
         "",
         f"- signal_date: `{signal_date}`",
+        f"- policy_version: `{policy_meta['policy_version']}`",
+        f"- deployment_status: `{policy_meta['deployment_status']}`",
+        f"- matches_frozen_manifest: `{policy_meta['matches_frozen_manifest']}`",
+        f"- policy_manifest: `{policy_meta['policy_manifest']}`",
+        f"- metric_scope: `{policy_meta['metric_scope']}`",
+        f"- ranking_model_normalized_sha256: `{policy_meta['ranking_model_normalized_sha256']}`",
+        f"- observed_ranking_model_ids: `{policy_meta['observed_ranking_model_ids']}`",
         f"- output_dir: `{output_dir}`",
         f"- scored_candidates: `{scored_path}`",
         f"- coefficients_file: `{coefficients_file}`",
+        f"- coefficients_normalized_sha256: `{policy_meta['coefficients_normalized_sha256']}`",
         f"- coefficient_predict_date: `{coefficient_meta.get('coefficient_predict_date', '')}`",
         f"- fixed grid_id: `{grid_id}`",
         "",
-        "## Primary buy list",
+        "## Research watchlist",
         "",
     ]
     primary = selections[selections["is_primary_buy"].fillna(False).astype(bool)].copy() if not selections.empty else pd.DataFrame()
     if primary.empty:
-        lines.append("_No primary buy rows._")
+        lines.append("_No research watchlist rows._")
     else:
         lines.extend(md_table(primary, ["buy_priority", "code", "name", "strategy", "action", "v004a_model_rank", "v002_model_rank", "v004a_score", "v002_score"]))
     lines.extend(["", "## Decision", ""])
@@ -689,10 +886,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--workers", type=int, default=6)
     parser.add_argument("--output-root", default=str(DEFAULT_OUTPUT_ROOT))
     parser.add_argument("--ranking-model", default=str(DEFAULT_DAILY_RANKING_MODEL))
-    parser.add_argument("--top-n", type=int, default=DEFAULT_DAILY_TOP_N)
+    parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
     parser.add_argument("--candidate-top-k", type=int, default=DEFAULT_CANDIDATE_TOP_K)
     parser.add_argument("--coefficients-file", default=str(DEFAULT_COEFFICIENTS_FILE))
-    parser.add_argument("--coefficient-predict-date", default="2026-06-26")
+    parser.add_argument("--coefficient-predict-date", default=DEFAULT_COEFFICIENT_PREDICT_DATE)
     parser.add_argument("--grid-id", type=int, default=DEFAULT_GRID_ID)
     args = parser.parse_args(argv)
 
@@ -708,12 +905,15 @@ def main(argv: list[str] | None = None) -> int:
             coefficient_predict_date=args.coefficient_predict_date,
             top_n=args.top_n,
             candidate_top_k=args.candidate_top_k,
+            ranking_model_file=args.ranking_model,
+            source_signals_file=args.signals_file,
         )
         print(f"signals file: {args.signals_file}")
         print(f"decision rows: {len(decisions)}")
         print(f"selection rows: {len(selections)}")
         print(f"combo rows: {len(combos)}")
         print(f"scored rows: {len(scored)}")
+        print("status: RESEARCH ONLY / SHADOW FLOW; manual review required")
         print(f"markdown: {report}")
         return 0
 
@@ -736,6 +936,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"selection rows: {len(selections)}")
     print(f"combo rows: {len(combos)}")
     print(f"scored rows: {len(scored)}")
+    print("status: RESEARCH ONLY / SHADOW FLOW; manual review required")
     print(f"v2 signals csv: {signal_csv}")
     print(f"quality csv: {quality_csv}")
     print(f"markdown: {report}")

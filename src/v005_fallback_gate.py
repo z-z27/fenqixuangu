@@ -6,13 +6,15 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
+from .policy_config import DEFAULT_POLICY, FallbackGateConfig
+
 DEFAULT_SCORED_FILE = Path("reports/v004a/grid_v2_scored/v004a_scored_candidates.csv")
 DEFAULT_V005_DIR = Path("reports/v005_set_selector")
 DEFAULT_OUTPUT_DIR = Path("reports/v005_fallback_gate")
 DEFAULT_OBJECTIVE = "realized_then_all_hit"
-DEFAULT_TOP_N = 3
-DEFAULT_V004A_L2 = 0.30
-DEFAULT_V004A_POSITIVE_WEIGHT = 1.5
+DEFAULT_TOP_N = DEFAULT_POLICY.top_n
+DEFAULT_V004A_L2 = DEFAULT_POLICY.v004a_l2
+DEFAULT_V004A_POSITIVE_WEIGHT = DEFAULT_POLICY.v004a_positive_weight
 
 TARGET = "target7_d2open_d3high"
 HIGH = "d2open_d3high_return_pct"
@@ -21,7 +23,7 @@ V004A_MODEL_ID = "logistic_v004a_weighted"
 V002_MODEL_ID = "ranking_model_v002_core_momentum_support"
 SCOPE = "walk_forward"
 
-PRIMARY_POLICY = "policy_v005_v002_regime_fallback"
+PRIMARY_POLICY = DEFAULT_POLICY.policy_id
 
 STRATEGIES = [
     "baseline_v005_realized",
@@ -235,10 +237,17 @@ def build_topn(ctx, rank_col, top_n):
     return pd.DataFrame(rows)
 
 
-def is_policy_fallback(base):
-    extreme_confirm = int(base["v002_extreme_vwap_count"]) >= 2 and int(base["v002_extreme_close_low_count"]) >= 2
-    close_low_dominant = int(base["v002_extreme_close_low_count"]) >= 3
-    v005_weak = pd.notna(base["v005_avg_v002_rank"]) and float(base["v005_avg_v002_rank"]) >= 12
+def is_policy_fallback(base, gate: FallbackGateConfig | None = None):
+    gate = gate or DEFAULT_POLICY.fallback_gate
+    extreme_confirm = (
+        int(base["v002_extreme_vwap_count"]) >= gate.extreme_vwap_count_min
+        and int(base["v002_extreme_close_low_count"]) >= gate.extreme_close_low_confirm_count_min
+    )
+    close_low_dominant = int(base["v002_extreme_close_low_count"]) >= gate.extreme_close_low_dominant_count_min
+    v005_weak = (
+        pd.notna(base["v005_avg_v002_rank"])
+        and float(base["v005_avg_v002_rank"]) >= gate.v005_avg_v002_rank_min
+    )
     return (extreme_confirm or close_low_dominant) and v005_weak
 
 
@@ -394,9 +403,13 @@ def make_report(scored, v005_dir, out_dir, objective, summary, daily, repl):
         f"- output dir: `{out_dir}`", f"- baseline objective: `{objective}`", f"- primary policy: `{PRIMARY_POLICY}`", "",
         "## Converged policy", "",
         "Use v005 `realized_then_all_hit` by default. Fallback to v002 Top3 only when v002 shows either:",
-        "", "1. extreme confirmation: `v002_extreme_vwap_count >= 2` and `v002_extreme_close_low_count >= 2`; or",
-        "2. close-low dominance: `v002_extreme_close_low_count >= 3`;",
-        "", "and v005 is weak versus v002: `v005_avg_v002_rank >= 12`.", "",
+        "",
+        f"1. extreme confirmation: `v002_extreme_vwap_count >= {DEFAULT_POLICY.fallback_gate.extreme_vwap_count_min}` "
+        f"and `v002_extreme_close_low_count >= {DEFAULT_POLICY.fallback_gate.extreme_close_low_confirm_count_min}`; or",
+        f"2. close-low dominance: `v002_extreme_close_low_count >= {DEFAULT_POLICY.fallback_gate.extreme_close_low_dominant_count_min}`;",
+        "",
+        f"and v005 is weak versus v002: `v005_avg_v002_rank >= {DEFAULT_POLICY.fallback_gate.v005_avg_v002_rank_min:g}`.",
+        "",
         "## Strategy definitions", "",
         "- `baseline_v005_realized`: keep v005 realized objective selections.",
         f"- `{PRIMARY_POLICY}`: clean candidate policy; fallback by the converged v002 regime rule only.",

@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "policy_version": "v005.1-frozen-20260626",
+  "policy_id": "policy_v005_v002_regime_fallback",
+  "deployment_status": "shadow_only",
+  "research_only": true,
+  "metric_scope": "opportunity_proxy_d2open_d3high",
+  "ranking_model": {
+    "path": "reports/manual_models/ranking_model_v002_core_momentum_support.json",
+    "normalized_sha256": "f4a0eaaf60341e4a9a3e729aed879c4a4d84b3dbf107282957493b252f7e07f3",
+    "model_id": "ranking_model_v002_core_momentum_support"
+  },
+  "signal_score": {
+    "trend_hold_weight": 0.35,
+    "graph_quality_weight": 0.25,
+    "active_cooling_weight": 0.20,
+    "entry_width_weight": 0.10,
+    "theme_weight": 0.10,
+    "support_weight": 0.00
+  },
+  "coefficients": {
+    "path": "configs/models/v004a_coefficients_2026-06-26.csv",
+    "normalized_sha256": "78fe05032ca0efd6bc931d0766f6427923ae52168a291c47c5e02145575b2117",
+    "model_id": "logistic_v004a_weighted",
+    "predict_date": "2026-06-26",
+    "train_start": "2026-05-07",
+    "train_end": "2026-06-25",
+    "l2": 0.3,
+    "positive_weight": 1.5
+  },
+  "selector": {
+    "grid_id": 4,
+    "candidate_top_k": 15,
+    "top_n": 3
+  },
+  "fallback_gate": {
+    "extreme_vwap_count_min": 2,
+    "extreme_close_low_confirm_count_min": 2,
+    "extreme_close_low_dominant_count_min": 3,
+    "v005_avg_v002_rank_min": 12.0
+  },
+  "readiness": {
+    "min_forward_dates": 30
+  }
+}

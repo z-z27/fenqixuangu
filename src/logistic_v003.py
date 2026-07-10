@@ -10,12 +10,11 @@ import numpy as np
 import pandas as pd
 
 from .config import get_data_config
+from .policy_config import PROJECT_ROOT
 from .ranking_backtest import score_candidates
 
 
-DEFAULT_SAMPLES_FILE = Path(
-    "reports/history_samples/2026-05-06_2026-06-29/history_candidates_2026-05-06_2026-06-29_dedup.csv"
-)
+DEFAULT_SAMPLES_FILE = None
 DEFAULT_TARGET_COLUMN = "target7_d2open_d3high"
 DEFAULT_HIGH_RETURN_COLUMN = "d2open_d3high_return_pct"
 DEFAULT_CLOSE_RETURN_COLUMN = "d2open_d3close_return_pct"
@@ -55,13 +54,13 @@ HAND_SCORE_WEIGHTS = {
 }
 
 BASELINE_MODELS = {
-    "ranking_model_v001_core_momentum": Path("reports/manual_models/ranking_model_v001_core_momentum.json"),
-    "ranking_model_v002_core_momentum_support": Path("reports/manual_models/ranking_model_v002_core_momentum_support.json"),
+    "ranking_model_v001_core_momentum": PROJECT_ROOT / "reports" / "manual_models" / "ranking_model_v001_core_momentum.json",
+    "ranking_model_v002_core_momentum_support": PROJECT_ROOT / "reports" / "manual_models" / "ranking_model_v002_core_momentum_support.json",
 }
 
 
 def run_logistic_v003_research(
-    samples_file: str | Path = DEFAULT_SAMPLES_FILE,
+    samples_file: str | Path | None = DEFAULT_SAMPLES_FILE,
     output_dir: str | Path | None = None,
     top_n: int = DEFAULT_TOP_N,
     initial_train_days: int = DEFAULT_INITIAL_TRAIN_DAYS,
@@ -69,6 +68,8 @@ def run_logistic_v003_research(
     target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path]:
     _validate_target_return_pct(target_return_pct)
+    if not samples_file:
+        raise RuntimeError("--samples-file is required for logistic_v003 research")
     samples_path = Path(samples_file)
     raw = pd.read_csv(samples_path, dtype={"code": str})
     samples, data_quality = prepare_samples(raw, target_return_pct=float(target_return_pct))
@@ -183,7 +184,7 @@ def run_logistic_v003_research(
 
 
 def run_logistic_v003_l2_grid(
-    samples_file: str | Path = DEFAULT_SAMPLES_FILE,
+    samples_file: str | Path | None = DEFAULT_SAMPLES_FILE,
     output_dir: str | Path | None = None,
     top_n: int = DEFAULT_TOP_N,
     initial_train_days: int = DEFAULT_INITIAL_TRAIN_DAYS,
@@ -191,6 +192,8 @@ def run_logistic_v003_l2_grid(
     l2_grid: str | list[float] | tuple[float, ...] = (),
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Path, Path, Path]:
     _validate_target_return_pct(target_return_pct)
+    if not samples_file:
+        raise RuntimeError("--samples-file is required for logistic_v003 grid research")
     samples_path = Path(samples_file)
     values = parse_l2_grid(l2_grid)
     if not values:
@@ -759,7 +762,7 @@ def _l2_dir_name(value: float) -> str:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Train and validate logistic_v003 research ranking model.")
-    parser.add_argument("--samples-file", default=str(DEFAULT_SAMPLES_FILE))
+    parser.add_argument("--samples-file", required=True)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
     parser.add_argument("--initial-train-days", type=int, default=DEFAULT_INITIAL_TRAIN_DAYS)

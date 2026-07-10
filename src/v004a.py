@@ -27,6 +27,8 @@ from .ranking_backtest import score_candidates
 DEFAULT_TARGET_COLUMN = "target7_d2open_d3high"
 DEFAULT_HIGH_RETURN_COLUMN = "d2open_d3high_return_pct"
 DEFAULT_CLOSE_RETURN_COLUMN = "d2open_d3close_return_pct"
+TARGET_METRIC_KIND = "d2open_to_d3_intraday_high_opportunity_proxy"
+REALIZED_RETURN_KIND = "capped_7pct_if_target_else_d3close_gross_proxy"
 DEFAULT_TARGET_RETURN_PCT = 7.0
 DEFAULT_TOP_N = 3
 DEFAULT_INITIAL_TRAIN_DAYS = 18
@@ -92,7 +94,7 @@ SCORE_META_COLUMNS = [
 
 
 def run_v004a_research(
-    samples_file: str | Path = DEFAULT_SAMPLES_FILE,
+    samples_file: str | Path | None = DEFAULT_SAMPLES_FILE,
     output_dir: str | Path | None = None,
     top_n: int = DEFAULT_TOP_N,
     initial_train_days: int = DEFAULT_INITIAL_TRAIN_DAYS,
@@ -102,6 +104,8 @@ def run_v004a_research(
     threshold_grid: str | list[float] | tuple[float, ...] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path]:
     _validate_target_return_pct(target_return_pct)
+    if not samples_file:
+        raise RuntimeError("--samples-file is required for v004a research")
     samples_path = Path(samples_file)
     raw = pd.read_csv(samples_path, dtype={"code": str})
     samples, feature_info, data_quality = prepare_v004a_samples(raw, target_return_pct=float(target_return_pct))
@@ -294,6 +298,9 @@ def prepare_v004a_samples(raw: pd.DataFrame, target_return_pct: float = DEFAULT_
         float(target_return_pct),
         pd.to_numeric(filtered[DEFAULT_CLOSE_RETURN_COLUMN], errors="coerce"),
     )
+    filtered["outcome_labels_available"] = True
+    filtered["target_metric_kind"] = TARGET_METRIC_KIND
+    filtered["realized_return_kind"] = REALIZED_RETURN_KIND
     filtered["tail_weight"] = np.select(
         [
             pd.to_numeric(filtered[DEFAULT_HIGH_RETURN_COLUMN], errors="coerce") >= 12.0,
@@ -725,6 +732,9 @@ def build_scored_candidates_output(scored: pd.DataFrame, feature_info: dict[str,
         DEFAULT_HIGH_RETURN_COLUMN,
         DEFAULT_CLOSE_RETURN_COLUMN,
         "realized_return_pct",
+        "outcome_labels_available",
+        "target_metric_kind",
+        "realized_return_kind",
         "eligible_for_trade",
         "graph_quality_score",
         "rank_d1_close_ma10_pct",
@@ -1189,7 +1199,7 @@ def _float_or_nan(value: Any) -> float:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run v004a research-only weighted logistic walk-forward validation.")
-    parser.add_argument("--samples-file", default=str(DEFAULT_SAMPLES_FILE))
+    parser.add_argument("--samples-file", required=True)
     parser.add_argument("--output-dir", default=None)
     parser.add_argument("--top-n", type=int, default=DEFAULT_TOP_N)
     parser.add_argument("--initial-train-days", type=int, default=DEFAULT_INITIAL_TRAIN_DAYS)

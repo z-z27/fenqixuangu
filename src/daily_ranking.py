@@ -6,11 +6,12 @@ from typing import Any
 
 import pandas as pd
 
+from .policy_config import DEFAULT_POLICY
 from .ranking_backtest import score_candidates, validate_ranking_model
 from .signal_engine import Signal
 
 
-DEFAULT_DAILY_RANKING_MODEL = Path("reports/manual_models/ranking_model_v002_core_momentum_support.json")
+DEFAULT_DAILY_RANKING_MODEL = DEFAULT_POLICY.ranking_model_path
 DEFAULT_DAILY_TOP_N = 3
 
 

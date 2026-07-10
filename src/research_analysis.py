@@ -106,6 +106,7 @@ def build_research_samples(
             "executed",
             "target_hit",
             "stop_hit",
+            "same_bar_ambiguous",
         ],
     )
     _ensure_numeric_columns(

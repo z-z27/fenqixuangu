@@ -15,6 +15,7 @@ from .signal_engine import Signal, generate_signal
 
 DEFAULT_TOP_N = 3
 DEFAULT_TARGET_RETURN_PCT = 7.0
+DEFAULT_ENTRY_PRICE_MODE = "confirmation_close"
 HISTORY_HORIZONS = (2, 3, 5, 10)
 
 
@@ -25,6 +26,8 @@ def simulate_d2_execution(
     price_mode: str = "confirmation_close",
 ) -> dict:
     """Minimal D2 execution simulator using only intraday rows up to trigger time."""
+    if price_mode not in {"zone_max", "confirmation_close"}:
+        raise ValueError(f"unsupported price_mode={price_mode!r}")
     if minute_d2.empty:
         return {"executed": False, "reason": "D2 minute data is empty"}
 
@@ -78,7 +81,7 @@ def run_top3_signal_backtest(
     fetch_through_date: str | None = None,
     days: int | None = None,
     force_refresh: bool = False,
-    entry_price_mode: str = "zone_max",
+    entry_price_mode: str = DEFAULT_ENTRY_PRICE_MODE,
 ) -> tuple[pd.DataFrame, pd.DataFrame, Path, Path]:
     signals = pd.read_csv(signals_file, dtype={"code": str})
     if signals.empty:
@@ -125,7 +128,7 @@ def run_full_history_backtest(
     force_refresh: bool = False,
     include_all_allowed: bool = False,
     include_small: bool = False,
-    entry_price_mode: str = "zone_max",
+    entry_price_mode: str = DEFAULT_ENTRY_PRICE_MODE,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path, Path, Path, Path, Path, Path, Path]:
     service = MarketDataService()
     reports_dir = get_data_config().reports_dir
@@ -301,7 +304,7 @@ def run_history_backtest(
     stop_loss_pct: float = 3.0,
     include_all_allowed: bool = False,
     include_small: bool = False,
-    entry_price_mode: str = "zone_max",
+    entry_price_mode: str = DEFAULT_ENTRY_PRICE_MODE,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, Path, Path, Path, Path]:
     signals = load_history_signal_files(signals_dir, start_date=start_date, end_date=end_date)
     ranked = prepare_history_rankings(
@@ -700,6 +703,7 @@ def evaluate_history_signal(
             "stop_hit": outcome["stop_hit"],
             "first_outcome": outcome["first_outcome"],
             "first_outcome_time": outcome["first_outcome_time"],
+            "same_bar_ambiguous": outcome["same_bar_ambiguous"],
             "data_reason": "",
             "failure_reason": _classify_executed_failure(outcome, result),
         }
@@ -726,6 +730,12 @@ def build_history_summary(
                     "start_date": start_date,
                     "end_date": end_date,
                     "top_n": int(top_n),
+                    "entry_price_mode": entry_price_mode,
+                    "execution_bar_resolution": "5m",
+                    "confirmation_bar_excluded": True,
+                    "same_bar_policy": "stop_first",
+                    "transaction_costs_included": False,
+                    "slippage_included": False,
                     "record_count": 0,
                 }
             ]
@@ -752,6 +762,11 @@ def build_history_summary(
             "include_all_allowed": bool(include_all_allowed),
             "include_small": bool(include_small),
             "entry_price_mode": entry_price_mode,
+            "execution_bar_resolution": "5m",
+            "confirmation_bar_excluded": True,
+            "same_bar_policy": "stop_first",
+            "transaction_costs_included": False,
+            "slippage_included": False,
             "signal_file_days": int(trades["signal_file_date"].dropna().nunique()) if "signal_file_date" in trades else 0,
             "signal_row_date_count": int(trades["signal_date"].dropna().nunique()) if "signal_date" in trades else 0,
             "signal_date_mismatch_count": int((trades["signal_date_matches_file"].fillna(False).astype(bool) == False).sum())
@@ -908,6 +923,10 @@ def build_history_review_markdown(
             f"- execution rate: **{_format_pct(item.get('execution_rate'))}**",
             f"- target hit rate: **{_format_pct(item.get('target_hit_rate'))}**",
             f"- stop hit rate: **{_format_pct(item.get('stop_hit_rate'))}**",
+            f"- entry price mode: **{item.get('entry_price_mode', DEFAULT_ENTRY_PRICE_MODE)}**",
+            "- confirmation bar excluded: **True**",
+            "- same-bar target/stop policy: **stop_first**",
+            "- transaction costs and slippage included: **False**",
             f"- avg D5 max return: **{_format_number(item.get('avg_d5_max_return_pct'))}%**",
             f"- avg D10 max return: **{_format_number(item.get('avg_d10_max_return_pct'))}%**",
             f"- avg candidate D3 max return: **{_format_number(item.get('candidate_avg_d3_max_return_pct'))}%**",
@@ -1026,6 +1045,11 @@ def _base_history_result(
         "zone_buy_price": None,
         "confirmation_price": None,
         "entry_price_mode": entry_price_mode,
+        "execution_bar_resolution": "5m",
+        "confirmation_bar_excluded": True,
+        "same_bar_policy": "stop_first",
+        "transaction_costs_included": False,
+        "slippage_included": False,
         "execution_reason": "",
         "evaluable": False,
         "target_return_pct": float(target_return_pct),
@@ -1034,6 +1058,7 @@ def _base_history_result(
         "stop_hit": False,
         "first_outcome": "",
         "first_outcome_time": "",
+        "same_bar_ambiguous": False,
         "data_reason": "",
         "failure_reason": "",
         "reasons": signal_row.get("reasons", ""),
@@ -1069,7 +1094,7 @@ def _path_metrics_by_horizon(
         window_days = max(1, min(int(hold_days), int(horizon) - 1))
         rows = minute[minute["trade_date"].astype(str).isin(future_dates[:window_days])].copy()
         if start_ts is not None:
-            rows = rows[pd.to_datetime(rows["datetime"], errors="coerce") >= start_ts].copy()
+            rows = rows[pd.to_datetime(rows["datetime"], errors="coerce") > start_ts].copy()
         if rows.empty:
             continue
         high = pd.to_numeric(rows["high"], errors="coerce").max()
@@ -1093,37 +1118,32 @@ def _first_outcome(
 ) -> dict[str, Any]:
     target_price = buy_price * (1.0 + float(target_return_pct) / 100.0)
     stop_price = buy_price * (1.0 - float(stop_loss_pct) / 100.0)
-    target_hit = False
-    stop_hit = False
     first_outcome = "none"
     first_time = ""
+    same_bar_ambiguous = False
     for _, row in after_buy.sort_values("datetime").iterrows():
         high = _to_float(row.get("high"))
         low = _to_float(row.get("low"))
         current_time = str(row.get("datetime", ""))
         high_hit = high is not None and high >= target_price
         low_hit = low is not None and low <= stop_price
-        target_hit = target_hit or high_hit
-        stop_hit = stop_hit or low_hit
-        if first_outcome == "none" and (high_hit or low_hit):
-            if high_hit and low_hit:
-                first_outcome = "target_and_stop_same_bar"
-            elif high_hit:
-                first_outcome = "target_first"
-            else:
-                first_outcome = "stop_first"
-            first_time = current_time
-            break
-    if first_outcome != "none":
-        remaining = after_buy[pd.to_datetime(after_buy["datetime"], errors="coerce") > pd.Timestamp(first_time)].copy()
-        if not remaining.empty:
-            target_hit = target_hit or bool((pd.to_numeric(remaining["high"], errors="coerce") >= target_price).any())
-            stop_hit = stop_hit or bool((pd.to_numeric(remaining["low"], errors="coerce") <= stop_price).any())
+        if not (high_hit or low_hit):
+            continue
+        if high_hit and low_hit:
+            first_outcome = "stop_first"
+            same_bar_ambiguous = True
+        elif high_hit:
+            first_outcome = "target_first"
+        else:
+            first_outcome = "stop_first"
+        first_time = current_time
+        break
     return {
-        "target_hit": bool(target_hit),
-        "stop_hit": bool(stop_hit),
+        "target_hit": first_outcome == "target_first",
+        "stop_hit": first_outcome == "stop_first",
         "first_outcome": first_outcome,
         "first_outcome_time": first_time,
+        "same_bar_ambiguous": same_bar_ambiguous,
     }
 
 
@@ -1142,10 +1162,8 @@ def _classify_not_triggered(execution: dict[str, Any], result: dict[str, Any], t
 def _classify_executed_failure(outcome: dict[str, Any], result: dict[str, Any]) -> str:
     if outcome.get("first_outcome") == "target_first":
         return ""
-    if outcome.get("first_outcome") == "target_and_stop_same_bar":
-        return ""
     if outcome.get("first_outcome") == "stop_first":
-        return "stop_hit"
+        return "stop_hit_same_bar_ambiguous" if outcome.get("same_bar_ambiguous") else "stop_hit"
     if outcome.get("target_hit"):
         return ""
     d5_close = _to_float(result.get("d5_close_return_pct"))
@@ -1164,7 +1182,7 @@ def _after_buy_rows(
     rows = minute[minute["trade_date"].astype(str).isin(future_dates[: max(1, int(hold_days))])].copy()
     if rows.empty:
         return rows
-    return rows[pd.to_datetime(rows["datetime"], errors="coerce") >= pd.Timestamp(buy_time)].sort_values("datetime")
+    return rows[pd.to_datetime(rows["datetime"], errors="coerce") > pd.Timestamp(buy_time)].sort_values("datetime")
 
 
 def _candidate_base_price(signal_row: pd.Series, service: MarketDataService) -> float | None:
@@ -1422,7 +1440,7 @@ def evaluate_top_signal(
     signal_row: pd.Series,
     service: MarketDataService,
     target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
-    entry_price_mode: str = "zone_max",
+    entry_price_mode: str = DEFAULT_ENTRY_PRICE_MODE,
 ) -> dict[str, Any]:
     code = str(signal_row["code"]).zfill(6)
     signal_date = str(signal_row["trade_date"])
@@ -1446,6 +1464,11 @@ def evaluate_top_signal(
         "buy_price": None,
         "confirmation_price": None,
         "entry_price_mode": entry_price_mode,
+        "execution_bar_resolution": "5m",
+        "confirmation_bar_excluded": True,
+        "same_bar_policy": "stop_first",
+        "transaction_costs_included": False,
+        "slippage_included": False,
         "execution_reason": "",
         "d2_max_return_pct": None,
         "d2_close_return_pct": None,
@@ -1483,7 +1506,7 @@ def evaluate_top_signal(
 
     buy_time = str(execution.get("time", ""))
     buy_price = float(execution.get("price"))
-    after_buy = minute_d2[pd.to_datetime(minute_d2["datetime"], errors="coerce") >= pd.Timestamp(buy_time)].copy()
+    after_buy = minute_d2[pd.to_datetime(minute_d2["datetime"], errors="coerce") > pd.Timestamp(buy_time)].copy()
     if after_buy.empty:
         result["data_reason"] = "no bars after buy"
         result["evaluable"] = True
@@ -1519,6 +1542,12 @@ def build_top3_summary(
                 {
                     "top_n": int(top_n),
                     "target_return_pct": float(target_return_pct),
+                    "entry_price_mode": DEFAULT_ENTRY_PRICE_MODE,
+                    "execution_bar_resolution": "5m",
+                    "confirmation_bar_excluded": True,
+                    "same_bar_policy": "stop_first",
+                    "transaction_costs_included": False,
+                    "slippage_included": False,
                     "selected_count": 0,
                 }
             ]
@@ -1531,6 +1560,12 @@ def build_top3_summary(
             {
                 "top_n": int(top_n),
                 "target_return_pct": float(target_return_pct),
+                "entry_price_mode": str(trades["entry_price_mode"].iloc[0]) if "entry_price_mode" in trades.columns else DEFAULT_ENTRY_PRICE_MODE,
+                "execution_bar_resolution": "5m",
+                "confirmation_bar_excluded": True,
+                "same_bar_policy": "stop_first",
+                "transaction_costs_included": False,
+                "slippage_included": False,
                 "selected_count": int(len(trades)),
                 "evaluable_count": int(len(evaluable)),
                 "executed_count": int(len(executed)),
@@ -1577,6 +1612,9 @@ def build_top3_backtest_markdown(trades: pd.DataFrame, summary: pd.DataFrame, tr
             f"- executed: **{int(item.get('executed_count', 0))}**",
             f"- execution rate: **{_format_pct(item.get('execution_rate'))}**",
             f"- target hit rate: **{_format_pct(item.get('target_hit_rate'))}**",
+            f"- entry price mode: **{item.get('entry_price_mode', DEFAULT_ENTRY_PRICE_MODE)}**",
+            "- confirmation bar excluded: **True**",
+            "- transaction costs and slippage included: **False**",
             f"- avg D2 max return: **{_format_number(item.get('avg_d2_max_return_pct'))}%**",
             f"- avg D2 close return: **{_format_number(item.get('avg_d2_close_return_pct'))}%**",
             "",
