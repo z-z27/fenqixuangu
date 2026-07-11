@@ -22,6 +22,7 @@ from .logistic_v003 import (
     _safe_rate,
 )
 from .ranking_backtest import score_candidates
+from .universe_audit import normalize_code_series
 
 
 DEFAULT_TARGET_COLUMN = "target7_d2open_d3high"
@@ -199,6 +200,59 @@ def run_v004a_research(
     return comparison, rankwise, top3_combo, per_date, coefficients, data_quality, scored, report_path
 
 
+def annotate_v004a_input_eligibility(raw: pd.DataFrame) -> pd.DataFrame:
+    """Annotate the one canonical v004a scorable-input filter and exclusions."""
+    frame = raw.copy().reset_index(drop=True)
+    for column in (
+        "signal_date",
+        "code",
+        "eligible_for_trade",
+        DEFAULT_HIGH_RETURN_COLUMN,
+        DEFAULT_CLOSE_RETURN_COLUMN,
+        "candidate_base_price",
+    ):
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    frame["code"] = normalize_code_series(frame["code"])
+    frame["signal_date"] = frame["signal_date"].fillna("").astype(str)
+    eligible = _bool_series(frame["eligible_for_trade"])
+    high = pd.to_numeric(frame[DEFAULT_HIGH_RETURN_COLUMN], errors="coerce")
+    close = pd.to_numeric(frame[DEFAULT_CLOSE_RETURN_COLUMN], errors="coerce")
+    base_price = pd.to_numeric(frame["candidate_base_price"], errors="coerce")
+    if "requested_signal_date" in frame.columns:
+        requested = frame["requested_signal_date"].fillna("").astype(str)
+        mismatch = requested.ne(frame["signal_date"])
+        duplicate_keys = pd.DataFrame(
+            {"requested_signal_date": requested, "code": frame["code"]},
+            index=frame.index,
+        ).duplicated(["requested_signal_date", "code"], keep=False)
+    else:
+        mismatch = pd.Series(False, index=frame.index)
+        duplicate_keys = pd.DataFrame(
+            {"signal_date": frame["signal_date"], "code": frame["code"]},
+            index=frame.index,
+        ).duplicated(["signal_date", "code"], keep=False)
+
+    reason_masks = (
+        ("not_eligible", ~eligible),
+        ("missing_high_return", high.isna()),
+        ("missing_close_return", close.isna()),
+        ("invalid_base_price", base_price.isna() | base_price.le(0)),
+        ("signal_date_mismatch", mismatch),
+        ("duplicate_signal_code", duplicate_keys),
+    )
+    reasons: list[str] = []
+    for index in frame.index:
+        reasons.append("|".join(reason for reason, mask in reason_masks if bool(mask.loc[index])))
+    frame["eligible_for_trade"] = eligible
+    frame[DEFAULT_HIGH_RETURN_COLUMN] = high
+    frame[DEFAULT_CLOSE_RETURN_COLUMN] = close
+    frame["candidate_base_price"] = base_price
+    frame["v004a_exclusion_reason"] = reasons
+    frame["v004a_scorable_bool"] = frame["v004a_exclusion_reason"].eq("")
+    return frame
+
+
 def prepare_v004a_samples(raw: pd.DataFrame, target_return_pct: float = DEFAULT_TARGET_RETURN_PCT) -> tuple[pd.DataFrame, dict[str, Any], pd.DataFrame]:
     _validate_target_return_pct(target_return_pct)
     required = [
@@ -221,7 +275,7 @@ def prepare_v004a_samples(raw: pd.DataFrame, target_return_pct: float = DEFAULT_
 
     frame = raw.copy()
     raw_rows = int(len(frame))
-    frame["code"] = frame["code"].astype(str).str.zfill(6)
+    frame["code"] = normalize_code_series(frame["code"])
     frame["signal_date"] = frame["signal_date"].astype(str)
     if "graph_quality_score" not in frame.columns:
         frame["graph_quality_score"] = 0.0
@@ -246,11 +300,12 @@ def prepare_v004a_samples(raw: pd.DataFrame, target_return_pct: float = DEFAULT_
     for column in numeric_columns:
         frame[column] = pd.to_numeric(frame[column], errors="coerce")
 
+    frame = annotate_v004a_input_eligibility(frame)
     eligible_mask = frame["eligible_for_trade"].fillna(False).astype(bool)
     high_notna = frame[DEFAULT_HIGH_RETURN_COLUMN].notna()
     close_notna = frame[DEFAULT_CLOSE_RETURN_COLUMN].notna()
     base_price_positive = frame["candidate_base_price"].notna() & (frame["candidate_base_price"] > 0)
-    filtered = frame[eligible_mask & high_notna & close_notna & base_price_positive].copy()
+    filtered = frame[frame["v004a_scorable_bool"].fillna(False).astype(bool)].copy()
     if filtered.empty:
         raise RuntimeError("no v004a rows remain after eligible/return/base-price filters")
 

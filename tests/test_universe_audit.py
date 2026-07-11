@@ -1,0 +1,238 @@
+from __future__ import annotations
+
+from io import StringIO
+from pathlib import Path
+from tempfile import TemporaryDirectory
+import unittest
+
+import pandas as pd
+
+from src.history_samples import _normalise_history_candidate_columns
+from src.universe_audit import (
+    StageSnapshot,
+    UniverseAuditError,
+    UniverseSnapshotMismatch,
+    canonical_rows_sha256,
+    code_set_sha256,
+    compare_stage_frames,
+    create_or_verify_snapshot,
+    key_set_sha256,
+    UniverseSnapshotError,
+)
+from src.v004a import annotate_v004a_input_eligibility, prepare_v004a_samples
+
+
+ROW_COLUMNS = ("requested_signal_date", "code", "name", "score", "flag_bool")
+KEY_COLUMNS = ("requested_signal_date", "code")
+
+
+def _snapshot(frame: pd.DataFrame) -> StageSnapshot:
+    return StageSnapshot(
+        stage="signal_pool",
+        frame=frame,
+        key_columns=KEY_COLUMNS,
+        row_columns=ROW_COLUMNS,
+    )
+
+
+class StableUniverseHashTests(unittest.TestCase):
+    def test_hash_is_independent_of_order_code_format_newlines_and_missing_representation(self) -> None:
+        csv_lf = (
+            "requested_signal_date,code,name,score,flag_bool\n"
+            "2026-07-10,1,A,1.25,true\n"
+            "2026-07-10,2,,2.5,false\n"
+        )
+        csv_crlf = csv_lf.replace("\n", "\r\n")
+        left = pd.read_csv(StringIO(csv_lf), dtype={"code": str})
+        right = pd.read_csv(StringIO(csv_crlf), dtype={"code": str}).iloc[::-1].reset_index(drop=True)
+        right.loc[right["code"].eq("1"), "code"] = "000001"
+        right.loc[right["code"].eq("2"), "name"] = None
+        right = pd.concat(
+            [
+                right,
+                pd.DataFrame(
+                    [{"requested_signal_date": "2026-07-10", "code": None, "name": "ignored", "score": 99, "flag_bool": True}]
+                ),
+            ],
+            ignore_index=True,
+        )
+        self.assertEqual(code_set_sha256(left), code_set_sha256(right))
+        self.assertEqual(key_set_sha256(left, KEY_COLUMNS), key_set_sha256(right, KEY_COLUMNS))
+        self.assertEqual(
+            canonical_rows_sha256(left, ROW_COLUMNS, KEY_COLUMNS),
+            canonical_rows_sha256(right, ROW_COLUMNS, KEY_COLUMNS),
+        )
+
+    def test_added_and_removed_members_change_hash_and_diff(self) -> None:
+        base = pd.DataFrame(
+            [
+                {"requested_signal_date": "2026-07-10", "code": "1", "name": "A", "score": 1.0, "flag_bool": True},
+                {"requested_signal_date": "2026-07-10", "code": "2", "name": "B", "score": 2.0, "flag_bool": False},
+            ]
+        )
+        changed = pd.DataFrame(
+            [
+                {"requested_signal_date": "2026-07-10", "code": "2", "name": "B", "score": 2.0, "flag_bool": False},
+                {"requested_signal_date": "2026-07-10", "code": "3", "name": "C", "score": 3.0, "flag_bool": True},
+            ]
+        )
+        self.assertNotEqual(code_set_sha256(base), code_set_sha256(changed))
+        diff = compare_stage_frames(_snapshot(base), _snapshot(changed))
+        self.assertEqual(set(diff["diff_type"]), {"added", "removed"})
+        self.assertEqual(set(diff["code"]), {"000001", "000003"})
+
+    def test_row_change_preserves_code_hash_but_changes_rows_hash(self) -> None:
+        base = pd.DataFrame(
+            [{"requested_signal_date": "2026-07-10", "code": "1", "name": "A", "score": 1.0, "flag_bool": True}]
+        )
+        changed = base.copy()
+        changed["score"] = 1.5
+        self.assertEqual(code_set_sha256(base), code_set_sha256(changed))
+        self.assertNotEqual(
+            canonical_rows_sha256(base, ROW_COLUMNS, KEY_COLUMNS),
+            canonical_rows_sha256(changed, ROW_COLUMNS, KEY_COLUMNS),
+        )
+        diff = compare_stage_frames(_snapshot(base), _snapshot(changed))
+        self.assertEqual(diff["diff_type"].tolist(), ["changed"])
+
+
+class HistoryUniverseIntegrityTests(unittest.TestCase):
+    def test_duplicate_requested_date_code_is_a_hard_failure(self) -> None:
+        rows = pd.DataFrame(
+            [
+                _candidate_row("2026-07-10", "2026-07-10", "1"),
+                _candidate_row("2026-07-10", "2026-07-10", "000001"),
+            ]
+        )
+        with self.assertRaisesRegex(UniverseAuditError, "duplicate keys"):
+            _normalise_history_candidate_columns(rows)
+
+    def test_requested_and_actual_signal_date_mismatch_is_a_hard_failure(self) -> None:
+        rows = pd.DataFrame([_candidate_row("2026-07-10", "2026-07-11", "1")])
+        with self.assertRaisesRegex(
+            UniverseAuditError,
+            r"requested_signal_date=2026-07-10, signal_date=2026-07-11, code=000001",
+        ):
+            _normalise_history_candidate_columns(rows)
+
+    def test_v004a_filter_uses_the_shared_annotation(self) -> None:
+        raw = pd.DataFrame(
+            [
+                _candidate_row("2026-07-10", "2026-07-10", "1"),
+                {**_candidate_row("2026-07-10", "2026-07-10", "2"), "d2open_d3high_return_pct": None},
+                {**_candidate_row("2026-07-10", "2026-07-10", "3"), "candidate_base_price": 0.0},
+            ]
+        )
+        annotated = annotate_v004a_input_eligibility(raw)
+        expected = annotated[annotated["v004a_scorable_bool"]][["signal_date", "code"]].reset_index(drop=True)
+        prepared, _, quality = prepare_v004a_samples(raw)
+        actual = prepared[["signal_date", "code"]].reset_index(drop=True)
+        pd.testing.assert_frame_equal(actual, expected)
+        self.assertEqual(int(quality.iloc[0]["final_rows"]), len(expected))
+
+    def test_v004a_exclusion_reasons_have_stable_order(self) -> None:
+        row = _candidate_row("2026-07-10", "2026-07-11", "1")
+        row.update(
+            {
+                "eligible_for_trade": False,
+                "d2open_d3high_return_pct": None,
+                "d2open_d3close_return_pct": None,
+                "candidate_base_price": 0.0,
+            }
+        )
+        annotated = annotate_v004a_input_eligibility(pd.DataFrame([row]))
+        self.assertEqual(
+            annotated.iloc[0]["v004a_exclusion_reason"],
+            "not_eligible|missing_high_return|missing_close_return|invalid_base_price|signal_date_mismatch",
+        )
+
+
+class CanonicalSnapshotTests(unittest.TestCase):
+    def test_verify_only_requires_canonical_and_off_never_creates_it(self) -> None:
+        frame = pd.DataFrame(
+            [{"requested_signal_date": "2026-07-10", "code": "1", "name": "A", "score": 1.0, "flag_bool": True}]
+        )
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            with self.assertRaisesRegex(UniverseSnapshotError, "required but missing"):
+                create_or_verify_snapshot(
+                    "2026-07-10",
+                    {"signal_pool": _snapshot(frame)},
+                    root / "snapshots",
+                    root / "run",
+                    mode="verify-only",
+                )
+            status, manifest_path, _ = create_or_verify_snapshot(
+                "2026-07-10",
+                {"signal_pool": _snapshot(frame)},
+                root / "snapshots",
+                root / "run",
+                mode="off",
+            )
+            self.assertEqual(status, "UNVERIFIED_OFF")
+            self.assertFalse(manifest_path.exists())
+
+    def test_create_verify_and_mismatch_without_overwrite(self) -> None:
+        base = pd.DataFrame(
+            [
+                {"requested_signal_date": "2026-07-10", "code": "1", "name": "A", "score": 1.0, "flag_bool": True},
+                {"requested_signal_date": "2026-07-10", "code": "2", "name": "B", "score": 2.0, "flag_bool": False},
+            ]
+        )
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            status, manifest_path, _ = create_or_verify_snapshot(
+                "2026-07-10", {"signal_pool": _snapshot(base)}, root / "snapshots", root / "run"
+            )
+            self.assertEqual(status, "CREATED_CANONICAL")
+            original_manifest = manifest_path.read_bytes()
+
+            status, _, _ = create_or_verify_snapshot(
+                "2026-07-10",
+                {"signal_pool": _snapshot(base.iloc[::-1].reset_index(drop=True))},
+                root / "snapshots",
+                root / "run",
+            )
+            self.assertEqual(status, "VERIFIED_MATCH")
+
+            added = pd.concat(
+                [
+                    base,
+                    pd.DataFrame(
+                        [{"requested_signal_date": "2026-07-10", "code": "3", "name": "C", "score": 3.0, "flag_bool": True}]
+                    ),
+                ],
+                ignore_index=True,
+            )
+            with self.assertRaises(UniverseSnapshotMismatch):
+                create_or_verify_snapshot(
+                    "2026-07-10", {"signal_pool": _snapshot(added)}, root / "snapshots", root / "run"
+                )
+            self.assertEqual(manifest_path.read_bytes(), original_manifest)
+            diff = pd.read_csv(root / "run" / "universe_snapshot_diff_2026-07-10.csv", dtype={"code": str})
+            self.assertEqual(diff["diff_type"].tolist(), ["added"])
+            self.assertEqual(diff["code"].tolist(), ["000003"])
+
+
+def _candidate_row(requested: str, actual: str, code: str) -> dict[str, object]:
+    return {
+        "requested_signal_date": requested,
+        "signal_date": actual,
+        "code": code,
+        "eligible_for_trade": True,
+        "target7_d2open_d3high": True,
+        "d2open_d3high_return_pct": 8.0,
+        "d2open_d3close_return_pct": 4.0,
+        "candidate_base_price": 10.0,
+        "d1_close_ma10_pct": 2.0,
+        "d1_low_ma10_pct": -1.0,
+        "trend_hold_score": 80.0,
+        "total_score": 75.0,
+        "theme_score": 60.0,
+        "graph_quality_score": 70.0,
+        "days_since_d0": 1,
+    }
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -186,6 +186,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--hold-days", type=int, default=10)
     p.add_argument("--target-return-pct", type=float, default=7.0)
     p.add_argument("--secondary-target-return-pct", type=float, default=10.0)
+    p.add_argument(
+        "--universe-snapshot-mode",
+        choices=["create-or-verify", "verify-only", "off"],
+        default="create-or-verify",
+    )
 
     p = sub.add_parser("analyze-factors", help="run pure factor analysis; does not generate ranking_model JSON")
     p.add_argument("--samples-file", required=True)
@@ -539,6 +544,7 @@ def generate_history_samples(args) -> int:
         hold_days=args.hold_days,
         target_return_pct=args.target_return_pct,
         secondary_target_return_pct=args.secondary_target_return_pct,
+        universe_snapshot_mode=args.universe_snapshot_mode,
     )
     item = summary.iloc[0] if not summary.empty else {}
     print(f"run dates: {len(run_log)}")

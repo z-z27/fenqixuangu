@@ -649,8 +649,52 @@ python -m src.cli generate-history-samples `
   --signal-days 10 `
   --eval-days 10 `
   --hold-days 10 `
-  --workers 6
+  --workers 6 `
+  --universe-snapshot-mode create-or-verify
 ```
+
+### 候选宇宙可复现性
+
+历史生成和 fixed-grid holdout 统一使用以下候选层级：
+
+```text
+raw_source_pool       # lookback 窗口内的原始涨停来源记录
+signal_pool           # build_signals_for_pool 生成的全部 D1 signals
+eligible_pool         # allowed_bool=True 且 signal_type=D2_LOW_ABSORB
+scorable_pool         # v004a 公共输入过滤后的全部股票
+v004a_topk            # 冻结 v004a Top15
+v002_topk             # ranking model Top15，仅用于审计
+v005_candidate_pool   # 实际交给 v005 的 v004a Top15 + v002 信息
+final_top3            # policy 最终 Top3
+```
+
+每个正式生成日期的 canonical snapshot 位于：
+
+```text
+data/snapshots/history_universe/YYYY-MM-DD/canonical/
+```
+
+目录包含 `raw_source_pool.csv`、`signal_pool.csv`、`eligible_pool.csv`、`scorable_pool.csv` 和 `manifest.json`。集合及规范化行哈希不依赖 DataFrame 行顺序、CSV BOM 或 Windows/Linux 换行。
+
+每次 history run 还会在 `reports/history_samples/<start>_<end>/` 写出：
+
+```text
+history_universe_audit_<start>_<end>.csv
+history_universe_membership_<start>_<end>.csv
+history_universe_manifest_<start>_<end>.json
+```
+
+`--universe-snapshot-mode` 支持：
+
+```text
+create-or-verify  # 默认；不存在则创建，存在则严格验证
+verify-only       # canonical 必须已存在，只验证、不创建
+off               # 兼容模式，不创建也不验证，状态为 UNVERIFIED_OFF
+```
+
+相同日期发生 added、removed 或 changed 时，程序不会覆盖 canonical，而会在当前 history reports 目录写出 `universe_snapshot_diff_YYYY-MM-DD.csv/.md` 后硬失败。canonical 代表已接受的候选输入边界，静默覆盖会使横截面 percentile、v004a rank 和 v005 Top3 的历史可比性失效，因此没有自动覆盖参数。
+
+重跑同一区间时保持相同参数并使用 `create-or-verify` 或 `verify-only`。只有各层 count、code/key hash 和 canonical rows hash 全部一致，状态才会是 `VERIFIED_MATCH`。候选 universe hash 一致不代表完整行情缓存已冻结；`cache_snapshot_complete` 仍保持 `False`，不同 universe hash 的回测禁止直接比较。
 
 ### 2. 跑 fixed-grid holdout
 
@@ -663,6 +707,8 @@ python -m src.v005_fixed_grid_holdout `
 冻结 holdout 的目标固定为 `target7_d2open_d3high`，因此 `target_return_pct` 只能是 `7.0`；其他阈值会被明确拒绝，当前不支持临时重算任意阈值目标。
 
 同时检查 `v005_fixed_grid_holdout_readiness.csv` 和 `v005_fixed_grid_holdout_run_meta.csv`。readiness 的 `forward_signal_date_count` 仅表示当前 holdout 输入中的 unique signal dates，不声称股票、D0 或样本相互独立。少于 30 个 signal date 时，状态固定为 `INSUFFICIENT_FORWARD_SAMPLE`；达到 30 日也只表示 `FORWARD_SAMPLE_THRESHOLD_MET`，`deployable` 仍为 `False`。使用 `--scored-file` 时无法证明原始系数来源，readiness 会标记为 `UNVERIFIED_POLICY_INPUTS`。
+
+holdout 还会输出 `v005_fixed_grid_holdout_universe_membership.csv`、`v005_fixed_grid_holdout_universe_audit.csv` 和 `v005_fixed_grid_holdout_universe_manifest.json`。旧 samples 没有 history universe manifest 时仍可用于 legacy research，但会明确标记为 `LEGACY_UNVERIFIED`；manifest 存在但与 samples 内容不一致时会直接失败。
 
 ### 3. 看结果
 
@@ -825,7 +871,8 @@ python -m src.cli generate-history-samples `
   --signal-days 10 `
   --eval-days 10 `
   --hold-days 10 `
-  --workers 6
+  --workers 6 `
+  --universe-snapshot-mode create-or-verify
 ```
 
 ### fixed-grid holdout
@@ -863,6 +910,7 @@ src/
   signal_engine.py               # D2 分歧承接 signal 生成
   daily_ranking.py               # v2 manual ranking daily 应用
   history_samples.py             # 历史候选样本生成
+  universe_audit.py              # 候选集合规范化、哈希、快照与差异审计
   ranking_backtest.py            # manual ranking model 验证
   v004a.py                       # logistic walk-forward 研究
   v005_set_selector.py           # v005 Top3 组合选择器

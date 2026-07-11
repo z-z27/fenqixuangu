@@ -7,6 +7,10 @@ import unittest
 import pandas as pd
 
 from src.daily_ranking import apply_daily_research_ranking
+from src.history_samples import (
+    HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS,
+    _write_history_universe_outputs,
+)
 from src.policy_config import get_default_policy, normalized_sha256
 from src.v005_daily_selector import (
     build_runtime_policy_meta,
@@ -22,6 +26,7 @@ SIGNALS_FIXTURE = FIXTURES / "v005_daily_signals_single_date.csv"
 CUSTOM_RANKING_MODEL = FIXTURES / "ranking_model_custom_reverse_v002.json"
 FROZEN_RANKING_MODEL_COPY = FIXTURES / "ranking_model_v002_core_momentum_support.json"
 FROZEN_COEFFICIENT_COPY = FIXTURES / "v004a_coefficients_2026-06-26.csv"
+HOLDOUT_FIXTURE = FIXTURES / "v005_holdout_samples_single_date.csv"
 EXPECTED_FINAL_CODES = "000002,000004,000003"
 EXPECTED_V002_CODES = "000001,000002,000003"
 EXPECTED_CUSTOM_V002_CODES = "000008,000007,000006"
@@ -39,6 +44,11 @@ class V005FixtureRegressionTests(unittest.TestCase):
             cls.signals,
             output_dir=root / "custom",
             ranking_model_file=CUSTOM_RANKING_MODEL,
+        )
+        cls.holdout_dir = root / "holdout"
+        cls.holdout_result = run_fixed_grid_holdout(
+            samples_file=HOLDOUT_FIXTURE,
+            output_dir=cls.holdout_dir,
         )
 
     @classmethod
@@ -133,6 +143,155 @@ class V005FixtureRegressionTests(unittest.TestCase):
             r"v005 daily selector requires exactly one signal_date; found \['2026-07-10', '2026-07-11'\]",
         ):
             require_single_signal_date(signals_to_frame(frame))
+
+    def test_holdout_writes_complete_universe_funnel(self) -> None:
+        _, daily, _, _, _ = self.holdout_result
+        membership_path = self.holdout_dir / "v005_fixed_grid_holdout_universe_membership.csv"
+        audit_path = self.holdout_dir / "v005_fixed_grid_holdout_universe_audit.csv"
+        manifest_path = self.holdout_dir / "v005_fixed_grid_holdout_universe_manifest.json"
+        self.assertTrue(membership_path.is_file())
+        self.assertTrue(audit_path.is_file())
+        self.assertTrue(manifest_path.is_file())
+        audit = pd.read_csv(audit_path).iloc[0]
+        self.assertEqual(int(audit["scorable_count"]), 8)
+        self.assertEqual(int(audit["v004a_topk_count"]), 8)
+        self.assertEqual(int(audit["final_top3_count"]), 3)
+        self.assertEqual(audit["final_top3_codes"], EXPECTED_FINAL_CODES)
+        self.assertEqual(audit["snapshot_status"], "LEGACY_UNVERIFIED")
+        run_meta = pd.read_csv(self.holdout_dir / "v005_fixed_grid_holdout_run_meta.csv").iloc[0]
+        self.assertFalse(bool(run_meta["cache_snapshot_complete"]))
+        self.assertFalse(bool(run_meta["candidate_universe_snapshot_verified"]))
+        self.assertEqual(run_meta["universe_audit_status"], "LEGACY_UNVERIFIED")
+        policy = daily[daily["strategy"].eq("policy_v005_v002_regime_fallback")].iloc[0]
+        self.assertEqual(policy["selected_codes"], EXPECTED_FINAL_CODES)
+
+    def test_shuffled_holdout_input_preserves_ranks_pool_selection_and_hashes(self) -> None:
+        raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
+        shuffled = raw.sample(frac=1.0, random_state=27).reset_index(drop=True)
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            shuffled_path = root / "shuffled_samples.csv"
+            shuffled.to_csv(shuffled_path, index=False, encoding="utf-8-sig")
+            shuffled_dir = root / "holdout"
+            run_fixed_grid_holdout(samples_file=shuffled_path, output_dir=shuffled_dir)
+
+            baseline_scored = pd.read_csv(
+                self.holdout_dir / "v005_fixed_grid_holdout_scored_candidates.csv",
+                dtype={"code": str},
+            )
+            shuffled_scored = pd.read_csv(
+                shuffled_dir / "v005_fixed_grid_holdout_scored_candidates.csv",
+                dtype={"code": str},
+            )
+            keys = ["model_id", "evaluation_scope", "l2", "positive_weight", "signal_date", "code"]
+            columns = [*keys, "model_score", "model_rank"]
+            left = baseline_scored[columns].sort_values(keys, na_position="last").reset_index(drop=True)
+            right = shuffled_scored[columns].sort_values(keys, na_position="last").reset_index(drop=True)
+            pd.testing.assert_frame_equal(left, right)
+
+            baseline_combo = pd.read_csv(self.holdout_dir / "v005_fixed_grid_selected_combos.csv")
+            shuffled_combo = pd.read_csv(shuffled_dir / "v005_fixed_grid_selected_combos.csv")
+            pd.testing.assert_frame_equal(baseline_combo, shuffled_combo)
+
+            baseline_membership = pd.read_csv(
+                self.holdout_dir / "v005_fixed_grid_holdout_universe_membership.csv",
+                dtype={"code": str},
+            )
+            shuffled_membership = pd.read_csv(
+                shuffled_dir / "v005_fixed_grid_holdout_universe_membership.csv",
+                dtype={"code": str},
+            )
+            pd.testing.assert_frame_equal(baseline_membership, shuffled_membership)
+
+            hash_columns = [column for column in pd.read_csv(
+                self.holdout_dir / "v005_fixed_grid_holdout_universe_audit.csv"
+            ).columns if column.endswith("sha256")]
+            baseline_audit = pd.read_csv(self.holdout_dir / "v005_fixed_grid_holdout_universe_audit.csv")
+            shuffled_audit = pd.read_csv(shuffled_dir / "v005_fixed_grid_holdout_universe_audit.csv")
+            pd.testing.assert_frame_equal(baseline_audit[hash_columns], shuffled_audit[hash_columns])
+
+            shuffled_scored_path = root / "shuffled_scored.csv"
+            baseline_scored.sample(frac=1.0, random_state=72).to_csv(
+                shuffled_scored_path,
+                index=False,
+                encoding="utf-8-sig",
+            )
+            pre_scored_dir = root / "pre_scored_holdout"
+            run_fixed_grid_holdout(scored_file=shuffled_scored_path, output_dir=pre_scored_dir)
+            pre_scored_combo = pd.read_csv(pre_scored_dir / "v005_fixed_grid_selected_combos.csv")
+            pd.testing.assert_frame_equal(baseline_combo, pre_scored_combo)
+            pre_scored_membership = pd.read_csv(
+                pre_scored_dir / "v005_fixed_grid_holdout_universe_membership.csv",
+                dtype={"code": str},
+            )
+            pd.testing.assert_frame_equal(baseline_membership, pre_scored_membership)
+            pre_scored_audit = pd.read_csv(pre_scored_dir / "v005_fixed_grid_holdout_universe_audit.csv")
+            pd.testing.assert_frame_equal(baseline_audit[hash_columns], pre_scored_audit[hash_columns])
+
+    def test_holdout_verifies_history_universe_manifest_and_rejects_changed_samples(self) -> None:
+        raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            history_dir = root / "history"
+            history_dir.mkdir()
+            suffix = "2026-07-10_2026-07-10"
+            samples_path = history_dir / f"history_candidates_{suffix}.csv"
+            raw.to_csv(samples_path, index=False, encoding="utf-8-sig")
+            membership = pd.DataFrame(
+                [
+                    {
+                        "requested_signal_date": "2026-07-10",
+                        "actual_signal_date": "2026-07-10",
+                        "stage": "scorable_pool",
+                        "member_key": f"2026-07-10|{code}",
+                        "source_trade_date": "",
+                        "code": code,
+                        "name": name,
+                        "d0_date": "",
+                        "included_bool": True,
+                        "exclusion_reason": "",
+                    }
+                    for code, name in raw[["code", "name"]].itertuples(index=False, name=None)
+                ],
+                columns=HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS,
+            )
+            audit = pd.DataFrame(
+                [
+                    {
+                        "requested_signal_date": "2026-07-10",
+                        "actual_signal_date": "2026-07-10",
+                        "generation_status": "generated",
+                        "snapshot_status": "CREATED_CANONICAL",
+                    }
+                ]
+            )
+            _write_history_universe_outputs(
+                output_dir=history_dir,
+                start_date="2026-07-10",
+                end_date="2026-07-10",
+                lookback_days=5,
+                signal_days=10,
+                eval_days=10,
+                hold_days=10,
+                target_return_pct=7.0,
+                universe_snapshot_mode="create-or-verify",
+                candidates=raw,
+                universe_audit=audit,
+                universe_membership=membership,
+            )
+            verified_dir = root / "verified"
+            run_fixed_grid_holdout(samples_file=samples_path, output_dir=verified_dir)
+            run_meta = pd.read_csv(verified_dir / "v005_fixed_grid_holdout_run_meta.csv").iloc[0]
+            self.assertTrue(bool(run_meta["candidate_universe_snapshot_verified"]))
+            self.assertTrue(bool(run_meta["candidate_universe_snapshot_complete"]))
+            self.assertFalse(bool(run_meta["cache_snapshot_complete"]))
+            self.assertEqual(run_meta["universe_audit_status"], "VERIFIED")
+
+            changed = raw.copy()
+            changed.loc[0, "total_score"] = float(changed.loc[0, "total_score"]) + 1.0
+            changed.to_csv(samples_path, index=False, encoding="utf-8-sig")
+            with self.assertRaisesRegex(RuntimeError, "does not match samples input"):
+                run_fixed_grid_holdout(samples_file=samples_path, output_dir=root / "changed")
 
 
 if __name__ == "__main__":

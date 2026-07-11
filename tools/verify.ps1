@@ -10,7 +10,9 @@ Write-Host "Discovered unittest count: $testCount"
 python -m unittest discover -s tests -v
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Write-Host "Running offline v005 fixture regression: 7 tests"
+$fixtureTestCount = python -c "import unittest; print(unittest.defaultTestLoader.loadTestsFromName('tests.test_v005_fixture_regression').countTestCases())"
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+Write-Host "Running offline v005 fixture regression: $fixtureTestCount tests"
 python -m unittest tests.test_v005_fixture_regression -v
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

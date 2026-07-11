@@ -1,0 +1,9 @@
+requested_signal_date,signal_date,code,name,eligible_for_trade,target7_d2open_d3high,d2open_d3high_return_pct,d2open_d3close_return_pct,candidate_base_price,total_score,graph_quality_score,support_score,theme_score,trend_hold_score,d1_close_ma10_pct,d1_low_ma10_pct,days_since_d0,active_money_score,d1_close_vwap_pct,signal_type,allowed_bool
+2026-07-10,2026-07-10,000001,Fixture A,True,True,8.0,4.0,10.00,92,88,90,75,94,8.0,3.0,1,82,2.5,D2_LOW_ABSORB,True
+2026-07-10,2026-07-10,000002,Fixture B,True,False,6.0,3.0,12.00,86,82,84,72,89,6.5,2.0,2,76,1.8,D2_LOW_ABSORB,True
+2026-07-10,2026-07-10,000003,Fixture C,True,True,9.0,5.0,15.00,80,76,78,68,85,5.0,1.0,3,70,1.2,D2_LOW_ABSORB,True
+2026-07-10,2026-07-10,000004,Fixture D,True,False,5.0,2.0,18.00,74,70,72,64,80,3.5,0.0,1,64,0.6,D2_LOW_ABSORB,True
+2026-07-10,2026-07-10,000005,Fixture E,True,True,7.5,4.5,22.00,68,64,66,60,75,2.0,-1.0,2,58,0.0,D2_LOW_ABSORB,True
+2026-07-10,2026-07-10,000006,Fixture F,True,False,4.0,1.0,28.00,62,58,60,56,70,0.5,-2.0,3,52,-0.6,D2_LOW_ABSORB,True
+2026-07-10,2026-07-10,000007,Fixture G,True,False,3.0,0.5,35.00,56,52,54,52,65,-1.0,-3.0,1,46,-1.2,D2_LOW_ABSORB,True
+2026-07-10,2026-07-10,000008,Fixture H,True,False,2.0,-1.0,45.00,50,46,48,48,60,-2.5,-4.0,2,40,-1.8,D2_LOW_ABSORB,True

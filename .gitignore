@@ -10,6 +10,7 @@ data/cache/
 data/raw/
 data/processed/*.csv
 data/research/
+data/snapshots/
 reports/daily_signals/
 reports/daily_v005/
 reports/backtest_results/

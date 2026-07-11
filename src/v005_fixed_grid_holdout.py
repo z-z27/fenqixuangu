@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 from typing import Any
 
@@ -8,6 +9,7 @@ import numpy as np
 import pandas as pd
 
 from .daily_ranking import load_ranking_model
+from .history_samples import HISTORY_CANDIDATE_COLUMNS, HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS
 from .policy_config import frozen_policy_input_checks, get_default_policy, normalized_sha256, validate_model_dates_for_signal_date
 from .provenance import file_sha256, runtime_provenance
 from .ranking_backtest import validate_ranking_model
@@ -20,7 +22,18 @@ from .v004a import (
     _score_manual_and_hand_models,
     add_scored_model_rank,
     build_scored_candidates_output,
+    annotate_v004a_input_eligibility,
     prepare_v004a_samples,
+)
+from .universe_audit import (
+    UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
+    UniverseAuditError,
+    canonical_rows_sha256,
+    code_set_sha256,
+    count_duplicate_keys,
+    normalize_code_series,
+    require_unique_keys,
+    write_json,
 )
 from .v005_set_selector import (
     DEFAULT_AVG_TOTAL_RANK_WEIGHT_GRID,
@@ -72,6 +85,27 @@ DEFAULT_GRID_ID = DEFAULT_POLICY.grid_id
 DEFAULT_V002_MODEL_LABEL = "v002_top3_control"
 DEFAULT_V004A_MODEL_LABEL = "v004a_top3_control"
 
+HOLDOUT_UNIVERSE_MEMBERSHIP_COLUMNS = [
+    "signal_date",
+    "code",
+    "name",
+    "eligible_for_trade",
+    "v004a_scorable_bool",
+    "v004a_model_score",
+    "v004a_model_rank",
+    "v002_model_score",
+    "v002_model_rank",
+    "in_v004a_topk",
+    "in_v002_topk",
+    "in_v005_candidate_pool",
+    "in_final_top3",
+    "final_top3_rank",
+    "target7_d2open_d3high",
+    "d2open_d3high_return_pct",
+    "d2open_d3close_return_pct",
+    "realized_return_pct",
+]
+
 HOLDOUT_DAILY_COLUMNS = [
     "strategy",
     "signal_date",
@@ -120,6 +154,7 @@ def run_fixed_grid_holdout(
     target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
     min_forward_dates: int = DEFAULT_POLICY.min_forward_dates,
     ranking_model_file: str | Path = DEFAULT_RANKING_MODEL_FILE,
+    history_universe_manifest_file: str | Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path]:
     if abs(float(target_return_pct) - DEFAULT_POLICY.target_return_pct) > 1e-12:
         raise RuntimeError(
@@ -130,6 +165,19 @@ def run_fixed_grid_holdout(
     ranking_model_id = str(ranking_meta["model_id"])
     out_dir = Path(output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    samples_path = Path(samples_file) if samples_file else None
+    raw_samples = (
+        pd.read_csv(samples_path, dtype={"code": str})
+        if samples_path is not None and samples_path.is_file()
+        else pd.DataFrame()
+    )
+    history_universe = _load_history_universe_context(
+        samples_path=samples_path,
+        raw_samples=raw_samples,
+        explicit_manifest_path=(
+            Path(history_universe_manifest_file) if history_universe_manifest_file else None
+        ),
+    )
 
     if scored_file:
         scored_path = Path(scored_file)
@@ -189,6 +237,24 @@ def run_fixed_grid_holdout(
         v004a_positive_weight=float(v004a_positive_weight),
         v002_model_id=ranking_model_id,
     )
+    universe_membership, universe_audit, universe_manifest_path = _write_holdout_universe_outputs(
+        output_dir=out_dir,
+        scored=scored,
+        scored_path=holdout_scored_path,
+        samples_path=samples_path,
+        raw_samples=raw_samples,
+        candidate_pool=candidate_pool,
+        selected_combos=selected_combos,
+        policy_daily=policy_daily,
+        candidate_top_k=int(candidate_top_k),
+        top_n=int(top_n),
+        v004a_l2=float(v004a_l2),
+        v004a_positive_weight=float(v004a_positive_weight),
+        ranking_model_id=ranking_model_id,
+        coefficient_meta=coefficient_meta,
+        history_universe=history_universe,
+    )
+    universe_manifest_sha256 = file_sha256(universe_manifest_path)
     frozen_checks = frozen_policy_input_checks(
         DEFAULT_POLICY,
         coefficients_file=coefficients_file,
@@ -214,7 +280,6 @@ def run_fixed_grid_holdout(
         frozen_policy_inputs_verified=frozen_policy_inputs_verified,
         deployment_status=deployment_status,
     )
-    samples_path = Path(samples_file) if samples_file else None
     run_meta = pd.DataFrame(
         [
             {
@@ -257,6 +322,12 @@ def run_fixed_grid_holdout(
                 "transaction_costs_included": False,
                 "slippage_included": False,
                 "cache_snapshot_complete": False,
+                "candidate_universe_snapshot_complete": bool(history_universe["snapshot_complete"]),
+                "candidate_universe_snapshot_verified": bool(history_universe["snapshot_verified"]),
+                "candidate_universe_manifest_path": str(universe_manifest_path),
+                "candidate_universe_manifest_sha256": universe_manifest_sha256,
+                "universe_snapshot_schema_version": UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
+                "universe_audit_status": str(history_universe["audit_status"]),
             }
         ]
     )
@@ -291,10 +362,295 @@ def run_fixed_grid_holdout(
             replacement=replacement,
             readiness=readiness,
             run_meta=run_meta,
+            universe_audit=universe_audit,
         ),
         encoding="utf-8",
     )
     return summary, policy_daily, replacement, daily_top3, report_path
+
+
+def _load_history_universe_context(
+    samples_path: Path | None,
+    raw_samples: pd.DataFrame,
+    explicit_manifest_path: Path | None,
+) -> dict[str, Any]:
+    manifest_path = explicit_manifest_path or _infer_history_universe_manifest(samples_path)
+    empty = {
+        "manifest_path": "",
+        "manifest_sha256": "",
+        "snapshot_complete": False,
+        "snapshot_verified": False,
+        "audit_status": "LEGACY_UNVERIFIED",
+        "date_statuses": {},
+    }
+    if manifest_path is None:
+        return empty
+    manifest_path = Path(manifest_path)
+    if not manifest_path.is_file():
+        if explicit_manifest_path is not None:
+            raise UniverseAuditError(f"history universe manifest is missing: {manifest_path}")
+        return empty
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
+    schema = int(manifest.get("universe_snapshot_schema_version", -1))
+    if schema != UNIVERSE_SNAPSHOT_SCHEMA_VERSION:
+        raise UniverseAuditError(
+            f"unsupported history universe manifest schema_version={schema}: {manifest_path}"
+        )
+    if raw_samples.empty:
+        return {
+            **empty,
+            "manifest_path": str(manifest_path),
+            "manifest_sha256": file_sha256(manifest_path),
+            "audit_status": "MANIFEST_WITHOUT_SAMPLES_UNVERIFIED",
+        }
+    expected_candidates_hash = str(manifest.get("history_candidates_canonical_rows_sha256", ""))
+    actual_candidates_hash = canonical_rows_sha256(
+        raw_samples,
+        HISTORY_CANDIDATE_COLUMNS,
+        ("requested_signal_date", "code"),
+    )
+    if not expected_candidates_hash or actual_candidates_hash != expected_candidates_hash:
+        raise UniverseAuditError(
+            "history universe manifest does not match samples input: "
+            f"expected_candidates_hash={expected_candidates_hash}, actual_candidates_hash={actual_candidates_hash}"
+        )
+    suffix = manifest_path.stem.removeprefix("history_universe_manifest_")
+    membership_path = manifest_path.parent / f"history_universe_membership_{suffix}.csv"
+    if not membership_path.is_file():
+        raise UniverseAuditError(f"history universe membership file is missing: {membership_path}")
+    membership = pd.read_csv(membership_path, dtype={"code": str})
+    actual_membership_hash = canonical_rows_sha256(
+        membership,
+        HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS,
+        ("requested_signal_date", "stage", "member_key"),
+    )
+    expected_membership_hash = str(manifest.get("membership_canonical_rows_sha256", ""))
+    if actual_membership_hash != expected_membership_hash:
+        raise UniverseAuditError(
+            "history universe membership hash mismatch: "
+            f"expected={expected_membership_hash}, actual={actual_membership_hash}"
+        )
+    date_statuses = {
+        str(row.get("requested_signal_date", "")): str(row.get("snapshot_status", ""))
+        for row in manifest.get("dates", [])
+    }
+    verified_statuses = {"CREATED_CANONICAL", "VERIFIED_MATCH"}
+    generated_statuses = [
+        status
+        for date, status in date_statuses.items()
+        if date and status not in {"SKIPPED_NO_EXACT_SIGNAL_DATE", ""}
+    ]
+    snapshot_verified = bool(generated_statuses) and all(
+        status in verified_statuses for status in generated_statuses
+    )
+    return {
+        "manifest_path": str(manifest_path),
+        "manifest_sha256": file_sha256(manifest_path),
+        "snapshot_complete": snapshot_verified,
+        "snapshot_verified": snapshot_verified,
+        "audit_status": "VERIFIED" if snapshot_verified else "MANIFEST_UNVERIFIED",
+        "date_statuses": date_statuses,
+    }
+
+
+def _infer_history_universe_manifest(samples_path: Path | None) -> Path | None:
+    if samples_path is None:
+        return None
+    prefix = "history_candidates_"
+    if not samples_path.stem.startswith(prefix):
+        return None
+    suffix = samples_path.stem[len(prefix):]
+    return samples_path.parent / f"history_universe_manifest_{suffix}.json"
+
+
+def _write_holdout_universe_outputs(
+    output_dir: Path,
+    scored: pd.DataFrame,
+    scored_path: Path,
+    samples_path: Path | None,
+    raw_samples: pd.DataFrame,
+    candidate_pool: pd.DataFrame,
+    selected_combos: pd.DataFrame,
+    policy_daily: pd.DataFrame,
+    candidate_top_k: int,
+    top_n: int,
+    v004a_l2: float,
+    v004a_positive_weight: float,
+    ranking_model_id: str,
+    coefficient_meta: dict[str, Any],
+    history_universe: dict[str, Any],
+) -> tuple[pd.DataFrame, pd.DataFrame, Path]:
+    v004a = scored[
+        scored["model_id"].astype(str).eq(MODEL_ID_V004A)
+        & scored["evaluation_scope"].astype(str).eq(SCOPE_WALK_FORWARD)
+        & pd.to_numeric(scored["l2"], errors="coerce").sub(float(v004a_l2)).abs().le(1e-9)
+        & pd.to_numeric(scored["positive_weight"], errors="coerce").sub(float(v004a_positive_weight)).abs().le(1e-9)
+    ].copy()
+    v002 = scored[
+        scored["model_id"].astype(str).eq(str(ranking_model_id))
+        & scored["evaluation_scope"].astype(str).eq(SCOPE_WALK_FORWARD)
+    ].copy()
+    duplicate_scored_key_count = count_duplicate_keys(v004a, ("signal_date", "code")) + count_duplicate_keys(
+        v002, ("signal_date", "code")
+    )
+    require_unique_keys(v004a, ("signal_date", "code"), "holdout v004a scored rows")
+    require_unique_keys(v002, ("signal_date", "code"), "holdout v002 scored rows")
+    v004a["code"] = normalize_code_series(v004a["code"])
+    v002["code"] = normalize_code_series(v002["code"])
+    v004a["signal_date"] = v004a["signal_date"].astype(str)
+    v002["signal_date"] = v002["signal_date"].astype(str)
+    v004a = v004a.rename(
+        columns={"model_score": "v004a_model_score", "model_rank": "v004a_model_rank"}
+    )
+    v002 = v002[["signal_date", "code", "model_score", "model_rank"]].rename(
+        columns={"model_score": "v002_model_score", "model_rank": "v002_model_rank"}
+    )
+    membership = v004a.merge(v002, on=["signal_date", "code"], how="left")
+    if "name" not in membership.columns:
+        membership["name"] = ""
+    if "v004a_scorable_bool" not in membership.columns:
+        membership["v004a_scorable_bool"] = True
+    if "eligible_for_trade" not in membership.columns:
+        membership["eligible_for_trade"] = True
+
+    v004a_top_keys = _key_set_from_rank(v004a, "v004a_model_rank", candidate_top_k)
+    v002_top_keys = _key_set_from_rank(v002, "v002_model_rank", candidate_top_k)
+    candidate_keys = set(
+        zip(candidate_pool["signal_date"].astype(str), normalize_code_series(candidate_pool["code"]))
+    )
+    final_rank = _final_top3_rank_map(policy_daily, selected_combos, top_n)
+    membership_keys = list(zip(membership["signal_date"].astype(str), membership["code"].astype(str)))
+    membership["in_v004a_topk"] = [key in v004a_top_keys for key in membership_keys]
+    membership["in_v002_topk"] = [key in v002_top_keys for key in membership_keys]
+    membership["in_v005_candidate_pool"] = [key in candidate_keys for key in membership_keys]
+    membership["in_final_top3"] = [key in final_rank for key in membership_keys]
+    membership["final_top3_rank"] = [final_rank.get(key, pd.NA) for key in membership_keys]
+    for column in HOLDOUT_UNIVERSE_MEMBERSHIP_COLUMNS:
+        if column not in membership.columns:
+            membership[column] = pd.NA
+    membership = membership[HOLDOUT_UNIVERSE_MEMBERSHIP_COLUMNS].sort_values(
+        ["signal_date", "code"], kind="mergesort"
+    ).reset_index(drop=True)
+
+    annotated_raw = annotate_v004a_input_eligibility(raw_samples) if not raw_samples.empty else pd.DataFrame()
+    if not annotated_raw.empty:
+        annotated_raw["__audit_date"] = (
+            annotated_raw["requested_signal_date"].astype(str)
+            if "requested_signal_date" in annotated_raw.columns
+            else annotated_raw["signal_date"].astype(str)
+        )
+        annotated_raw["code"] = normalize_code_series(annotated_raw["code"])
+    audit_rows: list[dict[str, Any]] = []
+    dates = sorted(membership["signal_date"].dropna().astype(str).unique().tolist())
+    for signal_date in dates:
+        day = membership[membership["signal_date"].astype(str).eq(signal_date)].copy()
+        day_v4 = v004a[v004a["signal_date"].astype(str).eq(signal_date)].sort_values(
+            ["v004a_model_rank", "code"], kind="mergesort"
+        )
+        day_v2 = v002[v002["signal_date"].astype(str).eq(signal_date)].sort_values(
+            ["v002_model_rank", "code"], kind="mergesort"
+        )
+        day_candidate = candidate_pool[candidate_pool["signal_date"].astype(str).eq(signal_date)].sort_values(
+            ["v004a_model_rank", "code"], kind="mergesort"
+        )
+        day_final = day[day["in_final_top3"].fillna(False).astype(bool)].sort_values(
+            ["final_top3_rank", "code"], kind="mergesort"
+        )
+        if annotated_raw.empty:
+            day_eligible = day[day["eligible_for_trade"].fillna(False).astype(bool)]
+        else:
+            day_eligible = annotated_raw[
+                annotated_raw["__audit_date"].eq(signal_date)
+                & annotated_raw["eligible_for_trade"].fillna(False).astype(bool)
+            ]
+        day_v4_top = day_v4[pd.to_numeric(day_v4["v004a_model_rank"], errors="coerce").le(candidate_top_k)]
+        day_v2_top = day_v2[pd.to_numeric(day_v2["v002_model_rank"], errors="coerce").le(candidate_top_k)]
+        audit_rows.append(
+            {
+                "signal_date": signal_date,
+                "eligible_count": int(len(day_eligible)),
+                "eligible_code_set_sha256": code_set_sha256(day_eligible),
+                "scorable_count": int(len(day)),
+                "scorable_code_set_sha256": code_set_sha256(day),
+                "v004a_topk_count": int(len(day_v4_top)),
+                "v004a_topk_code_set_sha256": code_set_sha256(day_v4_top),
+                "v002_topk_count": int(len(day_v2_top)),
+                "v002_topk_code_set_sha256": code_set_sha256(day_v2_top),
+                "v005_candidate_pool_count": int(len(day_candidate)),
+                "v005_candidate_pool_code_set_sha256": code_set_sha256(day_candidate),
+                "final_top3_count": int(len(day_final)),
+                "final_top3_code_set_sha256": code_set_sha256(day_final),
+                "missing_v002_score_count": int(pd.to_numeric(day["v002_model_score"], errors="coerce").isna().sum()),
+                "duplicate_scored_key_count": int(duplicate_scored_key_count),
+                "snapshot_status": history_universe.get("date_statuses", {}).get(signal_date, "LEGACY_UNVERIFIED"),
+                "candidate_universe_snapshot_verified": bool(history_universe["snapshot_verified"]),
+                "v004a_topk_codes": ",".join(day_v4_top["code"].astype(str).tolist()),
+                "v002_topk_codes": ",".join(day_v2_top["code"].astype(str).tolist()),
+                "v005_candidate_pool_codes": ",".join(day_candidate["code"].astype(str).tolist()),
+                "final_top3_codes": ",".join(day_final["code"].astype(str).tolist()),
+            }
+        )
+    audit = pd.DataFrame(audit_rows).sort_values("signal_date", kind="mergesort").reset_index(drop=True)
+    membership_path = output_dir / "v005_fixed_grid_holdout_universe_membership.csv"
+    audit_path = output_dir / "v005_fixed_grid_holdout_universe_audit.csv"
+    manifest_path = output_dir / "v005_fixed_grid_holdout_universe_manifest.json"
+    membership.to_csv(membership_path, index=False, encoding="utf-8-sig", lineterminator="\n")
+    audit.to_csv(audit_path, index=False, encoding="utf-8-sig", lineterminator="\n")
+    final_members = membership[membership["in_final_top3"].fillna(False).astype(bool)]
+    manifest = {
+        "universe_snapshot_schema_version": UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
+        "samples_file": str(samples_path) if samples_path else "",
+        "samples_file_sha256": file_sha256(samples_path) if samples_path and samples_path.is_file() else "",
+        "scored_file": str(scored_path),
+        "scored_file_sha256": file_sha256(scored_path),
+        "history_universe_manifest_path": str(history_universe["manifest_path"]),
+        "history_universe_manifest_sha256": str(history_universe["manifest_sha256"]),
+        "candidate_universe_snapshot_verified": bool(history_universe["snapshot_verified"]),
+        "universe_audit_status": str(history_universe["audit_status"]),
+        "candidate_top_k": int(candidate_top_k),
+        "top_n": int(top_n),
+        "ranking_model_id": str(ranking_model_id),
+        "coefficient_metadata": coefficient_meta,
+        "dates": json.loads(audit.to_json(orient="records")) if not audit.empty else [],
+        "membership_canonical_rows_sha256": canonical_rows_sha256(
+            membership,
+            HOLDOUT_UNIVERSE_MEMBERSHIP_COLUMNS,
+            ("signal_date", "code"),
+        ),
+        "final_top3_code_set_sha256": code_set_sha256(final_members),
+        "final_top3_canonical_rows_sha256": canonical_rows_sha256(
+            final_members,
+            HOLDOUT_UNIVERSE_MEMBERSHIP_COLUMNS,
+            ("signal_date", "final_top3_rank", "code"),
+        ),
+    }
+    write_json(manifest_path, manifest)
+    return membership, audit, manifest_path
+
+
+def _key_set_from_rank(frame: pd.DataFrame, rank_column: str, top_k: int) -> set[tuple[str, str]]:
+    selected = frame[pd.to_numeric(frame[rank_column], errors="coerce").le(int(top_k))]
+    return set(zip(selected["signal_date"].astype(str), selected["code"].astype(str)))
+
+
+def _final_top3_rank_map(
+    policy_daily: pd.DataFrame,
+    selected_combos: pd.DataFrame,
+    top_n: int,
+) -> dict[tuple[str, str], int]:
+    mapping: dict[tuple[str, str], int] = {}
+    policy = policy_daily[
+        policy_daily.get("strategy", pd.Series(dtype=str)).astype(str).eq(PRIMARY_POLICY)
+    ] if not policy_daily.empty else pd.DataFrame()
+    if not policy.empty:
+        for _, row in policy.sort_values("signal_date", kind="mergesort").iterrows():
+            for rank, code in enumerate(parse_codes(row.get("selected_codes", ""))[: int(top_n)], start=1):
+                mapping[(str(row["signal_date"]), str(code).zfill(6))] = rank
+        return mapping
+    for _, row in selected_combos.sort_values("signal_date", kind="mergesort").iterrows():
+        for rank, code in enumerate(parse_codes(row.get("codes", ""))[: int(top_n)], start=1):
+            mapping[(str(row["signal_date"]), str(code).zfill(6))] = rank
+    return mapping
 
 
 def build_holdout_scored_candidates(
@@ -600,6 +956,7 @@ def make_report(
     replacement: pd.DataFrame,
     readiness: pd.DataFrame,
     run_meta: pd.DataFrame,
+    universe_audit: pd.DataFrame | None = None,
 ) -> str:
     lines = [
         "# v005 fixed-grid holdout test",
@@ -615,6 +972,18 @@ def make_report(
         "",
     ]
     lines.extend(md_table(readiness, list(readiness.columns)))
+    lines.extend(["", "## Universe Reproducibility", ""])
+    audit = universe_audit if universe_audit is not None else pd.DataFrame()
+    lines.extend(md_table(audit, list(audit.columns)))
+    lines.extend(
+        [
+            "",
+            "A matching candidate-universe hash proves only that the audited member sets are reproducible.",
+            "`cache_snapshot_complete=False` still means the complete daily and 5-minute market-data cache is not frozen.",
+            "Candidate-universe changes alter cross-sectional percentile features; runs with different universe hashes must not be compared directly.",
+            "The v005 candidate pool remains the configured v004a TopK merged with v002 audit information.",
+        ]
+    )
     lines.extend(["", "## Run provenance", ""])
     if run_meta.empty:
         lines.append("_No provenance metadata._")
@@ -709,6 +1078,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--target-return-pct", type=float, default=DEFAULT_TARGET_RETURN_PCT)
     parser.add_argument("--min-forward-dates", type=int, default=DEFAULT_POLICY.min_forward_dates)
     parser.add_argument("--ranking-model", default=str(DEFAULT_RANKING_MODEL_FILE))
+    parser.add_argument("--history-universe-manifest", default=None)
     args = parser.parse_args(argv)
 
     summary, daily, replacement, daily_top3, report_path = run_fixed_grid_holdout(
@@ -725,6 +1095,7 @@ def main(argv: list[str] | None = None) -> int:
         target_return_pct=args.target_return_pct,
         min_forward_dates=args.min_forward_dates,
         ranking_model_file=args.ranking_model,
+        history_universe_manifest_file=args.history_universe_manifest,
     )
     print(f"summary rows: {len(summary)}")
     print(f"daily rows: {len(daily)}")

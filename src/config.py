@@ -28,6 +28,7 @@ class DataConfig:
     cache_dir: Path = Path(os.getenv("FQ_CACHE_DIR", "data/cache"))
     processed_dir: Path = Path(os.getenv("FQ_PROCESSED_DIR", "data/processed"))
     reports_dir: Path = Path(os.getenv("FQ_REPORTS_DIR", "reports"))
+    snapshot_dir: Path = Path(os.getenv("FQ_SNAPSHOT_DIR", "data/snapshots"))
 
     def ensure_directories(self) -> None:
         for path in (
@@ -38,6 +39,7 @@ class DataConfig:
             self.cache_dir / "minute_5m",
             self.cache_dir / "limit_ups",
             self.processed_dir,
+            self.snapshot_dir,
             self.reports_dir / "daily_signals",
             self.reports_dir / "backtest_results",
         ):

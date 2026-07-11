@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -23,7 +24,24 @@ from .backtester import (
 )
 from .config import get_data_config
 from .loaders import MarketDataService
+from .provenance import runtime_provenance
 from .report import write_data_quality_reports, write_signal_reports
+from .universe_audit import (
+    UNIVERSE_SNAPSHOT_MODES,
+    UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
+    StageSnapshot,
+    UniverseAuditError,
+    UniverseSnapshotError,
+    canonical_rows_sha256,
+    count_duplicate_keys,
+    create_or_verify_snapshot,
+    normalize_code_series,
+    require_requested_signal_date_match,
+    require_unique_keys,
+    stage_identity,
+    write_json,
+)
+from .v004a import annotate_v004a_input_eligibility
 
 
 DEFAULT_TARGET_RETURN_PCT = 7.0
@@ -57,6 +75,7 @@ FORBIDDEN_HISTORY_SAMPLE_COLUMNS = {
 }
 
 HISTORY_CANDIDATE_COLUMNS = [
+    "requested_signal_date",
     "signal_date",
     "code",
     "name",
@@ -66,6 +85,8 @@ HISTORY_CANDIDATE_COLUMNS = [
     "signal_type",
     "allowed_bool",
     "eligible_for_trade",
+    "v004a_scorable_bool",
+    "v004a_exclusion_reason",
     "total_score",
     "graph_quality_score",
     "active_money_score",
@@ -113,6 +134,82 @@ HISTORY_CANDIDATE_COLUMNS = [
     "key_zones_json",
 ]
 
+HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS = [
+    "requested_signal_date",
+    "actual_signal_date",
+    "stage",
+    "member_key",
+    "source_trade_date",
+    "code",
+    "name",
+    "d0_date",
+    "included_bool",
+    "exclusion_reason",
+]
+
+RAW_SOURCE_ROW_COLUMNS = (
+    "requested_signal_date",
+    "source_trade_date",
+    "code",
+    "name",
+    "market",
+    "latest_price",
+    "pct_chg",
+    "amount",
+    "turnover_rate",
+    "float_market_cap",
+    "total_market_cap",
+    "industry",
+    "limit_up_time",
+    "final_limit_up_time",
+    "open_board_count",
+    "seal_amount",
+    "consecutive_limit_up_count",
+    "source",
+    "open",
+    "high",
+    "low",
+    "prev_close",
+    "limit_price",
+    "limitup_basis",
+    "limitup_price_tolerance",
+    "limitup_min_pct_chg",
+)
+
+SIGNAL_ROW_COLUMNS = (
+    "requested_signal_date",
+    "actual_signal_date",
+    "code",
+    "name",
+    "d0_date",
+    "days_since_d0",
+    "consecutive_boards",
+    "signal_type",
+    "allowed_bool",
+    "position_level",
+    "total_score",
+    "graph_quality_score",
+    "active_money_score",
+    "active_cooling_score",
+    "support_score",
+    "theme_score",
+    "trend_hold_score",
+    "entry_width_score",
+    "low_absorb_width_pct",
+    "invalid_distance_pct",
+    "d1_low_ma10_pct",
+    "d1_close_ma10_pct",
+    "d1_close_vwap_pct",
+    "support_type",
+    "low_absorb_min",
+    "low_absorb_max",
+    "invalid_price",
+    "key_zones_json",
+    "reasons",
+)
+
+SCORABLE_ROW_COLUMNS = tuple(HISTORY_CANDIDATE_COLUMNS)
+
 
 def run_history_sample_generation(
     start_date: str,
@@ -126,6 +223,7 @@ def run_history_sample_generation(
     hold_days: int = 10,
     target_return_pct: float = DEFAULT_TARGET_RETURN_PCT,
     secondary_target_return_pct: float = DEFAULT_SECONDARY_TARGET_RETURN_PCT,
+    universe_snapshot_mode: str = "create-or-verify",
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path, Path, Path, Path, Path]:
     """Generate clean historical candidate samples without execution backtest fields.
 
@@ -133,11 +231,19 @@ def run_history_sample_generation(
     and future candidate labels such as candidate_d3_max_return_pct and
     target7_d2open_d3high. This layer does not emit execution-only fields.
     """
+    if universe_snapshot_mode not in UNIVERSE_SNAPSHOT_MODES:
+        raise ValueError(
+            f"unsupported universe_snapshot_mode={universe_snapshot_mode!r}; expected one of {UNIVERSE_SNAPSHOT_MODES}"
+        )
     service = MarketDataService()
-    run_root = get_data_config().reports_dir / "history_samples" / f"{start_date}_{end_date}"
+    data_config = get_data_config()
+    run_root = data_config.reports_dir / "history_samples" / f"{start_date}_{end_date}"
+    run_root.mkdir(parents=True, exist_ok=True)
     candidate_rows: list[dict[str, Any]] = []
     run_rows: list[dict[str, Any]] = []
     future_fetch_rows: list[dict[str, Any]] = []
+    universe_audit_rows: list[dict[str, Any]] = []
+    universe_membership_frames: list[pd.DataFrame] = []
     minute_cache: dict[str, pd.DataFrame | None] = {}
     missing_limitup_dates: set[str] = set()
     requested_dates = _iter_weekdays(start_date, end_date)
@@ -145,6 +251,9 @@ def run_history_sample_generation(
 
     for date_index, requested_date in enumerate(requested_dates, 1):
         run_row = _empty_generation_row(requested_date)
+        run_row["universe_snapshot_mode"] = universe_snapshot_mode
+        audit_row = _empty_universe_audit_row(requested_date)
+        audit_appended = False
         print(f"[history-samples] {date_index}/{total_dates} start {requested_date}", flush=True)
         try:
             pool = _collect_limitups_for_history_sample(
@@ -156,9 +265,17 @@ def run_history_sample_generation(
                 workers=workers,
                 missing_dates=missing_limitup_dates,
             )
+            raw_source = _standardize_raw_source_pool(pool, requested_date)
+            raw_identity = stage_identity(_raw_stage_snapshot(raw_source))
+            _apply_stage_identity(audit_row, "raw_source", raw_identity)
+            audit_row["duplicate_raw_key_count"] = count_duplicate_keys(
+                raw_source, ("source_trade_date", "code")
+            )
+            require_unique_keys(raw_source, ("source_trade_date", "code"), "raw_source_pool")
             actual_date = _latest_trade_date_from_pool(pool)
             run_row["actual_signal_date"] = actual_date
             run_row["limitup_rows"] = int(len(pool))
+            audit_row["actual_signal_date"] = actual_date
             print(
                 f"[history-samples] {requested_date} limitups={len(pool)} actual={actual_date}",
                 flush=True,
@@ -166,6 +283,19 @@ def run_history_sample_generation(
             if actual_date != requested_date:
                 run_row["status"] = "skipped"
                 run_row["error"] = "exact signal date limit-up pool missing"
+                audit_row["generation_status"] = "skipped"
+                audit_row["snapshot_status"] = "SKIPPED_NO_EXACT_SIGNAL_DATE"
+                universe_membership_frames.append(
+                    _build_history_universe_membership(
+                        requested_date=requested_date,
+                        actual_date=actual_date,
+                        raw_source=raw_source,
+                        signal_pool=pd.DataFrame(),
+                        candidates=pd.DataFrame(),
+                    )
+                )
+                universe_audit_rows.append(audit_row)
+                audit_appended = True
                 run_rows.append(run_row)
                 print(
                     f"[history-samples] {date_index}/{total_dates} skipped {requested_date}: actual={actual_date}",
@@ -188,6 +318,8 @@ def run_history_sample_generation(
             )
             quality_ok = int(quality_counts.get("ok", 0))
             quality_failed = int(quality_counts.get("failed", 0))
+            audit_row["quality_ok"] = quality_ok
+            audit_row["quality_failed"] = quality_failed
             print(
                 f"[history-samples] {requested_date} signals={len(signals)} "
                 f"quality_ok={quality_ok} quality_failed={quality_failed}",
@@ -204,6 +336,19 @@ def run_history_sample_generation(
                 trade_date=actual_date,
             )
             signal_frame = _signals_to_frame(signals)
+            signal_frame = _standardize_signal_pool(signal_frame, requested_date, actual_date)
+            audit_row["duplicate_signal_key_count"] = count_duplicate_keys(
+                signal_frame, ("requested_signal_date", "code")
+            )
+            audit_row["signal_date_mismatch_count"] = int(
+                signal_frame["requested_signal_date"].fillna("").astype(str).ne(
+                    signal_frame["actual_signal_date"].fillna("").astype(str)
+                ).sum()
+            )
+            require_unique_keys(signal_frame, ("requested_signal_date", "code"), "signal_pool")
+            require_requested_signal_date_match(
+                signal_frame.rename(columns={"actual_signal_date": "signal_date"})
+            )
             if not signal_frame.empty:
                 signal_frame["signal_file_date"] = actual_date
                 signal_frame["source_signal_file"] = str(signals_csv)
@@ -224,11 +369,12 @@ def run_history_sample_generation(
                 f"end={future_end_date}",
                 flush=True,
             )
-            for code in signal_frame.get("code", pd.Series(dtype=str)).astype(str).str.zfill(6).drop_duplicates():
+            for code in signal_frame.get("code", pd.Series(dtype=str)).astype(str):
                 minute_cache.pop(code, None)
 
+            day_candidate_rows: list[dict[str, Any]] = []
             for _, signal_row in signal_frame.iterrows():
-                candidate_rows.append(
+                day_candidate_rows.append(
                     evaluate_history_candidate_only(
                         signal_row,
                         service=service,
@@ -236,8 +382,63 @@ def run_history_sample_generation(
                         hold_days=hold_days,
                         target_return_pct=target_return_pct,
                         secondary_target_return_pct=secondary_target_return_pct,
+                        requested_signal_date=requested_date,
                     )
                 )
+            day_candidates = annotate_v004a_input_eligibility(pd.DataFrame(day_candidate_rows))
+            audit_row["signal_date_mismatch_count"] = _signal_date_mismatch_count(day_candidates)
+            audit_row["duplicate_candidate_key_count"] = count_duplicate_keys(
+                day_candidates, ("requested_signal_date", "code")
+            )
+            require_requested_signal_date_match(day_candidates)
+            require_unique_keys(
+                day_candidates,
+                ("requested_signal_date", "code"),
+                "history candidates",
+            )
+            stages = _build_history_stage_snapshots(
+                requested_date=requested_date,
+                actual_date=actual_date,
+                raw_source=raw_source,
+                signal_pool=signal_frame,
+                candidates=day_candidates,
+            )
+            for stage_name, prefix in (
+                ("signal_pool", "signal"),
+                ("eligible_pool", "eligible"),
+                ("scorable_pool", "scorable"),
+            ):
+                _apply_stage_identity(audit_row, prefix, stage_identity(stages[stage_name]))
+            membership = _build_history_universe_membership(
+                requested_date=requested_date,
+                actual_date=actual_date,
+                raw_source=raw_source,
+                signal_pool=signal_frame,
+                candidates=day_candidates,
+            )
+            try:
+                snapshot_status, canonical_manifest_path, _ = create_or_verify_snapshot(
+                    requested_signal_date=requested_date,
+                    stages=stages,
+                    snapshot_root=data_config.snapshot_dir,
+                    run_output_dir=run_root,
+                    mode=universe_snapshot_mode,
+                )
+            except UniverseSnapshotError as exc:
+                audit_row["generation_status"] = "failed"
+                audit_row["snapshot_status"] = exc.status
+                audit_row["canonical_manifest_path"] = str(exc.canonical_manifest_path)
+                universe_membership_frames.append(membership)
+                universe_audit_rows.append(audit_row)
+                audit_appended = True
+                raise
+            audit_row["generation_status"] = "generated"
+            audit_row["snapshot_status"] = snapshot_status
+            audit_row["canonical_manifest_path"] = str(canonical_manifest_path)
+            universe_membership_frames.append(membership)
+            universe_audit_rows.append(audit_row)
+            audit_appended = True
+            candidate_rows.extend(day_candidates.to_dict(orient="records"))
             print(
                 f"[history-samples] {requested_date} evaluated_candidates={len(signal_frame)} "
                 f"total_candidates={len(candidate_rows)}",
@@ -260,11 +461,41 @@ def run_history_sample_generation(
                     "signals_markdown": str(signals_md),
                     "quality_csv": str(quality_csv),
                     "quality_markdown": str(quality_md),
+                    "universe_snapshot_mode": universe_snapshot_mode,
+                    "snapshot_status": snapshot_status,
+                    "canonical_manifest_path": str(canonical_manifest_path),
                 }
             )
+        except UniverseAuditError as exc:
+            run_row["status"] = "failed"
+            run_row["error"] = str(exc)
+            run_row["signal_date_mismatch"] = "signal_date_mismatch" in str(exc)
+            if not audit_appended:
+                audit_row["generation_status"] = "failed"
+                audit_row["snapshot_status"] = getattr(exc, "status", "INTEGRITY_FAILURE")
+                audit_row["canonical_manifest_path"] = str(
+                    getattr(exc, "canonical_manifest_path", "")
+                )
+                universe_audit_rows.append(audit_row)
+            run_rows.append(run_row)
+            _write_partial_history_universe_failure(
+                run_root=run_root,
+                start_date=start_date,
+                end_date=end_date,
+                run_rows=run_rows,
+                audit_rows=universe_audit_rows,
+                membership_frames=universe_membership_frames,
+            )
+            print(f"[history-samples] {date_index}/{total_dates} failed {requested_date}: {exc}", flush=True)
+            raise
         except Exception as exc:
             run_row["status"] = "failed"
             run_row["error"] = str(exc)
+            if not audit_appended:
+                audit_row["generation_status"] = "failed"
+                audit_row["snapshot_status"] = "GENERATION_FAILED"
+                universe_audit_rows.append(audit_row)
+                audit_appended = True
             print(f"[history-samples] {date_index}/{total_dates} failed {requested_date}: {exc}", flush=True)
         run_rows.append(run_row)
         print(f"[history-samples] {date_index}/{total_dates} done {requested_date} status={run_row['status']}", flush=True)
@@ -286,6 +517,8 @@ def run_history_sample_generation(
     )
     run_log = pd.DataFrame(run_rows)
     future_fetch_log = pd.DataFrame(future_fetch_rows)
+    universe_audit = pd.DataFrame(universe_audit_rows)
+    universe_membership = _combine_membership_frames(universe_membership_frames)
 
     candidates_csv, summary_csv, run_log_csv, future_fetch_csv, markdown_path = write_history_sample_reports(
         candidates=candidates,
@@ -295,8 +528,339 @@ def run_history_sample_generation(
         output_dir=run_root,
         start_date=start_date,
         end_date=end_date,
+        universe_audit=universe_audit,
+        universe_snapshot_mode=universe_snapshot_mode,
+    )
+    _write_history_universe_outputs(
+        output_dir=run_root,
+        start_date=start_date,
+        end_date=end_date,
+        lookback_days=int(lookback_days),
+        signal_days=signal_days,
+        eval_days=eval_days,
+        hold_days=int(hold_days),
+        target_return_pct=float(target_return_pct),
+        universe_snapshot_mode=universe_snapshot_mode,
+        candidates=candidates,
+        universe_audit=universe_audit,
+        universe_membership=universe_membership,
     )
     return candidates, summary, run_log, future_fetch_log, candidates_csv, summary_csv, run_log_csv, future_fetch_csv, markdown_path
+
+
+def _standardize_raw_source_pool(pool: pd.DataFrame, requested_date: str) -> pd.DataFrame:
+    frame = pool.copy().reset_index(drop=True)
+    missing = [column for column in ("trade_date", "code") if column not in frame.columns]
+    if missing:
+        raise UniverseAuditError(f"raw_source_pool missing columns: {missing}")
+    frame["requested_signal_date"] = str(requested_date)
+    frame["source_trade_date"] = frame["trade_date"].astype(str)
+    frame["code"] = normalize_code_series(frame["code"])
+    frame = frame[frame["code"].ne("")].copy()
+    for column in RAW_SOURCE_ROW_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    return frame[list(RAW_SOURCE_ROW_COLUMNS)].sort_values(
+        ["source_trade_date", "code"], kind="mergesort"
+    ).reset_index(drop=True)
+
+
+def _standardize_signal_pool(
+    signals: pd.DataFrame,
+    requested_date: str,
+    actual_date: str,
+) -> pd.DataFrame:
+    frame = signals.copy().reset_index(drop=True)
+    if "code" not in frame.columns:
+        frame["code"] = pd.Series(dtype=str)
+    frame["requested_signal_date"] = str(requested_date)
+    frame["actual_signal_date"] = (
+        frame["trade_date"].fillna("").astype(str)
+        if "trade_date" in frame.columns
+        else str(actual_date)
+    )
+    if "trade_date" not in frame.columns:
+        frame["trade_date"] = frame["actual_signal_date"]
+    frame["code"] = normalize_code_series(frame["code"])
+    allowed_source = frame["allowed"] if "allowed" in frame.columns else frame.get("allowed_bool", False)
+    if isinstance(allowed_source, pd.Series):
+        frame["allowed_bool"] = allowed_source.map(_bool_from_value)
+    else:
+        frame["allowed_bool"] = bool(allowed_source)
+    for column in SIGNAL_ROW_COLUMNS:
+        if column not in frame.columns:
+            frame[column] = pd.NA
+    return frame.sort_values(["requested_signal_date", "code"], kind="mergesort").reset_index(drop=True)
+
+
+def _raw_stage_snapshot(raw_source: pd.DataFrame) -> StageSnapshot:
+    return StageSnapshot(
+        stage="raw_source_pool",
+        frame=raw_source,
+        key_columns=("source_trade_date", "code"),
+        row_columns=RAW_SOURCE_ROW_COLUMNS,
+    )
+
+
+def _build_history_stage_snapshots(
+    requested_date: str,
+    actual_date: str,
+    raw_source: pd.DataFrame,
+    signal_pool: pd.DataFrame,
+    candidates: pd.DataFrame,
+) -> dict[str, StageSnapshot]:
+    del requested_date, actual_date
+    eligible_mask = (
+        signal_pool.get("allowed_bool", pd.Series(False, index=signal_pool.index)).fillna(False).astype(bool)
+        & signal_pool.get("signal_type", pd.Series("", index=signal_pool.index)).fillna("").astype(str).eq("D2_LOW_ABSORB")
+    )
+    scorable_mask = candidates.get(
+        "v004a_scorable_bool", pd.Series(False, index=candidates.index)
+    ).fillna(False).astype(bool)
+    return {
+        "raw_source_pool": _raw_stage_snapshot(raw_source),
+        "signal_pool": StageSnapshot(
+            stage="signal_pool",
+            frame=signal_pool,
+            key_columns=("requested_signal_date", "code"),
+            row_columns=SIGNAL_ROW_COLUMNS,
+        ),
+        "eligible_pool": StageSnapshot(
+            stage="eligible_pool",
+            frame=signal_pool.loc[eligible_mask].copy(),
+            key_columns=("requested_signal_date", "code"),
+            row_columns=SIGNAL_ROW_COLUMNS,
+        ),
+        "scorable_pool": StageSnapshot(
+            stage="scorable_pool",
+            frame=candidates.loc[scorable_mask].copy(),
+            key_columns=("requested_signal_date", "code"),
+            row_columns=SCORABLE_ROW_COLUMNS,
+        ),
+    }
+
+
+def _build_history_universe_membership(
+    requested_date: str,
+    actual_date: str,
+    raw_source: pd.DataFrame,
+    signal_pool: pd.DataFrame,
+    candidates: pd.DataFrame,
+) -> pd.DataFrame:
+    rows: list[dict[str, Any]] = []
+    for _, row in raw_source.iterrows():
+        source_date = str(row.get("source_trade_date", ""))
+        code = str(row.get("code", ""))
+        rows.append(
+            _membership_row(
+                requested_date,
+                actual_date,
+                "raw_source_pool",
+                f"{source_date}|{code}",
+                source_date,
+                row,
+                True,
+                "",
+            )
+        )
+    for _, row in signal_pool.iterrows():
+        code = str(row.get("code", ""))
+        key = f"{requested_date}|{code}"
+        rows.append(_membership_row(requested_date, actual_date, "signal_pool", key, "", row, True, ""))
+        eligible = bool(_bool_from_value(row.get("allowed_bool"))) and str(row.get("signal_type", "")) == "D2_LOW_ABSORB"
+        rows.append(
+            _membership_row(
+                requested_date,
+                actual_date,
+                "eligible_pool",
+                key,
+                "",
+                row,
+                eligible,
+                "" if eligible else "not_eligible",
+            )
+        )
+    for _, row in candidates.iterrows():
+        code = str(row.get("code", ""))
+        included = bool(_bool_from_value(row.get("v004a_scorable_bool")))
+        rows.append(
+            _membership_row(
+                requested_date,
+                actual_date,
+                "scorable_pool",
+                f"{requested_date}|{code}",
+                "",
+                row,
+                included,
+                str(row.get("v004a_exclusion_reason", "")),
+            )
+        )
+    frame = pd.DataFrame(rows, columns=HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS)
+    return frame
+
+
+def _membership_row(
+    requested_date: str,
+    actual_date: str,
+    stage: str,
+    member_key: str,
+    source_trade_date: str,
+    row: pd.Series,
+    included: bool,
+    exclusion_reason: str,
+) -> dict[str, Any]:
+    return {
+        "requested_signal_date": str(requested_date),
+        "actual_signal_date": str(actual_date),
+        "stage": stage,
+        "member_key": member_key,
+        "source_trade_date": source_trade_date,
+        "code": str(row.get("code", "")),
+        "name": row.get("name", ""),
+        "d0_date": row.get("d0_date", ""),
+        "included_bool": bool(included),
+        "exclusion_reason": exclusion_reason,
+    }
+
+
+def _empty_universe_audit_row(requested_date: str) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        "requested_signal_date": str(requested_date),
+        "actual_signal_date": "",
+        "generation_status": "started",
+        "quality_ok": 0,
+        "quality_failed": 0,
+        "signal_date_mismatch_count": 0,
+        "duplicate_raw_key_count": 0,
+        "duplicate_signal_key_count": 0,
+        "duplicate_candidate_key_count": 0,
+        "snapshot_status": "",
+        "canonical_manifest_path": "",
+    }
+    for prefix in ("raw_source", "signal", "eligible", "scorable"):
+        row[f"{prefix}_row_count"] = 0
+        row[f"{prefix}_code_count"] = 0
+        row[f"{prefix}_code_set_sha256"] = ""
+        row[f"{prefix}_key_set_sha256"] = ""
+        row[f"{prefix}_rows_sha256"] = ""
+    return row
+
+
+def _apply_stage_identity(row: dict[str, Any], prefix: str, identity: dict[str, Any]) -> None:
+    row[f"{prefix}_row_count"] = int(identity["row_count"])
+    row[f"{prefix}_code_count"] = int(identity["code_count"])
+    row[f"{prefix}_code_set_sha256"] = str(identity["code_set_sha256"])
+    row[f"{prefix}_key_set_sha256"] = str(identity["key_set_sha256"])
+    row[f"{prefix}_rows_sha256"] = str(identity["rows_sha256"])
+
+
+def _signal_date_mismatch_count(frame: pd.DataFrame) -> int:
+    if frame.empty or "requested_signal_date" not in frame.columns or "signal_date" not in frame.columns:
+        return 0
+    return int(
+        frame["requested_signal_date"].fillna("").astype(str).ne(
+            frame["signal_date"].fillna("").astype(str)
+        ).sum()
+    )
+
+
+def _combine_membership_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
+    if not frames:
+        return pd.DataFrame(columns=HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS)
+    combined = pd.concat(frames, ignore_index=True)
+    stage_order = {stage: index for index, stage in enumerate(("raw_source_pool", "signal_pool", "eligible_pool", "scorable_pool"))}
+    combined["__stage_order"] = combined["stage"].map(stage_order).fillna(999)
+    combined = combined.sort_values(
+        ["requested_signal_date", "__stage_order", "member_key"], kind="mergesort"
+    ).drop(columns=["__stage_order"])
+    return combined[HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS].reset_index(drop=True)
+
+
+def _write_partial_history_universe_failure(
+    run_root: Path,
+    start_date: str,
+    end_date: str,
+    run_rows: list[dict[str, Any]],
+    audit_rows: list[dict[str, Any]],
+    membership_frames: list[pd.DataFrame],
+) -> None:
+    suffix = f"{start_date}_{end_date}"
+    pd.DataFrame(run_rows).to_csv(
+        run_root / f"history_generation_log_{suffix}.csv",
+        index=False,
+        encoding="utf-8-sig",
+        lineterminator="\n",
+    )
+    pd.DataFrame(audit_rows).to_csv(
+        run_root / f"history_universe_audit_{suffix}.csv",
+        index=False,
+        encoding="utf-8-sig",
+        lineterminator="\n",
+    )
+    _combine_membership_frames(membership_frames).to_csv(
+        run_root / f"history_universe_membership_{suffix}.csv",
+        index=False,
+        encoding="utf-8-sig",
+        lineterminator="\n",
+    )
+
+
+def _write_history_universe_outputs(
+    output_dir: Path,
+    start_date: str,
+    end_date: str,
+    lookback_days: int,
+    signal_days: int | None,
+    eval_days: int | None,
+    hold_days: int,
+    target_return_pct: float,
+    universe_snapshot_mode: str,
+    candidates: pd.DataFrame,
+    universe_audit: pd.DataFrame,
+    universe_membership: pd.DataFrame,
+) -> tuple[Path, Path, Path]:
+    suffix = f"{start_date}_{end_date}"
+    audit_path = output_dir / f"history_universe_audit_{suffix}.csv"
+    membership_path = output_dir / f"history_universe_membership_{suffix}.csv"
+    manifest_path = output_dir / f"history_universe_manifest_{suffix}.json"
+    universe_audit.to_csv(audit_path, index=False, encoding="utf-8-sig", lineterminator="\n")
+    universe_membership.to_csv(
+        membership_path, index=False, encoding="utf-8-sig", lineterminator="\n"
+    )
+    membership_hash = canonical_rows_sha256(
+        universe_membership,
+        HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS,
+        ("requested_signal_date", "stage", "member_key"),
+    )
+    candidates_hash = canonical_rows_sha256(
+        candidates,
+        HISTORY_CANDIDATE_COLUMNS,
+        ("requested_signal_date", "code"),
+    )
+    manifest = {
+        "universe_snapshot_schema_version": UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
+        "start_date": str(start_date),
+        "end_date": str(end_date),
+        "lookback_days": int(lookback_days),
+        "signal_days": signal_days,
+        "eval_days": eval_days,
+        "hold_days": int(hold_days),
+        "target_return_pct": float(target_return_pct),
+        "universe_snapshot_mode": universe_snapshot_mode,
+        "membership_file": str(membership_path),
+        "membership_canonical_rows_sha256": membership_hash,
+        "history_candidates_canonical_rows_sha256": candidates_hash,
+        "dates": _records_for_json(universe_audit),
+        "runtime_provenance": runtime_provenance(),
+    }
+    write_json(manifest_path, manifest)
+    return audit_path, membership_path, manifest_path
+
+
+def _records_for_json(frame: pd.DataFrame) -> list[dict[str, Any]]:
+    if frame.empty:
+        return []
+    return json.loads(frame.to_json(orient="records", date_format="iso"))
 
 
 def _collect_limitups_for_history_sample(
@@ -361,7 +925,9 @@ def _collect_limitups_for_history_sample(
         raise RuntimeError(f"no limit-up data collected for history sample lookback ending {requested_date}{suffix}")
 
     result = pd.concat(frames, ignore_index=True)
-    result = result.sort_values(["trade_date", "code"]).drop_duplicates(["trade_date", "code"], keep="last")
+    result["code"] = normalize_code_series(result.get("code", pd.Series(dtype=object)))
+    result["trade_date"] = result.get("trade_date", "").astype(str)
+    result = result.sort_values(["trade_date", "code"], kind="mergesort")
     return result.reset_index(drop=True)
 
 
@@ -395,15 +961,32 @@ def evaluate_history_candidate_only(
     hold_days: int,
     target_return_pct: float,
     secondary_target_return_pct: float,
+    requested_signal_date: str | None = None,
 ) -> dict[str, Any]:
-    code = str(signal_row.get("code", "")).zfill(6)
-    signal_date = str(signal_row.get("trade_date", signal_row.get("signal_date", "")))
+    code = normalize_code_series(pd.Series([signal_row.get("code", "")])).iloc[0]
+    signal_date = str(
+        signal_row.get(
+            "trade_date",
+            signal_row.get("actual_signal_date", signal_row.get("signal_date", "")),
+        )
+    )
+    requested_date = str(
+        requested_signal_date
+        if requested_signal_date is not None
+        else signal_row.get("requested_signal_date", signal_date)
+    )
+    if requested_date != signal_date:
+        raise UniverseAuditError(
+            "signal_date_mismatch: "
+            f"requested_signal_date={requested_date}, signal_date={signal_date}, code={code}"
+        )
     low_absorb_min = _to_float(signal_row.get("low_absorb_min"))
     low_absorb_max = _to_float(signal_row.get("low_absorb_max"))
     invalid_price = _to_float(signal_row.get("invalid_price"))
     allowed_bool = _bool_from_value(signal_row.get("allowed", signal_row.get("allowed_bool", False)))
     signal_type = str(signal_row.get("signal_type", ""))
     result: dict[str, Any] = {
+        "requested_signal_date": requested_date,
         "signal_date": signal_date,
         "code": code,
         "name": signal_row.get("name", ""),
@@ -541,6 +1124,8 @@ def write_history_sample_reports(
     output_dir: Path,
     start_date: str,
     end_date: str,
+    universe_audit: pd.DataFrame | None = None,
+    universe_snapshot_mode: str = "off",
 ) -> tuple[Path, Path, Path, Path, Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
     suffix = f"{start_date}_{end_date}"
@@ -553,7 +1138,18 @@ def write_history_sample_reports(
     summary.to_csv(summary_csv, index=False, encoding="utf-8-sig")
     run_log.to_csv(run_log_csv, index=False, encoding="utf-8-sig")
     future_fetch_log.to_csv(future_fetch_csv, index=False, encoding="utf-8-sig")
-    markdown_path.write_text(build_history_candidates_markdown(candidates, summary, run_log, start_date, end_date), encoding="utf-8")
+    markdown_path.write_text(
+        build_history_candidates_markdown(
+            candidates,
+            summary,
+            run_log,
+            start_date,
+            end_date,
+            universe_audit=universe_audit,
+            universe_snapshot_mode=universe_snapshot_mode,
+        ),
+        encoding="utf-8",
+    )
     return candidates_csv, summary_csv, run_log_csv, future_fetch_csv, markdown_path
 
 
@@ -563,6 +1159,8 @@ def build_history_candidates_markdown(
     run_log: pd.DataFrame,
     start_date: str,
     end_date: str,
+    universe_audit: pd.DataFrame | None = None,
+    universe_snapshot_mode: str = "off",
 ) -> str:
     lines = [f"# History Candidates {start_date} to {end_date}", ""]
     if summary.empty:
@@ -592,6 +1190,54 @@ def build_history_candidates_markdown(
         for status, count in run_log["status"].fillna("unknown").value_counts().items():
             lines.append(f"- {status}: **{int(count)}**")
         lines.append("")
+    lines.extend(["## Universe Reproducibility", ""])
+    lines.append(f"- snapshot mode: **{universe_snapshot_mode}**")
+    audit = universe_audit if universe_audit is not None else pd.DataFrame()
+    if audit.empty:
+        lines.append("- universe audit: **not available**")
+    else:
+        columns = [
+            "requested_signal_date",
+            "generation_status",
+            "raw_source_code_count",
+            "signal_code_count",
+            "eligible_code_count",
+            "scorable_code_count",
+            "duplicate_raw_key_count",
+            "duplicate_signal_key_count",
+            "duplicate_candidate_key_count",
+            "signal_date_mismatch_count",
+            "snapshot_status",
+        ]
+        columns = [column for column in columns if column in audit.columns]
+        lines.append("")
+        lines.append("| " + " | ".join(columns) + " |")
+        lines.append("| " + " | ".join(["---"] * len(columns)) + " |")
+        for _, row in audit[columns].iterrows():
+            lines.append("| " + " | ".join(str(row[column]).replace("|", "\\|") for column in columns) + " |")
+        lines.extend(["", "### Per-stage hashes", ""])
+        hash_columns = [
+            "requested_signal_date",
+            "raw_source_rows_sha256",
+            "signal_rows_sha256",
+            "eligible_rows_sha256",
+            "scorable_rows_sha256",
+        ]
+        hash_columns = [column for column in hash_columns if column in audit.columns]
+        lines.append("| " + " | ".join(hash_columns) + " |")
+        lines.append("| " + " | ".join(["---"] * len(hash_columns)) + " |")
+        for _, row in audit[hash_columns].iterrows():
+            lines.append("| " + " | ".join(str(row[column]) for column in hash_columns) + " |")
+    lines.extend(
+        [
+            "",
+            "A matching candidate-universe hash proves only that the audited member sets and selected row fields are reproducible.",
+            "`cache_snapshot_complete=False` still means the complete daily and 5-minute market-data cache is not frozen.",
+            "Changing the candidate universe changes cross-sectional percentile features; runs with different universe hashes must not be compared directly.",
+            "Canonical snapshots are never overwritten automatically when a mismatch is found.",
+            "",
+        ]
+    )
     if not candidates.empty:
         preview_cols = [
             "signal_date",
@@ -716,13 +1362,17 @@ def _finalise_targets(result: dict[str, Any], target_return_pct: float, secondar
 
 
 def _normalise_history_candidate_columns(candidates: pd.DataFrame) -> pd.DataFrame:
-    frame = candidates.copy()
-    if "code" in frame.columns:
-        frame["code"] = frame["code"].astype(str).str.zfill(6)
+    frame = annotate_v004a_input_eligibility(candidates)
+    if "requested_signal_date" not in frame.columns:
+        raise UniverseAuditError("history candidates missing requested_signal_date")
+    require_requested_signal_date_match(frame)
+    require_unique_keys(frame, ("requested_signal_date", "code"), "history candidates")
     for column in HISTORY_CANDIDATE_COLUMNS:
         if column not in frame.columns:
             frame[column] = pd.NA
-    return frame[HISTORY_CANDIDATE_COLUMNS].sort_values(["signal_date", "code"]).reset_index(drop=True)
+    return frame[HISTORY_CANDIDATE_COLUMNS].sort_values(
+        ["requested_signal_date", "code"], kind="mergesort"
+    ).reset_index(drop=True)
 
 
 def _assert_no_forbidden_sample_columns(frame: pd.DataFrame) -> None:
@@ -750,6 +1400,10 @@ def _empty_generation_row(requested_date: str) -> dict[str, Any]:
         "signals_markdown": "",
         "quality_csv": "",
         "quality_markdown": "",
+        "universe_snapshot_mode": "",
+        "snapshot_status": "",
+        "canonical_manifest_path": "",
+        "signal_date_mismatch": False,
         "error": "",
     }
 
