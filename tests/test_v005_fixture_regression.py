@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -226,7 +227,63 @@ class V005FixtureRegressionTests(unittest.TestCase):
             )
             pd.testing.assert_frame_equal(baseline_membership, pre_scored_membership)
             pre_scored_audit = pd.read_csv(pre_scored_dir / "v005_fixed_grid_holdout_universe_audit.csv")
-            pd.testing.assert_frame_equal(baseline_audit[hash_columns], pre_scored_audit[hash_columns])
+            comparable_hash_columns = [
+                column for column in hash_columns if column != "eligible_code_set_sha256"
+            ]
+            pd.testing.assert_frame_equal(
+                baseline_audit[comparable_hash_columns],
+                pre_scored_audit[comparable_hash_columns],
+            )
+            self.assertTrue(pd.isna(pre_scored_audit.iloc[0]["eligible_count"]))
+            self.assertFalse(bool(pre_scored_audit.iloc[0]["eligible_count_available"]))
+            self.assertEqual(
+                pre_scored_audit.iloc[0]["eligible_source"],
+                "unavailable_pre_scored_only",
+            )
+
+    def test_holdout_rejects_missing_expected_v004a_or_v002_scored_rows(self) -> None:
+        baseline_scored = pd.read_csv(
+            self.holdout_dir / "v005_fixed_grid_holdout_scored_candidates.csv",
+            dtype={"code": str},
+        )
+        cases = (
+            ("logistic_v004a_weighted", "configured v004a scored rows"),
+            (self.policy.ranking_model_id, "configured v002 scored rows"),
+        )
+        for model_id, expected_label in cases:
+            with self.subTest(model_id=model_id), TemporaryDirectory() as temp:
+                root = Path(temp)
+                remove_mask = baseline_scored["model_id"].astype(str).eq(model_id) & baseline_scored[
+                    "code"
+                ].astype(str).eq("000008")
+                self.assertEqual(int(remove_mask.sum()), 1)
+                changed = baseline_scored.loc[~remove_mask].copy()
+                scored_path = root / "missing_scored_row.csv"
+                changed.to_csv(scored_path, index=False, encoding="utf-8-sig")
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    rf"{expected_label} keys do not match expected scorable samples.*missing_count=1",
+                ):
+                    run_fixed_grid_holdout(
+                        samples_file=HOLDOUT_FIXTURE,
+                        scored_file=scored_path,
+                        output_dir=root / "holdout",
+                    )
+
+    def test_scored_only_holdout_does_not_claim_eligible_count(self) -> None:
+        scored_path = self.holdout_dir / "v005_fixed_grid_holdout_scored_candidates.csv"
+        with TemporaryDirectory() as temp:
+            output_dir = Path(temp) / "holdout"
+            _, daily, _, _, _ = run_fixed_grid_holdout(
+                scored_file=scored_path,
+                output_dir=output_dir,
+            )
+            audit = pd.read_csv(output_dir / "v005_fixed_grid_holdout_universe_audit.csv").iloc[0]
+            self.assertTrue(pd.isna(audit["eligible_count"]))
+            self.assertFalse(bool(audit["eligible_count_available"]))
+            self.assertEqual(audit["eligible_source"], "unavailable_pre_scored_only")
+            policy = daily[daily["strategy"].eq("policy_v005_v002_regime_fallback")].iloc[0]
+            self.assertEqual(policy["selected_codes"], EXPECTED_FINAL_CODES)
 
     def test_holdout_verifies_history_universe_manifest_and_rejects_changed_samples(self) -> None:
         raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
@@ -286,6 +343,20 @@ class V005FixtureRegressionTests(unittest.TestCase):
             self.assertTrue(bool(run_meta["candidate_universe_snapshot_complete"]))
             self.assertFalse(bool(run_meta["cache_snapshot_complete"]))
             self.assertEqual(run_meta["universe_audit_status"], "VERIFIED")
+
+            manifest_path = history_dir / f"history_universe_manifest_{suffix}.json"
+            original_manifest = manifest_path.read_bytes()
+            manifest = json.loads(original_manifest.decode("utf-8"))
+            manifest["dates"][0]["snapshot_status"] = "MISSING_EXACT_SIGNAL_DATE"
+            manifest["candidate_universe_snapshot_complete"] = False
+            manifest["candidate_universe_snapshot_verified"] = False
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "samples signal_date set does not match successful snapshot dates",
+            ):
+                run_fixed_grid_holdout(samples_file=samples_path, output_dir=root / "missing-date")
+            manifest_path.write_bytes(original_manifest)
 
             changed = raw.copy()
             changed.loc[0, "total_score"] = float(changed.loc[0, "total_score"]) + 1.0

@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from io import StringIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest import mock
 
 import pandas as pd
 
+import src.universe_audit as universe_audit
 from src.history_samples import _normalise_history_candidate_columns
 from src.universe_audit import (
     StageSnapshot,
@@ -17,6 +20,7 @@ from src.universe_audit import (
     compare_stage_frames,
     create_or_verify_snapshot,
     key_set_sha256,
+    require_nonempty_codes,
     UniverseSnapshotError,
 )
 from src.v004a import annotate_v004a_input_eligibility, prepare_v004a_samples
@@ -29,6 +33,15 @@ KEY_COLUMNS = ("requested_signal_date", "code")
 def _snapshot(frame: pd.DataFrame) -> StageSnapshot:
     return StageSnapshot(
         stage="signal_pool",
+        frame=frame,
+        key_columns=KEY_COLUMNS,
+        row_columns=ROW_COLUMNS,
+    )
+
+
+def _stage_snapshot(stage: str, frame: pd.DataFrame) -> StageSnapshot:
+    return StageSnapshot(
+        stage=stage,
         frame=frame,
         key_columns=KEY_COLUMNS,
         row_columns=ROW_COLUMNS,
@@ -97,6 +110,14 @@ class StableUniverseHashTests(unittest.TestCase):
 
 
 class HistoryUniverseIntegrityTests(unittest.TestCase):
+    def test_empty_or_unnormalizable_codes_are_a_hard_failure(self) -> None:
+        frame = pd.DataFrame({"code": ["000001", " ", None, "not-a-code"]})
+        with self.assertRaisesRegex(
+            UniverseAuditError,
+            r"test layer contains empty or unnormalizable codes.*invalid_count=3",
+        ):
+            require_nonempty_codes(frame, "code", "test layer")
+
     def test_duplicate_requested_date_code_is_a_hard_failure(self) -> None:
         rows = pd.DataFrame(
             [
@@ -148,6 +169,113 @@ class HistoryUniverseIntegrityTests(unittest.TestCase):
 
 
 class CanonicalSnapshotTests(unittest.TestCase):
+    def test_failed_second_stage_write_leaves_no_canonical_or_temp_directory(self) -> None:
+        frame = pd.DataFrame(
+            [{"requested_signal_date": "2026-07-10", "code": "1", "name": "A", "score": 1.0, "flag_bool": True}]
+        )
+        stages = {
+            "raw_source_pool": _stage_snapshot("raw_source_pool", frame),
+            "signal_pool": _stage_snapshot("signal_pool", frame),
+        }
+        original = universe_audit.write_canonical_csv
+        calls = 0
+
+        def fail_second(path: Path, snapshot: StageSnapshot) -> None:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise OSError("injected second-stage failure")
+            original(path, snapshot)
+
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            with mock.patch("src.universe_audit.write_canonical_csv", side_effect=fail_second):
+                with self.assertRaises(UniverseSnapshotError) as caught:
+                    create_or_verify_snapshot(
+                        "2026-07-10", stages, root / "snapshots", root / "run"
+                    )
+            self.assertEqual(caught.exception.status, "SNAPSHOT_WRITE_FAILED")
+            date_root = root / "snapshots" / "history_universe" / "2026-07-10"
+            self.assertFalse((date_root / "canonical").exists())
+            self.assertEqual(list(date_root.glob(".canonical.tmp-*")), [])
+
+    def test_malformed_manifest_is_reported_as_corrupt_canonical(self) -> None:
+        frame = pd.DataFrame(
+            [{"requested_signal_date": "2026-07-10", "code": "1", "name": "A", "score": 1.0, "flag_bool": True}]
+        )
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            _, manifest_path, _ = create_or_verify_snapshot(
+                "2026-07-10", {"signal_pool": _snapshot(frame)}, root / "snapshots", root / "run"
+            )
+            manifest_path.write_text("{not-json", encoding="utf-8")
+            with self.assertRaises(UniverseSnapshotError) as caught:
+                create_or_verify_snapshot(
+                    "2026-07-10", {"signal_pool": _snapshot(frame)}, root / "snapshots", root / "run"
+                )
+            self.assertEqual(caught.exception.status, "CORRUPT_CANONICAL")
+
+    def test_missing_or_corrupt_stage_csv_is_a_hard_failure(self) -> None:
+        frame = pd.DataFrame(
+            [{"requested_signal_date": "2026-07-10", "code": "1", "name": "A", "score": 1.0, "flag_bool": True}]
+        )
+        for corruption, expected_status in (("missing", "INCOMPLETE_CANONICAL"), ("corrupt", "CORRUPT_CANONICAL")):
+            with self.subTest(corruption=corruption), TemporaryDirectory() as temp:
+                root = Path(temp)
+                _, manifest_path, _ = create_or_verify_snapshot(
+                    "2026-07-10", {"signal_pool": _snapshot(frame)}, root / "snapshots", root / "run"
+                )
+                stage_path = manifest_path.parent / "signal_pool.csv"
+                if corruption == "missing":
+                    stage_path.unlink()
+                else:
+                    stage_path.write_bytes(b"\xff\xfe\x00broken")
+                with self.assertRaises(UniverseSnapshotError) as caught:
+                    create_or_verify_snapshot(
+                        "2026-07-10", {"signal_pool": _snapshot(frame)}, root / "snapshots", root / "run"
+                    )
+                self.assertEqual(caught.exception.status, expected_status)
+
+    def test_empty_code_never_creates_canonical(self) -> None:
+        frame = pd.DataFrame(
+            [{"requested_signal_date": "2026-07-10", "code": None, "name": "A", "score": 1.0, "flag_bool": True}]
+        )
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            with self.assertRaisesRegex(UniverseAuditError, "empty or unnormalizable codes"):
+                create_or_verify_snapshot(
+                    "2026-07-10", {"signal_pool": _snapshot(frame)}, root / "snapshots", root / "run"
+                )
+            canonical = root / "snapshots" / "history_universe" / "2026-07-10" / "canonical"
+            self.assertFalse(canonical.exists())
+
+    def test_concurrent_create_publishes_one_complete_canonical(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {"requested_signal_date": "2026-07-10", "code": "1", "name": "A", "score": 1.0, "flag_bool": True},
+                {"requested_signal_date": "2026-07-10", "code": "2", "name": "B", "score": 2.0, "flag_bool": False},
+            ]
+        )
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+
+            def create(index: int) -> str:
+                status, _, _ = create_or_verify_snapshot(
+                    "2026-07-10",
+                    {"signal_pool": _snapshot(frame)},
+                    root / "snapshots",
+                    root / f"run-{index}",
+                )
+                return status
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                statuses = sorted(executor.map(create, (1, 2)))
+            self.assertEqual(statuses, ["CREATED_CANONICAL", "VERIFIED_MATCH"])
+            canonical = root / "snapshots" / "history_universe" / "2026-07-10" / "canonical"
+            self.assertTrue((canonical / "manifest.json").is_file())
+            self.assertTrue((canonical / "signal_pool.csv").is_file())
+            self.assertEqual(list(canonical.parent.glob(".canonical.tmp-*")), [])
+
     def test_verify_only_requires_canonical_and_off_never_creates_it(self) -> None:
         frame = pd.DataFrame(
             [{"requested_signal_date": "2026-07-10", "code": "1", "name": "A", "score": 1.0, "flag_bool": True}]

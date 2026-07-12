@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 from pathlib import Path
 from typing import Any
+import uuid
 
 import pandas as pd
 
@@ -32,10 +34,14 @@ from .universe_audit import (
     StageSnapshot,
     UniverseAuditError,
     UniverseSnapshotError,
+    atomic_copy_file,
+    atomic_write_csv,
+    atomic_write_text,
     canonical_rows_sha256,
     count_duplicate_keys,
     create_or_verify_snapshot,
     normalize_code_series,
+    require_nonempty_codes,
     require_requested_signal_date_match,
     require_unique_keys,
     stage_identity,
@@ -237,8 +243,8 @@ def run_history_sample_generation(
         )
     service = MarketDataService()
     data_config = get_data_config()
-    run_root = data_config.reports_dir / "history_samples" / f"{start_date}_{end_date}"
-    run_root.mkdir(parents=True, exist_ok=True)
+    stable_run_root = data_config.reports_dir / "history_samples" / f"{start_date}_{end_date}"
+    run_root = _create_history_attempt_dir(stable_run_root)
     candidate_rows: list[dict[str, Any]] = []
     run_rows: list[dict[str, Any]] = []
     future_fetch_rows: list[dict[str, Any]] = []
@@ -246,6 +252,7 @@ def run_history_sample_generation(
     universe_membership_frames: list[pd.DataFrame] = []
     minute_cache: dict[str, pd.DataFrame | None] = {}
     missing_limitup_dates: set[str] = set()
+    proven_non_trading_dates: set[str] = set()
     requested_dates = _iter_weekdays(start_date, end_date)
     total_dates = len(requested_dates)
 
@@ -264,6 +271,8 @@ def run_history_sample_generation(
                 force_refresh=force_refresh,
                 workers=workers,
                 missing_dates=missing_limitup_dates,
+                proven_non_trading_dates=proven_non_trading_dates,
+                strict=universe_snapshot_mode != "off",
             )
             raw_source = _standardize_raw_source_pool(pool, requested_date)
             raw_identity = stage_identity(_raw_stage_snapshot(raw_source))
@@ -281,10 +290,21 @@ def run_history_sample_generation(
                 flush=True,
             )
             if actual_date != requested_date:
-                run_row["status"] = "skipped"
-                run_row["error"] = "exact signal date limit-up pool missing"
-                audit_row["generation_status"] = "skipped"
-                audit_row["snapshot_status"] = "SKIPPED_NO_EXACT_SIGNAL_DATE"
+                proven_non_trading = (
+                    requested_date in proven_non_trading_dates
+                    or (not force_refresh and _cached_daily_proves_non_trading(service, requested_date))
+                )
+                if proven_non_trading:
+                    proven_non_trading_dates.add(requested_date)
+                    run_row["status"] = "skipped_non_trading"
+                    run_row["error"] = "requested date reliably proven to be non-trading"
+                    audit_row["generation_status"] = "non_trading"
+                    audit_row["snapshot_status"] = "PROVEN_NON_TRADING_DATE"
+                else:
+                    run_row["status"] = "failed"
+                    run_row["error"] = "exact signal date limit-up pool missing and trading status is unconfirmed"
+                    audit_row["generation_status"] = "failed"
+                    audit_row["snapshot_status"] = "MISSING_EXACT_SIGNAL_DATE"
                 universe_membership_frames.append(
                     _build_history_universe_membership(
                         requested_date=requested_date,
@@ -296,6 +316,10 @@ def run_history_sample_generation(
                 )
                 universe_audit_rows.append(audit_row)
                 audit_appended = True
+                if not proven_non_trading and universe_snapshot_mode != "off":
+                    raise UniverseAuditError(
+                        f"MISSING_EXACT_SIGNAL_DATE: requested trading date cannot be confirmed: {requested_date}"
+                    )
                 run_rows.append(run_row)
                 print(
                     f"[history-samples] {date_index}/{total_dates} skipped {requested_date}: actual={actual_date}",
@@ -335,6 +359,11 @@ def run_history_sample_generation(
                 run_root / "data_quality",
                 trade_date=actual_date,
             )
+            if quality_failed and universe_snapshot_mode != "off":
+                audit_row["snapshot_status"] = "GENERATION_FAILED"
+                raise UniverseAuditError(
+                    f"GENERATION_FAILED: signal generation reported {quality_failed} failed rows for {requested_date}"
+                )
             signal_frame = _signals_to_frame(signals)
             signal_frame = _standardize_signal_pool(signal_frame, requested_date, actual_date)
             audit_row["duplicate_signal_key_count"] = count_duplicate_keys(
@@ -369,6 +398,11 @@ def run_history_sample_generation(
                 f"end={future_end_date}",
                 flush=True,
             )
+            if int(future_fetch["failed"]) > 0 and universe_snapshot_mode != "off":
+                audit_row["snapshot_status"] = "GENERATION_FAILED"
+                raise UniverseAuditError(
+                    f"GENERATION_FAILED: future bar prefetch reported {future_fetch['failed']} failures for {requested_date}"
+                )
             for code in signal_frame.get("code", pd.Series(dtype=str)).astype(str):
                 minute_cache.pop(code, None)
 
@@ -386,6 +420,7 @@ def run_history_sample_generation(
                     )
                 )
             day_candidates = annotate_v004a_input_eligibility(pd.DataFrame(day_candidate_rows))
+            require_nonempty_codes(day_candidates, "code", "history candidates")
             audit_row["signal_date_mismatch_count"] = _signal_date_mismatch_count(day_candidates)
             audit_row["duplicate_candidate_key_count"] = count_duplicate_keys(
                 day_candidates, ("requested_signal_date", "code")
@@ -472,7 +507,10 @@ def run_history_sample_generation(
             run_row["signal_date_mismatch"] = "signal_date_mismatch" in str(exc)
             if not audit_appended:
                 audit_row["generation_status"] = "failed"
-                audit_row["snapshot_status"] = getattr(exc, "status", "INTEGRITY_FAILURE")
+                audit_row["snapshot_status"] = (
+                    str(audit_row.get("snapshot_status", ""))
+                    or getattr(exc, "status", "INTEGRITY_FAILURE")
+                )
                 audit_row["canonical_manifest_path"] = str(
                     getattr(exc, "canonical_manifest_path", "")
                 )
@@ -497,6 +535,17 @@ def run_history_sample_generation(
                 universe_audit_rows.append(audit_row)
                 audit_appended = True
             print(f"[history-samples] {date_index}/{total_dates} failed {requested_date}: {exc}", flush=True)
+            if universe_snapshot_mode != "off":
+                run_rows.append(run_row)
+                _write_partial_history_universe_failure(
+                    run_root=run_root,
+                    start_date=start_date,
+                    end_date=end_date,
+                    run_rows=run_rows,
+                    audit_rows=universe_audit_rows,
+                    membership_frames=universe_membership_frames,
+                )
+                raise
         run_rows.append(run_row)
         print(f"[history-samples] {date_index}/{total_dates} done {requested_date} status={run_row['status']}", flush=True)
 
@@ -520,10 +569,31 @@ def run_history_sample_generation(
     universe_audit = pd.DataFrame(universe_audit_rows)
     universe_membership = _combine_membership_frames(universe_membership_frames)
 
+    completeness = _assess_history_snapshot_completeness(
+        candidates=candidates,
+        universe_audit=universe_audit,
+        universe_snapshot_mode=universe_snapshot_mode,
+        requested_dates=requested_dates,
+    )
+    if universe_snapshot_mode != "off" and not completeness["snapshot_complete"]:
+        _write_partial_history_universe_failure(
+            run_root=run_root,
+            start_date=start_date,
+            end_date=end_date,
+            run_rows=run_rows,
+            audit_rows=universe_audit_rows,
+            membership_frames=universe_membership_frames,
+        )
+        raise UniverseAuditError(
+            "history universe interval is incomplete: " + "; ".join(completeness["failure_reasons"])
+        )
+
+    published_run_log = _replace_attempt_paths_in_frame(run_log, run_root, stable_run_root)
+
     candidates_csv, summary_csv, run_log_csv, future_fetch_csv, markdown_path = write_history_sample_reports(
         candidates=candidates,
         summary=summary,
-        run_log=run_log,
+        run_log=published_run_log,
         future_fetch_log=future_fetch_log,
         output_dir=run_root,
         start_date=start_date,
@@ -531,8 +601,9 @@ def run_history_sample_generation(
         universe_audit=universe_audit,
         universe_snapshot_mode=universe_snapshot_mode,
     )
-    _write_history_universe_outputs(
+    _, _, universe_manifest_path = _write_history_universe_outputs(
         output_dir=run_root,
+        published_output_dir=stable_run_root,
         start_date=start_date,
         end_date=end_date,
         lookback_days=int(lookback_days),
@@ -544,8 +615,26 @@ def run_history_sample_generation(
         candidates=candidates,
         universe_audit=universe_audit,
         universe_membership=universe_membership,
+        completeness=completeness,
     )
-    return candidates, summary, run_log, future_fetch_log, candidates_csv, summary_csv, run_log_csv, future_fetch_csv, markdown_path
+    published_paths = _publish_history_attempt(
+        attempt_root=run_root,
+        stable_root=stable_run_root,
+        start_date=start_date,
+        end_date=end_date,
+        manifest_source=universe_manifest_path,
+    )
+    return (
+        candidates,
+        summary,
+        published_run_log,
+        future_fetch_log,
+        published_paths["candidates"],
+        published_paths["summary"],
+        published_paths["run_log"],
+        published_paths["future_fetch"],
+        published_paths["markdown"],
+    )
 
 
 def _standardize_raw_source_pool(pool: pd.DataFrame, requested_date: str) -> pd.DataFrame:
@@ -553,10 +642,11 @@ def _standardize_raw_source_pool(pool: pd.DataFrame, requested_date: str) -> pd.
     missing = [column for column in ("trade_date", "code") if column not in frame.columns]
     if missing:
         raise UniverseAuditError(f"raw_source_pool missing columns: {missing}")
+    require_nonempty_codes(frame, "code", "raw_source_pool")
     frame["requested_signal_date"] = str(requested_date)
     frame["source_trade_date"] = frame["trade_date"].astype(str)
     frame["code"] = normalize_code_series(frame["code"])
-    frame = frame[frame["code"].ne("")].copy()
+    require_nonempty_codes(frame, "code", "raw_source_pool")
     for column in RAW_SOURCE_ROW_COLUMNS:
         if column not in frame.columns:
             frame[column] = pd.NA
@@ -573,6 +663,7 @@ def _standardize_signal_pool(
     frame = signals.copy().reset_index(drop=True)
     if "code" not in frame.columns:
         frame["code"] = pd.Series(dtype=str)
+    require_nonempty_codes(frame, "code", "signal_pool")
     frame["requested_signal_date"] = str(requested_date)
     frame["actual_signal_date"] = (
         frame["trade_date"].fillna("").astype(str)
@@ -582,6 +673,7 @@ def _standardize_signal_pool(
     if "trade_date" not in frame.columns:
         frame["trade_date"] = frame["actual_signal_date"]
     frame["code"] = normalize_code_series(frame["code"])
+    require_nonempty_codes(frame, "code", "signal_pool")
     allowed_source = frame["allowed"] if "allowed" in frame.columns else frame.get("allowed_bool", False)
     if isinstance(allowed_source, pd.Series):
         frame["allowed_bool"] = allowed_source.map(_bool_from_value)
@@ -617,6 +709,8 @@ def _build_history_stage_snapshots(
     scorable_mask = candidates.get(
         "v004a_scorable_bool", pd.Series(False, index=candidates.index)
     ).fillna(False).astype(bool)
+    scorable = candidates.loc[scorable_mask].copy()
+    require_nonempty_codes(scorable, "code", "scorable samples")
     return {
         "raw_source_pool": _raw_stage_snapshot(raw_source),
         "signal_pool": StageSnapshot(
@@ -633,7 +727,7 @@ def _build_history_stage_snapshots(
         ),
         "scorable_pool": StageSnapshot(
             stage="scorable_pool",
-            frame=candidates.loc[scorable_mask].copy(),
+            frame=scorable,
             key_columns=("requested_signal_date", "code"),
             row_columns=SCORABLE_ROW_COLUMNS,
         ),
@@ -647,6 +741,9 @@ def _build_history_universe_membership(
     signal_pool: pd.DataFrame,
     candidates: pd.DataFrame,
 ) -> pd.DataFrame:
+    require_nonempty_codes(raw_source, "code", "raw_source_pool membership")
+    require_nonempty_codes(signal_pool, "code", "signal_pool membership")
+    require_nonempty_codes(candidates, "code", "history candidates membership")
     rows: list[dict[str, Any]] = []
     for _, row in raw_source.iterrows():
         source_date = str(row.get("source_trade_date", ""))
@@ -696,6 +793,7 @@ def _build_history_universe_membership(
             )
         )
     frame = pd.DataFrame(rows, columns=HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS)
+    require_nonempty_codes(frame, "code", "history universe membership")
     return frame
 
 
@@ -776,6 +874,246 @@ def _combine_membership_frames(frames: list[pd.DataFrame]) -> pd.DataFrame:
     return combined[HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS].reset_index(drop=True)
 
 
+def _create_history_attempt_dir(stable_run_root: Path) -> Path:
+    stable_run_root = Path(stable_run_root)
+    attempts_root = stable_run_root / "attempts"
+    attempts_root.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+    attempt_root = attempts_root / f"{timestamp}-{uuid.uuid4().hex}"
+    attempt_root.mkdir(parents=False, exist_ok=False)
+    return attempt_root
+
+
+def _assess_history_snapshot_completeness(
+    candidates: pd.DataFrame,
+    universe_audit: pd.DataFrame,
+    universe_snapshot_mode: str,
+    requested_dates: list[str] | None = None,
+) -> dict[str, Any]:
+    successful_statuses = {"CREATED_CANONICAL", "VERIFIED_MATCH"}
+    proven_status = "PROVEN_NON_TRADING_DATE"
+    sample_signal_dates = sorted(
+        {
+            str(value)
+            for value in candidates.get("signal_date", pd.Series(dtype=object)).dropna().tolist()
+            if str(value).strip()
+        }
+    )
+    failure_reasons: list[str] = []
+    if universe_audit.empty:
+        date_rows = pd.DataFrame(columns=["requested_signal_date", "snapshot_status", "generation_status"])
+    else:
+        required = {"requested_signal_date", "snapshot_status"}
+        missing = sorted(required.difference(universe_audit.columns))
+        if missing:
+            failure_reasons.append(f"universe audit missing columns: {missing}")
+        date_rows = universe_audit.copy()
+        for column in ("requested_signal_date", "snapshot_status", "generation_status"):
+            if column not in date_rows.columns:
+                date_rows[column] = ""
+        duplicate_dates = date_rows["requested_signal_date"].astype(str).duplicated(keep=False)
+        if duplicate_dates.any():
+            preview = sorted(date_rows.loc[duplicate_dates, "requested_signal_date"].astype(str).unique().tolist())
+            failure_reasons.append(f"duplicate requested dates in universe audit: {preview}")
+
+    statuses = {
+        str(row["requested_signal_date"]): str(row["snapshot_status"])
+        for _, row in date_rows.iterrows()
+        if str(row["requested_signal_date"]).strip()
+    }
+    if requested_dates is not None and set(statuses) != set(map(str, requested_dates)):
+        failure_reasons.append(
+            "requested date set does not match universe audit dates: "
+            f"requested={sorted(map(str, requested_dates))}, audited={sorted(statuses)}"
+        )
+    successful_snapshot_dates = sorted(
+        date for date, status in statuses.items() if status in successful_statuses
+    )
+    proven_non_trading_dates = sorted(
+        date for date, status in statuses.items() if status == proven_status
+    )
+
+    if universe_snapshot_mode == "off":
+        failed_rows = date_rows[
+            date_rows["generation_status"].astype(str).eq("failed")
+            | date_rows["snapshot_status"].astype(str).isin(
+                {"MISSING_EXACT_SIGNAL_DATE", "GENERATION_FAILED", "CORRUPT_CANONICAL", "SNAPSHOT_MISMATCH"}
+            )
+        ]
+        if not failed_rows.empty:
+            failure_reasons.append(
+                "failed requested dates: "
+                + ",".join(failed_rows["requested_signal_date"].astype(str).tolist())
+            )
+        return {
+            "snapshot_complete": False,
+            "snapshot_verified": False,
+            "audit_status": "PARTIAL_UNVERIFIED" if failure_reasons else "UNVERIFIED_OFF",
+            "sample_signal_dates": sample_signal_dates,
+            "successful_snapshot_dates": successful_snapshot_dates,
+            "proven_non_trading_dates": proven_non_trading_dates,
+            "failure_reasons": failure_reasons,
+        }
+
+    invalid_statuses = {
+        date: status
+        for date, status in statuses.items()
+        if status not in successful_statuses and status != proven_status
+    }
+    if invalid_statuses:
+        failure_reasons.append(f"incomplete requested date statuses: {invalid_statuses}")
+    failed_generation_dates = sorted(
+        date
+        for date, status in zip(
+            date_rows["requested_signal_date"].astype(str),
+            date_rows["generation_status"].astype(str),
+        )
+        if status == "failed"
+    )
+    if failed_generation_dates:
+        failure_reasons.append(f"generation failed for dates: {failed_generation_dates}")
+    inconsistent_generation_rows = []
+    for _, row in date_rows.iterrows():
+        status = str(row["snapshot_status"])
+        generation_status = str(row["generation_status"])
+        expected_generation_status = (
+            "generated"
+            if status in successful_statuses
+            else "non_trading" if status == proven_status else ""
+        )
+        if expected_generation_status and generation_status != expected_generation_status:
+            inconsistent_generation_rows.append(
+                f"{row['requested_signal_date']}:{generation_status}->{status}"
+            )
+    if inconsistent_generation_rows:
+        failure_reasons.append(
+            f"inconsistent generation/snapshot statuses: {inconsistent_generation_rows}"
+        )
+    if set(sample_signal_dates) != set(successful_snapshot_dates):
+        failure_reasons.append(
+            "samples signal_date set does not match successful snapshot dates: "
+            f"samples={sample_signal_dates}, snapshots={successful_snapshot_dates}"
+        )
+    snapshot_complete = not failure_reasons
+    return {
+        "snapshot_complete": snapshot_complete,
+        "snapshot_verified": snapshot_complete,
+        "audit_status": "VERIFIED" if snapshot_complete else "INCOMPLETE",
+        "sample_signal_dates": sample_signal_dates,
+        "successful_snapshot_dates": successful_snapshot_dates,
+        "proven_non_trading_dates": proven_non_trading_dates,
+        "failure_reasons": failure_reasons,
+    }
+
+
+def _replace_attempt_paths_in_frame(
+    frame: pd.DataFrame,
+    attempt_root: Path,
+    stable_root: Path,
+) -> pd.DataFrame:
+    output = frame.copy()
+    attempt_prefix = str(Path(attempt_root))
+    stable_prefix = str(Path(stable_root))
+    for column in output.columns:
+        output[column] = output[column].map(
+            lambda value: (
+                stable_prefix + str(value)[len(attempt_prefix):]
+                if isinstance(value, str) and value.startswith(attempt_prefix)
+                else value
+            )
+        )
+    return output
+
+
+def _publish_history_attempt(
+    attempt_root: Path,
+    stable_root: Path,
+    start_date: str,
+    end_date: str,
+    manifest_source: Path,
+) -> dict[str, Path]:
+    attempt_root = Path(attempt_root)
+    stable_root = Path(stable_root)
+    suffix = f"{start_date}_{end_date}"
+    names = {
+        "candidates": f"history_candidates_{suffix}.csv",
+        "summary": f"history_candidates_summary_{suffix}.csv",
+        "run_log": f"history_generation_log_{suffix}.csv",
+        "future_fetch": f"history_future_fetch_{suffix}.csv",
+        "audit": f"history_universe_audit_{suffix}.csv",
+        "membership": f"history_universe_membership_{suffix}.csv",
+        "markdown": f"history_candidates_review_{suffix}.md",
+        "manifest": f"history_universe_manifest_{suffix}.json",
+    }
+    stable_root.mkdir(parents=True, exist_ok=True)
+    publish_pairs: list[tuple[Path, Path]] = []
+    for key, name in names.items():
+        if key != "manifest":
+            publish_pairs.append((attempt_root / name, stable_root / name))
+    for directory_name in ("daily_signals", "data_quality"):
+        source_root = attempt_root / directory_name
+        if not source_root.is_dir():
+            continue
+        for source in sorted(path for path in source_root.rglob("*") if path.is_file()):
+            publish_pairs.append(
+                (source, stable_root / directory_name / source.relative_to(source_root))
+            )
+    if Path(manifest_source) != attempt_root / names["manifest"]:
+        raise UniverseAuditError(
+            f"unexpected history universe manifest source: {manifest_source}"
+        )
+    # The manifest is the publication marker and is committed only after every other artifact.
+    publish_pairs.append((Path(manifest_source), stable_root / names["manifest"]))
+    _publish_files_transactionally(publish_pairs)
+    return {key: stable_root / name for key, name in names.items()}
+
+
+def _publish_files_transactionally(pairs: list[tuple[Path, Path]]) -> None:
+    transaction_id = uuid.uuid4().hex
+    staged: dict[Path, Path] = {}
+    backups: dict[Path, Path] = {}
+    committed: list[Path] = []
+    try:
+        for source, target in pairs:
+            source = Path(source)
+            target = Path(target)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            staged_path = target.parent / f".{target.name}.publish-{transaction_id}"
+            atomic_copy_file(source, staged_path)
+            staged[target] = staged_path
+        for target in staged:
+            if target.is_file():
+                backup_path = target.parent / f".{target.name}.backup-{transaction_id}"
+                atomic_copy_file(target, backup_path)
+                backups[target] = backup_path
+        for _, target in pairs:
+            target = Path(target)
+            staged[target].replace(target)
+            committed.append(target)
+    except Exception:
+        rollback_errors: list[str] = []
+        for target in reversed(committed):
+            try:
+                backup = backups.get(target)
+                if backup is not None and backup.is_file():
+                    backup.replace(target)
+                else:
+                    target.unlink(missing_ok=True)
+            except OSError as exc:
+                rollback_errors.append(f"{target}: {exc}")
+        if rollback_errors:
+            raise UniverseAuditError(
+                "history publication failed and rollback was incomplete: " + " | ".join(rollback_errors)
+            )
+        raise
+    finally:
+        for path in [*staged.values(), *backups.values()]:
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+
 def _write_partial_history_universe_failure(
     run_root: Path,
     start_date: str,
@@ -785,20 +1123,23 @@ def _write_partial_history_universe_failure(
     membership_frames: list[pd.DataFrame],
 ) -> None:
     suffix = f"{start_date}_{end_date}"
-    pd.DataFrame(run_rows).to_csv(
+    atomic_write_csv(
         run_root / f"history_generation_log_{suffix}.csv",
+        pd.DataFrame(run_rows),
         index=False,
         encoding="utf-8-sig",
         lineterminator="\n",
     )
-    pd.DataFrame(audit_rows).to_csv(
+    atomic_write_csv(
         run_root / f"history_universe_audit_{suffix}.csv",
+        pd.DataFrame(audit_rows),
         index=False,
         encoding="utf-8-sig",
         lineterminator="\n",
     )
-    _combine_membership_frames(membership_frames).to_csv(
+    atomic_write_csv(
         run_root / f"history_universe_membership_{suffix}.csv",
+        _combine_membership_frames(membership_frames),
         index=False,
         encoding="utf-8-sig",
         lineterminator="\n",
@@ -818,14 +1159,26 @@ def _write_history_universe_outputs(
     candidates: pd.DataFrame,
     universe_audit: pd.DataFrame,
     universe_membership: pd.DataFrame,
+    published_output_dir: Path | None = None,
+    completeness: dict[str, Any] | None = None,
 ) -> tuple[Path, Path, Path]:
     suffix = f"{start_date}_{end_date}"
     audit_path = output_dir / f"history_universe_audit_{suffix}.csv"
     membership_path = output_dir / f"history_universe_membership_{suffix}.csv"
     manifest_path = output_dir / f"history_universe_manifest_{suffix}.json"
-    universe_audit.to_csv(audit_path, index=False, encoding="utf-8-sig", lineterminator="\n")
-    universe_membership.to_csv(
-        membership_path, index=False, encoding="utf-8-sig", lineterminator="\n"
+    atomic_write_csv(
+        audit_path,
+        universe_audit,
+        index=False,
+        encoding="utf-8-sig",
+        lineterminator="\n",
+    )
+    atomic_write_csv(
+        membership_path,
+        universe_membership,
+        index=False,
+        encoding="utf-8-sig",
+        lineterminator="\n",
     )
     membership_hash = canonical_rows_sha256(
         universe_membership,
@@ -837,6 +1190,13 @@ def _write_history_universe_outputs(
         HISTORY_CANDIDATE_COLUMNS,
         ("requested_signal_date", "code"),
     )
+    assessed = completeness or _assess_history_snapshot_completeness(
+        candidates=candidates,
+        universe_audit=universe_audit,
+        universe_snapshot_mode=universe_snapshot_mode,
+    )
+    public_root = Path(published_output_dir) if published_output_dir is not None else Path(output_dir)
+    public_membership_path = public_root / membership_path.name
     manifest = {
         "universe_snapshot_schema_version": UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
         "start_date": str(start_date),
@@ -847,9 +1207,16 @@ def _write_history_universe_outputs(
         "hold_days": int(hold_days),
         "target_return_pct": float(target_return_pct),
         "universe_snapshot_mode": universe_snapshot_mode,
-        "membership_file": str(membership_path),
+        "membership_file": str(public_membership_path),
         "membership_canonical_rows_sha256": membership_hash,
         "history_candidates_canonical_rows_sha256": candidates_hash,
+        "candidate_universe_snapshot_complete": bool(assessed["snapshot_complete"]),
+        "candidate_universe_snapshot_verified": bool(assessed["snapshot_verified"]),
+        "universe_audit_status": str(assessed["audit_status"]),
+        "sample_signal_dates": list(assessed["sample_signal_dates"]),
+        "successful_snapshot_dates": list(assessed["successful_snapshot_dates"]),
+        "proven_non_trading_dates": list(assessed["proven_non_trading_dates"]),
+        "failure_reasons": list(assessed["failure_reasons"]),
         "dates": _records_for_json(universe_audit),
         "runtime_provenance": runtime_provenance(),
     }
@@ -871,11 +1238,14 @@ def _collect_limitups_for_history_sample(
     force_refresh: bool,
     workers: int,
     missing_dates: set[str] | None = None,
+    proven_non_trading_dates: set[str] | None = None,
+    strict: bool = False,
 ) -> pd.DataFrame:
     """Collect lookback limit-up pools without scanning pre-window holidays."""
     frames: list[pd.DataFrame] = []
     errors: list[str] = []
     known_missing = missing_dates if missing_dates is not None else set()
+    known_non_trading = proven_non_trading_dates if proven_non_trading_dates is not None else set()
     anchor = pd.Timestamp(requested_date)
     start_ts = pd.Timestamp(start_date)
 
@@ -896,6 +1266,7 @@ def _collect_limitups_for_history_sample(
             continue
         if not force_refresh and _cached_daily_proves_non_trading(service, date_text):
             known_missing.add(date_text)
+            known_non_trading.add(date_text)
             print(f"[history-samples] skip non-trading date from cached daily data {date_text}", flush=True)
             continue
 
@@ -911,16 +1282,19 @@ def _collect_limitups_for_history_sample(
             message = str(exc)
             if "date_seen=0" in message and not force_refresh:
                 known_missing.add(date_text)
+                known_non_trading.add(date_text)
                 print(f"[history-samples] skip non-trading date after daily scan {date_text}", flush=True)
                 continue
             errors.append(f"{date_text}: {message}")
-            if offset == 0:
+            if strict or offset == 0:
                 raise
             continue
         if frame is not None and not frame.empty:
             frames.append(frame)
 
     if not frames:
+        if requested_date in known_non_trading:
+            return pd.DataFrame(columns=["trade_date", "code"])
         suffix = "" if not errors else ": " + " | ".join(errors[:5])
         raise RuntimeError(f"no limit-up data collected for history sample lookback ending {requested_date}{suffix}")
 
@@ -1134,11 +1508,12 @@ def write_history_sample_reports(
     run_log_csv = output_dir / f"history_generation_log_{suffix}.csv"
     future_fetch_csv = output_dir / f"history_future_fetch_{suffix}.csv"
     markdown_path = output_dir / f"history_candidates_review_{suffix}.md"
-    candidates.to_csv(candidates_csv, index=False, encoding="utf-8-sig")
-    summary.to_csv(summary_csv, index=False, encoding="utf-8-sig")
-    run_log.to_csv(run_log_csv, index=False, encoding="utf-8-sig")
-    future_fetch_log.to_csv(future_fetch_csv, index=False, encoding="utf-8-sig")
-    markdown_path.write_text(
+    atomic_write_csv(candidates_csv, candidates, index=False, encoding="utf-8-sig")
+    atomic_write_csv(summary_csv, summary, index=False, encoding="utf-8-sig")
+    atomic_write_csv(run_log_csv, run_log, index=False, encoding="utf-8-sig")
+    atomic_write_csv(future_fetch_csv, future_fetch_log, index=False, encoding="utf-8-sig")
+    atomic_write_text(
+        markdown_path,
         build_history_candidates_markdown(
             candidates,
             summary,
@@ -1193,6 +1568,12 @@ def build_history_candidates_markdown(
     lines.extend(["## Universe Reproducibility", ""])
     lines.append(f"- snapshot mode: **{universe_snapshot_mode}**")
     audit = universe_audit if universe_audit is not None else pd.DataFrame()
+    interval_audit = _assess_history_snapshot_completeness(
+        candidates=candidates,
+        universe_audit=audit,
+        universe_snapshot_mode=universe_snapshot_mode,
+    )
+    lines.append(f"- interval audit status: **{interval_audit['audit_status']}**")
     if audit.empty:
         lines.append("- universe audit: **not available**")
     else:
@@ -1365,6 +1746,7 @@ def _normalise_history_candidate_columns(candidates: pd.DataFrame) -> pd.DataFra
     frame = annotate_v004a_input_eligibility(candidates)
     if "requested_signal_date" not in frame.columns:
         raise UniverseAuditError("history candidates missing requested_signal_date")
+    require_nonempty_codes(frame, "code", "history candidates")
     require_requested_signal_date_match(frame)
     require_unique_keys(frame, ("requested_signal_date", "code"), "history candidates")
     for column in HISTORY_CANDIDATE_COLUMNS:

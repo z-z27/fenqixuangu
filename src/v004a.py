@@ -22,7 +22,7 @@ from .logistic_v003 import (
     _safe_rate,
 )
 from .ranking_backtest import score_candidates
-from .universe_audit import normalize_code_series
+from .universe_audit import normalize_code_series, require_nonempty_codes
 
 
 DEFAULT_TARGET_COLUMN = "target7_d2open_d3high"
@@ -275,6 +275,7 @@ def prepare_v004a_samples(raw: pd.DataFrame, target_return_pct: float = DEFAULT_
 
     frame = raw.copy()
     raw_rows = int(len(frame))
+    require_nonempty_codes(frame, "code", "v004a samples")
     frame["code"] = normalize_code_series(frame["code"])
     frame["signal_date"] = frame["signal_date"].astype(str)
     if "graph_quality_score" not in frame.columns:

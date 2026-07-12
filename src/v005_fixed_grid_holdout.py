@@ -28,10 +28,13 @@ from .v004a import (
 from .universe_audit import (
     UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
     UniverseAuditError,
+    atomic_write_csv,
+    atomic_write_text,
     canonical_rows_sha256,
     code_set_sha256,
     count_duplicate_keys,
     normalize_code_series,
+    require_nonempty_codes,
     require_unique_keys,
     write_json,
 )
@@ -171,6 +174,21 @@ def run_fixed_grid_holdout(
         if samples_path is not None and samples_path.is_file()
         else pd.DataFrame()
     )
+    if samples_path is not None and samples_path.is_file():
+        require_nonempty_codes(raw_samples, "code", "holdout samples")
+        raw_samples["code"] = normalize_code_series(raw_samples["code"])
+        sample_date_column = (
+            "requested_signal_date"
+            if "requested_signal_date" in raw_samples.columns
+            else "signal_date"
+        )
+        if sample_date_column not in raw_samples.columns:
+            raise UniverseAuditError("holdout samples are missing signal_date")
+        require_unique_keys(
+            raw_samples,
+            (sample_date_column, "code"),
+            "holdout samples",
+        )
     history_universe = _load_history_universe_context(
         samples_path=samples_path,
         raw_samples=raw_samples,
@@ -332,19 +350,20 @@ def run_fixed_grid_holdout(
         ]
     )
 
-    combo_candidates.to_csv(out_dir / "v005_fixed_grid_combo_candidates.csv", index=False, encoding="utf-8-sig")
-    selected_combos.to_csv(out_dir / "v005_fixed_grid_selected_combos.csv", index=False, encoding="utf-8-sig")
-    daily_top3.to_csv(out_dir / "v005_fixed_grid_daily_top3.csv", index=False, encoding="utf-8-sig")
-    summary.to_csv(out_dir / "v005_fixed_grid_holdout_summary.csv", index=False, encoding="utf-8-sig")
-    policy_daily.to_csv(out_dir / "v005_fixed_grid_holdout_daily.csv", index=False, encoding="utf-8-sig")
-    replacement.to_csv(out_dir / "v005_fixed_grid_holdout_replacement.csv", index=False, encoding="utf-8-sig")
-    readiness.to_csv(out_dir / "v005_fixed_grid_holdout_readiness.csv", index=False, encoding="utf-8-sig")
-    run_meta.to_csv(out_dir / "v005_fixed_grid_holdout_run_meta.csv", index=False, encoding="utf-8-sig")
+    atomic_write_csv(out_dir / "v005_fixed_grid_combo_candidates.csv", combo_candidates)
+    atomic_write_csv(out_dir / "v005_fixed_grid_selected_combos.csv", selected_combos)
+    atomic_write_csv(out_dir / "v005_fixed_grid_daily_top3.csv", daily_top3)
+    atomic_write_csv(out_dir / "v005_fixed_grid_holdout_summary.csv", summary)
+    atomic_write_csv(out_dir / "v005_fixed_grid_holdout_daily.csv", policy_daily)
+    atomic_write_csv(out_dir / "v005_fixed_grid_holdout_replacement.csv", replacement)
+    atomic_write_csv(out_dir / "v005_fixed_grid_holdout_readiness.csv", readiness)
+    atomic_write_csv(out_dir / "v005_fixed_grid_holdout_run_meta.csv", run_meta)
     if not data_quality.empty:
-        data_quality.to_csv(out_dir / "v005_fixed_grid_holdout_data_quality.csv", index=False, encoding="utf-8-sig")
+        atomic_write_csv(out_dir / "v005_fixed_grid_holdout_data_quality.csv", data_quality)
 
     report_path = out_dir / "v005_fixed_grid_holdout_report.md"
-    report_path.write_text(
+    atomic_write_text(
+        report_path,
         make_report(
             samples_file=samples_file,
             scored_file=holdout_scored_path,
@@ -430,25 +449,60 @@ def _load_history_universe_context(
             "history universe membership hash mismatch: "
             f"expected={expected_membership_hash}, actual={actual_membership_hash}"
         )
+    date_records = list(manifest.get("dates", []))
+    requested_date_values = [str(row.get("requested_signal_date", "")) for row in date_records]
+    if len([value for value in requested_date_values if value]) != len(
+        set(value for value in requested_date_values if value)
+    ):
+        raise UniverseAuditError("history universe manifest contains duplicate requested dates")
     date_statuses = {
         str(row.get("requested_signal_date", "")): str(row.get("snapshot_status", ""))
-        for row in manifest.get("dates", [])
+        for row in date_records
     }
     verified_statuses = {"CREATED_CANONICAL", "VERIFIED_MATCH"}
-    generated_statuses = [
-        status
-        for date, status in date_statuses.items()
-        if date and status not in {"SKIPPED_NO_EXACT_SIGNAL_DATE", ""}
-    ]
-    snapshot_verified = bool(generated_statuses) and all(
-        status in verified_statuses for status in generated_statuses
+    successful_snapshot_dates = sorted(
+        date for date, status in date_statuses.items() if date and status in verified_statuses
     )
+    sample_signal_dates = sorted(
+        raw_samples["signal_date"].dropna().astype(str).unique().tolist()
+        if "signal_date" in raw_samples.columns
+        else []
+    )
+    if set(sample_signal_dates) != set(successful_snapshot_dates):
+        raise UniverseAuditError(
+            "history universe samples signal_date set does not match successful snapshot dates: "
+            f"samples={sample_signal_dates}, snapshots={successful_snapshot_dates}"
+        )
+    allowed_complete_statuses = {*verified_statuses, "PROVEN_NON_TRADING_DATE"}
+    all_dates_accounted_for = bool(date_statuses) and all(
+        status in allowed_complete_statuses for status in date_statuses.values()
+    )
+    generation_status_consistent = all(
+        (
+            str(row.get("generation_status", "")) == "generated"
+            if str(row.get("snapshot_status", "")) in verified_statuses
+            else str(row.get("generation_status", "")) == "non_trading"
+            if str(row.get("snapshot_status", "")) == "PROVEN_NON_TRADING_DATE"
+            else False
+        )
+        for row in date_records
+    )
+    all_dates_accounted_for = all_dates_accounted_for and generation_status_consistent
+    computed_complete = all_dates_accounted_for and set(sample_signal_dates) == set(successful_snapshot_dates)
+    manifest_complete = bool(manifest.get("candidate_universe_snapshot_complete", computed_complete))
+    manifest_verified = bool(manifest.get("candidate_universe_snapshot_verified", manifest_complete))
+    if manifest_complete and not computed_complete:
+        raise UniverseAuditError("history universe manifest incorrectly claims a complete candidate snapshot")
+    snapshot_complete = computed_complete and manifest_complete
+    snapshot_verified = snapshot_complete and manifest_verified
     return {
         "manifest_path": str(manifest_path),
         "manifest_sha256": file_sha256(manifest_path),
-        "snapshot_complete": snapshot_verified,
+        "snapshot_complete": snapshot_complete,
         "snapshot_verified": snapshot_verified,
-        "audit_status": "VERIFIED" if snapshot_verified else "MANIFEST_UNVERIFIED",
+        "audit_status": "VERIFIED" if snapshot_verified else str(
+            manifest.get("universe_audit_status", "MANIFEST_UNVERIFIED")
+        ),
         "date_statuses": date_statuses,
     }
 
@@ -490,22 +544,68 @@ def _write_holdout_universe_outputs(
         scored["model_id"].astype(str).eq(str(ranking_model_id))
         & scored["evaluation_scope"].astype(str).eq(SCOPE_WALK_FORWARD)
     ].copy()
+    require_nonempty_codes(v004a, "code", "configured v004a scored rows")
+    require_nonempty_codes(v002, "code", "configured v002 scored rows")
+    v004a["code"] = normalize_code_series(v004a["code"])
+    v002["code"] = normalize_code_series(v002["code"])
+    v004a["signal_date"] = v004a["signal_date"].astype(str)
+    v002["signal_date"] = v002["signal_date"].astype(str)
     duplicate_scored_key_count = count_duplicate_keys(v004a, ("signal_date", "code")) + count_duplicate_keys(
         v002, ("signal_date", "code")
     )
     require_unique_keys(v004a, ("signal_date", "code"), "holdout v004a scored rows")
     require_unique_keys(v002, ("signal_date", "code"), "holdout v002 scored rows")
-    v004a["code"] = normalize_code_series(v004a["code"])
-    v002["code"] = normalize_code_series(v002["code"])
-    v004a["signal_date"] = v004a["signal_date"].astype(str)
-    v002["signal_date"] = v002["signal_date"].astype(str)
+
+    samples_available = samples_path is not None and samples_path.is_file()
+    annotated_raw = annotate_v004a_input_eligibility(raw_samples) if samples_available else pd.DataFrame()
+    if samples_available:
+        require_nonempty_codes(annotated_raw, "code", "holdout annotated samples")
+        annotated_raw["signal_date"] = annotated_raw["signal_date"].astype(str)
+        annotated_raw["code"] = normalize_code_series(annotated_raw["code"])
+        expected_scorable = annotated_raw[
+            annotated_raw["v004a_scorable_bool"].fillna(False).astype(bool)
+        ].copy()
+        require_nonempty_codes(expected_scorable, "code", "expected scorable samples")
+        require_unique_keys(
+            expected_scorable,
+            ("signal_date", "code"),
+            "expected scorable samples",
+        )
+        _require_exact_scored_keys(expected_scorable, v004a, "configured v004a scored rows")
+        _require_exact_scored_keys(expected_scorable, v002, "configured v002 scored rows")
+        membership_base = expected_scorable.copy()
+    else:
+        expected_scorable = pd.DataFrame()
+        membership_base = v004a.copy()
+
     v004a = v004a.rename(
         columns={"model_score": "v004a_model_score", "model_rank": "v004a_model_rank"}
     )
     v002 = v002[["signal_date", "code", "model_score", "model_rank"]].rename(
         columns={"model_score": "v002_model_score", "model_rank": "v002_model_rank"}
     )
-    membership = v004a.merge(v002, on=["signal_date", "code"], how="left")
+    v004a_payload_columns = ["signal_date", "code", "v004a_model_score", "v004a_model_rank"]
+    for column in HOLDOUT_UNIVERSE_MEMBERSHIP_COLUMNS:
+        if (
+            column in v004a.columns
+            and column not in membership_base.columns
+            and column not in v004a_payload_columns
+            and not column.startswith("v002_")
+            and not column.startswith("in_")
+            and column != "final_top3_rank"
+        ):
+            v004a_payload_columns.append(column)
+    membership = membership_base.merge(
+        v004a[v004a_payload_columns],
+        on=["signal_date", "code"],
+        how="left",
+        validate="one_to_one",
+    ).merge(
+        v002,
+        on=["signal_date", "code"],
+        how="left",
+        validate="one_to_one",
+    )
     if "name" not in membership.columns:
         membership["name"] = ""
     if "v004a_scorable_bool" not in membership.columns:
@@ -531,9 +631,9 @@ def _write_holdout_universe_outputs(
     membership = membership[HOLDOUT_UNIVERSE_MEMBERSHIP_COLUMNS].sort_values(
         ["signal_date", "code"], kind="mergesort"
     ).reset_index(drop=True)
+    require_nonempty_codes(membership, "code", "holdout membership")
 
-    annotated_raw = annotate_v004a_input_eligibility(raw_samples) if not raw_samples.empty else pd.DataFrame()
-    if not annotated_raw.empty:
+    if samples_available:
         annotated_raw["__audit_date"] = (
             annotated_raw["requested_signal_date"].astype(str)
             if "requested_signal_date" in annotated_raw.columns
@@ -556,20 +656,30 @@ def _write_holdout_universe_outputs(
         day_final = day[day["in_final_top3"].fillna(False).astype(bool)].sort_values(
             ["final_top3_rank", "code"], kind="mergesort"
         )
-        if annotated_raw.empty:
-            day_eligible = day[day["eligible_for_trade"].fillna(False).astype(bool)]
-        else:
+        if samples_available:
             day_eligible = annotated_raw[
                 annotated_raw["__audit_date"].eq(signal_date)
                 & annotated_raw["eligible_for_trade"].fillna(False).astype(bool)
             ]
+            eligible_count: Any = int(len(day_eligible))
+            eligible_hash = code_set_sha256(day_eligible)
+            eligible_count_available = True
+            eligible_source = "samples_annotated_v004a_input"
+        else:
+            day_eligible = pd.DataFrame()
+            eligible_count = pd.NA
+            eligible_hash = ""
+            eligible_count_available = False
+            eligible_source = "unavailable_pre_scored_only"
         day_v4_top = day_v4[pd.to_numeric(day_v4["v004a_model_rank"], errors="coerce").le(candidate_top_k)]
         day_v2_top = day_v2[pd.to_numeric(day_v2["v002_model_rank"], errors="coerce").le(candidate_top_k)]
         audit_rows.append(
             {
                 "signal_date": signal_date,
-                "eligible_count": int(len(day_eligible)),
-                "eligible_code_set_sha256": code_set_sha256(day_eligible),
+                "eligible_count": eligible_count,
+                "eligible_count_available": eligible_count_available,
+                "eligible_source": eligible_source,
+                "eligible_code_set_sha256": eligible_hash,
                 "scorable_count": int(len(day)),
                 "scorable_code_set_sha256": code_set_sha256(day),
                 "v004a_topk_count": int(len(day_v4_top)),
@@ -594,8 +704,20 @@ def _write_holdout_universe_outputs(
     membership_path = output_dir / "v005_fixed_grid_holdout_universe_membership.csv"
     audit_path = output_dir / "v005_fixed_grid_holdout_universe_audit.csv"
     manifest_path = output_dir / "v005_fixed_grid_holdout_universe_manifest.json"
-    membership.to_csv(membership_path, index=False, encoding="utf-8-sig", lineterminator="\n")
-    audit.to_csv(audit_path, index=False, encoding="utf-8-sig", lineterminator="\n")
+    atomic_write_csv(
+        membership_path,
+        membership,
+        index=False,
+        encoding="utf-8-sig",
+        lineterminator="\n",
+    )
+    atomic_write_csv(
+        audit_path,
+        audit,
+        index=False,
+        encoding="utf-8-sig",
+        lineterminator="\n",
+    )
     final_members = membership[membership["in_final_top3"].fillna(False).astype(bool)]
     manifest = {
         "universe_snapshot_schema_version": UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
@@ -605,8 +727,15 @@ def _write_holdout_universe_outputs(
         "scored_file_sha256": file_sha256(scored_path),
         "history_universe_manifest_path": str(history_universe["manifest_path"]),
         "history_universe_manifest_sha256": str(history_universe["manifest_sha256"]),
+        "candidate_universe_snapshot_complete": bool(history_universe["snapshot_complete"]),
         "candidate_universe_snapshot_verified": bool(history_universe["snapshot_verified"]),
         "universe_audit_status": str(history_universe["audit_status"]),
+        "eligible_count_available": bool(samples_available),
+        "eligible_source": (
+            "samples_annotated_v004a_input"
+            if samples_available
+            else "unavailable_pre_scored_only"
+        ),
         "candidate_top_k": int(candidate_top_k),
         "top_n": int(top_n),
         "ranking_model_id": str(ranking_model_id),
@@ -626,6 +755,38 @@ def _write_holdout_universe_outputs(
     }
     write_json(manifest_path, manifest)
     return membership, audit, manifest_path
+
+
+def _require_exact_scored_keys(
+    expected_scorable: pd.DataFrame,
+    scored_rows: pd.DataFrame,
+    label: str,
+    preview_limit: int = 10,
+) -> None:
+    expected_keys = set(
+        zip(
+            expected_scorable["signal_date"].astype(str),
+            normalize_code_series(expected_scorable["code"]),
+        )
+    )
+    actual_keys = set(
+        zip(
+            scored_rows["signal_date"].astype(str),
+            normalize_code_series(scored_rows["code"]),
+        )
+    )
+    if expected_keys == actual_keys:
+        return
+    missing = sorted(expected_keys.difference(actual_keys))
+    extra = sorted(actual_keys.difference(expected_keys))
+    missing_preview = [f"{signal_date}|{code}" for signal_date, code in missing[: int(preview_limit)]]
+    extra_preview = [f"{signal_date}|{code}" for signal_date, code in extra[: int(preview_limit)]]
+    raise UniverseAuditError(
+        f"{label} keys do not match expected scorable samples: "
+        f"expected_count={len(expected_keys)}, actual_count={len(actual_keys)}, "
+        f"missing_count={len(missing)}, extra_count={len(extra)}, "
+        f"missing_preview={missing_preview}, extra_preview={extra_preview}"
+    )
 
 
 def _key_set_from_rank(frame: pd.DataFrame, rank_column: str, top_k: int) -> set[tuple[str, str]]:
@@ -702,7 +863,7 @@ def build_holdout_scored_candidates(
     scored = add_scored_model_rank(pd.concat(scored_frames, ignore_index=True))
     output = build_scored_candidates_output(scored, feature_info)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output.to_csv(output_path, index=False, encoding="utf-8-sig")
+    atomic_write_csv(output_path, output)
     prepared = prepare_scored_candidates(output_path)
     coefficient_meta.update(
         {

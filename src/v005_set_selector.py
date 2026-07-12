@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .universe_audit import normalize_code_series, require_unique_keys
+from .universe_audit import normalize_code_series, require_nonempty_codes, require_unique_keys
 
 
 DEFAULT_SCORED_FILE = Path("reports/v004a/grid_v2_scored/v004a_scored_candidates.csv")
@@ -270,6 +270,7 @@ def prepare_scored_candidates(path: Path) -> pd.DataFrame:
     missing = [column for column in required if column not in raw.columns]
     if missing:
         raise RuntimeError(f"v005 input missing required columns: {missing}")
+    require_nonempty_codes(raw, "code", "v005 scored candidates")
     frame = raw.copy()
     frame["code"] = normalize_code_series(frame["code"])
     frame["signal_date"] = frame["signal_date"].astype(str)
@@ -313,6 +314,7 @@ def build_candidate_pool(
     v004a = scored[v004a_mask].copy()
     if v004a.empty:
         raise RuntimeError(f"no v004a rows found for l2={v004a_l2:g}, positive_weight={v004a_positive_weight:g}")
+    require_nonempty_codes(v004a, "code", "configured v004a scored rows")
     require_unique_keys(v004a, ("signal_date", "code"), "configured v004a scored rows")
     v004a = v004a.rename(columns={"model_score": "v004a_score", "model_rank": "v004a_model_rank"})
     v004a["v004a_model_rank"] = pd.to_numeric(v004a["v004a_model_rank"], errors="coerce")
@@ -323,6 +325,7 @@ def build_candidate_pool(
     v002 = scored[(scored["model_id"] == str(v002_model_id)) & (scored["evaluation_scope"] == SCOPE)].copy()
     if v002.empty:
         raise RuntimeError(f"no v002 rows found for model_id={v002_model_id}, scope={SCOPE}")
+    require_nonempty_codes(v002, "code", "configured v002 scored rows")
     require_unique_keys(v002, ("signal_date", "code"), "configured v002 scored rows")
     v002 = v002[["signal_date", "code", "model_score", "model_rank"]].rename(
         columns={"model_score": "v002_score", "model_rank": "v002_model_rank"}
