@@ -393,7 +393,20 @@ def build_signals_for_pool(
         except Exception as exc:
             if isinstance(exc, DataQualityError):
                 quality = dict(exc.quality)
-                quality.update({"name": name, "trade_date": as_of_date, "d0_date": d0_date, "error": str(exc)})
+                quality.update(
+                    {
+                        "code": str(code).zfill(6),
+                        "name": name,
+                        "trade_date": as_of_date,
+                        "d0_date": d0_date,
+                        "error_class": type(exc).__name__,
+                        "error": str(exc),
+                        "data_quality_reason": str(
+                            quality.get("warnings") or quality.get("hard_failures") or str(exc)
+                        ),
+                        "is_data_quality_error": True,
+                    }
+                )
                 quality_rows.append(quality)
             else:
                 quality_rows.append(_failed_quality_row(code, name, as_of_date, d0_date, exc))
@@ -1402,7 +1415,10 @@ def _failed_quality_row(code: str, name: str, trade_date: str, d0_date: str, exc
         "daily_minute_close_max_abs_diff": None,
         "daily_minute_close_check_ok": False,
         "warnings": "",
+        "error_class": type(exc).__name__,
         "error": str(exc),
+        "data_quality_reason": str(exc),
+        "is_data_quality_error": isinstance(exc, DataQualityError),
     }
 
 

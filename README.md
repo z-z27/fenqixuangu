@@ -696,6 +696,8 @@ off               # 兼容模式，不创建也不验证，状态为 UNVERIFIED_
 
 重跑同一区间时保持相同参数并使用 `create-or-verify` 或 `verify-only`。只有各层 count、code/key hash 和 canonical rows hash 全部一致，状态才会是 `VERIFIED_MATCH`。候选 universe hash 一致不代表完整行情缓存已冻结；`cache_snapshot_complete` 仍保持 `False`，不同 universe hash 的回测禁止直接比较。
 
+创建 canonical 前必须先检查每个 requested date 的审计结果，确认 `quality_failed=0`、`future_fetch_failed=0`，并且 `lookback_unresolved_dates` 为空。严格模式会解析完整 lookback，包括区间起点之前的日期；任何未解析日期都会终止运行且不会创建 canonical。失败详情保留在本次 `attempts/<run_id>/data_quality/` 和 generation log 中。
+
 ### 2. 跑 fixed-grid holdout
 
 ```powershell

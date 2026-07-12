@@ -30,11 +30,13 @@ from .universe_audit import (
     UniverseAuditError,
     atomic_write_csv,
     atomic_write_text,
+    canonical_row_lines,
     canonical_rows_sha256,
     code_set_sha256,
     count_duplicate_keys,
     normalize_code_series,
     require_nonempty_codes,
+    require_requested_signal_date_match,
     require_unique_keys,
     write_json,
 )
@@ -174,27 +176,43 @@ def run_fixed_grid_holdout(
         if samples_path is not None and samples_path.is_file()
         else pd.DataFrame()
     )
+    explicit_history_manifest_path = (
+        Path(history_universe_manifest_file) if history_universe_manifest_file else None
+    )
+    inferred_history_manifest_path = _infer_history_universe_manifest(samples_path)
+    manifest_backed = bool(
+        explicit_history_manifest_path is not None
+        or (
+            inferred_history_manifest_path is not None
+            and inferred_history_manifest_path.is_file()
+        )
+    )
+    legacy_duplicate_meta = _empty_legacy_duplicate_meta()
     if samples_path is not None and samples_path.is_file():
         require_nonempty_codes(raw_samples, "code", "holdout samples")
         raw_samples["code"] = normalize_code_series(raw_samples["code"])
-        sample_date_column = (
-            "requested_signal_date"
-            if "requested_signal_date" in raw_samples.columns
-            else "signal_date"
-        )
-        if sample_date_column not in raw_samples.columns:
+        if "signal_date" not in raw_samples.columns:
             raise UniverseAuditError("holdout samples are missing signal_date")
-        require_unique_keys(
-            raw_samples,
-            (sample_date_column, "code"),
-            "holdout samples",
-        )
+        raw_samples["signal_date"] = raw_samples["signal_date"].fillna("").astype(str)
+        if raw_samples["signal_date"].isin({"", "nan", "NaT", "None"}).any():
+            raise UniverseAuditError("holdout samples contain empty or invalid signal_date values")
+        if "requested_signal_date" in raw_samples.columns:
+            require_requested_signal_date_match(raw_samples)
+        if manifest_backed:
+            require_unique_keys(
+                raw_samples,
+                ("signal_date", "code"),
+                "manifest-backed holdout samples",
+            )
+        else:
+            raw_samples, legacy_duplicate_meta = _validate_and_exclude_legacy_duplicates(
+                raw_samples
+            )
     history_universe = _load_history_universe_context(
         samples_path=samples_path,
         raw_samples=raw_samples,
-        explicit_manifest_path=(
-            Path(history_universe_manifest_file) if history_universe_manifest_file else None
-        ),
+        explicit_manifest_path=explicit_history_manifest_path,
+        legacy_duplicate_meta=legacy_duplicate_meta,
     )
 
     if scored_file:
@@ -225,6 +243,14 @@ def run_fixed_grid_holdout(
             ranking_model_file=Path(ranking_model_file),
         )
 
+    _validate_configured_scored_coverage(
+        scored=scored,
+        raw_samples=raw_samples,
+        samples_available=samples_path is not None and samples_path.is_file(),
+        v004a_l2=float(v004a_l2),
+        v004a_positive_weight=float(v004a_positive_weight),
+        ranking_model_id=ranking_model_id,
+    )
     candidate_pool = build_candidate_pool(
         scored,
         candidate_top_k=int(candidate_top_k),
@@ -346,6 +372,9 @@ def run_fixed_grid_holdout(
                 "candidate_universe_manifest_sha256": universe_manifest_sha256,
                 "universe_snapshot_schema_version": UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
                 "universe_audit_status": str(history_universe["audit_status"]),
+                "legacy_duplicate_key_count": int(history_universe["legacy_duplicate_key_count"]),
+                "legacy_duplicate_row_count": int(history_universe["legacy_duplicate_row_count"]),
+                "legacy_duplicate_codes": str(history_universe["legacy_duplicate_codes"]),
             }
         ]
     )
@@ -388,19 +417,102 @@ def run_fixed_grid_holdout(
     return summary, policy_daily, replacement, daily_top3, report_path
 
 
+def _empty_legacy_duplicate_meta() -> dict[str, Any]:
+    return {
+        "legacy_duplicate_key_count": 0,
+        "legacy_duplicate_row_count": 0,
+        "legacy_duplicate_codes": "",
+    }
+
+
+def _validate_and_exclude_legacy_duplicates(
+    raw_samples: pd.DataFrame,
+) -> tuple[pd.DataFrame, dict[str, Any]]:
+    frame = raw_samples.copy().reset_index(drop=True)
+    duplicate_mask = frame.duplicated(["signal_date", "code"], keep=False)
+    if not duplicate_mask.any():
+        return frame, _empty_legacy_duplicate_meta()
+
+    annotated = annotate_v004a_input_eligibility(frame)
+    duplicate_rows = frame.loc[duplicate_mask].copy()
+    keys = duplicate_rows[["signal_date", "code"]].drop_duplicates().sort_values(
+        ["signal_date", "code"], kind="mergesort"
+    )
+    invalid_content: list[str] = []
+    scorable_keys: list[str] = []
+    for signal_date, code in keys.itertuples(index=False, name=None):
+        key_mask = frame["signal_date"].eq(signal_date) & frame["code"].eq(code)
+        group = frame.loc[key_mask]
+        canonical_lines = canonical_row_lines(
+            group,
+            HISTORY_CANDIDATE_COLUMNS,
+            ("signal_date", "code"),
+        )
+        key_text = f"{signal_date}|{code}"
+        if len(set(canonical_lines)) != 1:
+            invalid_content.append(key_text)
+
+        annotated_group = annotated.loc[key_mask]
+        intrinsic_reasons = annotated_group["v004a_exclusion_reason"].fillna("").astype(str).map(
+            lambda value: "|".join(
+                reason
+                for reason in value.split("|")
+                if reason and reason != "duplicate_signal_code"
+            )
+        )
+        explicitly_scorable = (
+            frame.loc[key_mask, "v004a_scorable_bool"].map(_bool_value).any()
+            if "v004a_scorable_bool" in frame.columns
+            else False
+        )
+        if explicitly_scorable or intrinsic_reasons.eq("").any():
+            scorable_keys.append(key_text)
+
+    if invalid_content:
+        raise UniverseAuditError(
+            "legacy duplicate groups contain non-identical HISTORY_CANDIDATE_COLUMNS rows: "
+            f"{invalid_content[:10]}"
+        )
+    if scorable_keys:
+        raise UniverseAuditError(
+            "legacy duplicate groups contain valid scorable rows and cannot be excluded: "
+            f"{scorable_keys[:10]}"
+        )
+
+    metadata = {
+        "legacy_duplicate_key_count": int(len(keys)),
+        "legacy_duplicate_row_count": int(duplicate_mask.sum()),
+        "legacy_duplicate_codes": ",".join(sorted(keys["code"].astype(str).unique().tolist())),
+    }
+    return frame.loc[~duplicate_mask].reset_index(drop=True), metadata
+
+
+def _bool_value(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"true", "1", "yes", "y"}
+
+
 def _load_history_universe_context(
     samples_path: Path | None,
     raw_samples: pd.DataFrame,
     explicit_manifest_path: Path | None,
+    legacy_duplicate_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    duplicate_meta = legacy_duplicate_meta or _empty_legacy_duplicate_meta()
     manifest_path = explicit_manifest_path or _infer_history_universe_manifest(samples_path)
     empty = {
         "manifest_path": "",
         "manifest_sha256": "",
         "snapshot_complete": False,
         "snapshot_verified": False,
-        "audit_status": "LEGACY_UNVERIFIED",
+        "audit_status": (
+            "LEGACY_UNVERIFIED_DUPLICATES_EXCLUDED"
+            if int(duplicate_meta["legacy_duplicate_key_count"]) > 0
+            else "LEGACY_UNVERIFIED"
+        ),
         "date_statuses": {},
+        **duplicate_meta,
     }
     if manifest_path is None:
         return empty
@@ -415,13 +527,6 @@ def _load_history_universe_context(
         raise UniverseAuditError(
             f"unsupported history universe manifest schema_version={schema}: {manifest_path}"
         )
-    if raw_samples.empty:
-        return {
-            **empty,
-            "manifest_path": str(manifest_path),
-            "manifest_sha256": file_sha256(manifest_path),
-            "audit_status": "MANIFEST_WITHOUT_SAMPLES_UNVERIFIED",
-        }
     expected_candidates_hash = str(manifest.get("history_candidates_canonical_rows_sha256", ""))
     actual_candidates_hash = canonical_rows_sha256(
         raw_samples,
@@ -463,19 +568,93 @@ def _load_history_universe_context(
     successful_snapshot_dates = sorted(
         date for date, status in date_statuses.items() if date and status in verified_statuses
     )
+    manifest_requested_dates = [str(value) for value in manifest.get("requested_dates", [])]
+    manifest_generated_dates = [str(value) for value in manifest.get("generated_dates", [])]
+    if not manifest_requested_dates:
+        raise UniverseAuditError("history universe manifest is missing requested_dates")
+    if len(manifest_requested_dates) != len(set(manifest_requested_dates)):
+        raise UniverseAuditError("history universe manifest requested_dates contains duplicates")
+    if len(manifest_generated_dates) != len(set(manifest_generated_dates)):
+        raise UniverseAuditError("history universe manifest generated_dates contains duplicates")
+    expected_requested_dates = [
+        timestamp.strftime("%Y-%m-%d")
+        for timestamp in pd.date_range(
+            pd.Timestamp(str(manifest.get("start_date", ""))),
+            pd.Timestamp(str(manifest.get("end_date", ""))),
+            freq="D",
+        )
+        if timestamp.weekday() < 5
+    ]
+    if set(manifest_requested_dates) != set(expected_requested_dates):
+        raise UniverseAuditError(
+            "history universe manifest requested_dates is incomplete for start/end range: "
+            f"expected={expected_requested_dates}, manifest={sorted(manifest_requested_dates)}"
+        )
+    if set(manifest_requested_dates) != set(date_statuses):
+        raise UniverseAuditError(
+            "history universe manifest requested_dates does not match date audit records: "
+            f"requested={sorted(manifest_requested_dates)}, audited={sorted(date_statuses)}"
+        )
+    if set(manifest_generated_dates) != set(successful_snapshot_dates):
+        raise UniverseAuditError(
+            "history universe manifest generated_dates does not match successful snapshots: "
+            f"manifest={sorted(manifest_generated_dates)}, snapshots={successful_snapshot_dates}"
+        )
     sample_signal_dates = sorted(
         raw_samples["signal_date"].dropna().astype(str).unique().tolist()
         if "signal_date" in raw_samples.columns
         else []
     )
-    if set(sample_signal_dates) != set(successful_snapshot_dates):
+    manifest_sample_signal_dates = sorted(
+        str(value) for value in manifest.get("sample_signal_dates", [])
+    )
+    if len(manifest_sample_signal_dates) != len(set(manifest_sample_signal_dates)):
+        raise UniverseAuditError("history universe manifest sample_signal_dates contains duplicates")
+    if manifest_sample_signal_dates != sample_signal_dates:
         raise UniverseAuditError(
-            "history universe samples signal_date set does not match successful snapshot dates: "
-            f"samples={sample_signal_dates}, snapshots={successful_snapshot_dates}"
+            "history universe manifest sample_signal_dates does not match samples: "
+            f"manifest={manifest_sample_signal_dates}, samples={sample_signal_dates}"
         )
+    sample_counts = (
+        raw_samples.assign(signal_date=raw_samples["signal_date"].astype(str))
+        .groupby("signal_date", dropna=False)
+        .size()
+        .to_dict()
+        if not raw_samples.empty and "signal_date" in raw_samples.columns
+        else {}
+    )
+    unexpected_sample_dates = sorted(set(sample_counts).difference(successful_snapshot_dates))
+    if unexpected_sample_dates:
+        raise UniverseAuditError(
+            "history universe samples contain dates without successful snapshots: "
+            f"{unexpected_sample_dates}"
+        )
+    for row in date_records:
+        requested_date = str(row.get("requested_signal_date", ""))
+        snapshot_status = str(row.get("snapshot_status", ""))
+        if snapshot_status not in verified_statuses:
+            continue
+        candidate_count = pd.to_numeric(
+            pd.Series([row.get("candidate_row_count")]), errors="coerce"
+        ).iloc[0]
+        if pd.isna(candidate_count) or float(candidate_count) < 0 or not float(candidate_count).is_integer():
+            raise UniverseAuditError(
+                f"history universe manifest has invalid candidate_row_count for {requested_date}: "
+                f"{row.get('candidate_row_count')}"
+            )
+        actual_count = int(sample_counts.get(requested_date, 0))
+        if actual_count != int(candidate_count):
+            raise UniverseAuditError(
+                "history universe samples row count does not match candidate_row_count: "
+                f"date={requested_date}, samples={actual_count}, audit={int(candidate_count)}"
+            )
     allowed_complete_statuses = {*verified_statuses, "PROVEN_NON_TRADING_DATE"}
     all_dates_accounted_for = bool(date_statuses) and all(
         status in allowed_complete_statuses for status in date_statuses.values()
+    )
+    lookback_complete = all(
+        not str(row.get("lookback_unresolved_dates", "")).strip()
+        for row in date_records
     )
     generation_status_consistent = all(
         (
@@ -487,8 +666,10 @@ def _load_history_universe_context(
         )
         for row in date_records
     )
-    all_dates_accounted_for = all_dates_accounted_for and generation_status_consistent
-    computed_complete = all_dates_accounted_for and set(sample_signal_dates) == set(successful_snapshot_dates)
+    all_dates_accounted_for = (
+        all_dates_accounted_for and generation_status_consistent and lookback_complete
+    )
+    computed_complete = all_dates_accounted_for and not unexpected_sample_dates
     manifest_complete = bool(manifest.get("candidate_universe_snapshot_complete", computed_complete))
     manifest_verified = bool(manifest.get("candidate_universe_snapshot_verified", manifest_complete))
     if manifest_complete and not computed_complete:
@@ -504,6 +685,7 @@ def _load_history_universe_context(
             manifest.get("universe_audit_status", "MANIFEST_UNVERIFIED")
         ),
         "date_statuses": date_statuses,
+        **duplicate_meta,
     }
 
 
@@ -692,8 +874,13 @@ def _write_holdout_universe_outputs(
                 "final_top3_code_set_sha256": code_set_sha256(day_final),
                 "missing_v002_score_count": int(pd.to_numeric(day["v002_model_score"], errors="coerce").isna().sum()),
                 "duplicate_scored_key_count": int(duplicate_scored_key_count),
-                "snapshot_status": history_universe.get("date_statuses", {}).get(signal_date, "LEGACY_UNVERIFIED"),
+                "snapshot_status": history_universe.get("date_statuses", {}).get(
+                    signal_date, str(history_universe["audit_status"])
+                ),
                 "candidate_universe_snapshot_verified": bool(history_universe["snapshot_verified"]),
+                "legacy_duplicate_key_count": int(history_universe["legacy_duplicate_key_count"]),
+                "legacy_duplicate_row_count": int(history_universe["legacy_duplicate_row_count"]),
+                "legacy_duplicate_codes": str(history_universe["legacy_duplicate_codes"]),
                 "v004a_topk_codes": ",".join(day_v4_top["code"].astype(str).tolist()),
                 "v002_topk_codes": ",".join(day_v2_top["code"].astype(str).tolist()),
                 "v005_candidate_pool_codes": ",".join(day_candidate["code"].astype(str).tolist()),
@@ -730,6 +917,9 @@ def _write_holdout_universe_outputs(
         "candidate_universe_snapshot_complete": bool(history_universe["snapshot_complete"]),
         "candidate_universe_snapshot_verified": bool(history_universe["snapshot_verified"]),
         "universe_audit_status": str(history_universe["audit_status"]),
+        "legacy_duplicate_key_count": int(history_universe["legacy_duplicate_key_count"]),
+        "legacy_duplicate_row_count": int(history_universe["legacy_duplicate_row_count"]),
+        "legacy_duplicate_codes": str(history_universe["legacy_duplicate_codes"]),
         "eligible_count_available": bool(samples_available),
         "eligible_source": (
             "samples_annotated_v004a_input"
@@ -787,6 +977,48 @@ def _require_exact_scored_keys(
         f"missing_count={len(missing)}, extra_count={len(extra)}, "
         f"missing_preview={missing_preview}, extra_preview={extra_preview}"
     )
+
+
+def _validate_configured_scored_coverage(
+    scored: pd.DataFrame,
+    raw_samples: pd.DataFrame,
+    samples_available: bool,
+    v004a_l2: float,
+    v004a_positive_weight: float,
+    ranking_model_id: str,
+) -> None:
+    v004a = scored[
+        scored["model_id"].astype(str).eq(MODEL_ID_V004A)
+        & scored["evaluation_scope"].astype(str).eq(SCOPE_WALK_FORWARD)
+        & pd.to_numeric(scored["l2"], errors="coerce").sub(float(v004a_l2)).abs().le(1e-9)
+        & pd.to_numeric(scored["positive_weight"], errors="coerce")
+        .sub(float(v004a_positive_weight))
+        .abs()
+        .le(1e-9)
+    ].copy()
+    v002 = scored[
+        scored["model_id"].astype(str).eq(str(ranking_model_id))
+        & scored["evaluation_scope"].astype(str).eq(SCOPE_WALK_FORWARD)
+    ].copy()
+    require_nonempty_codes(v004a, "code", "configured v004a scored rows")
+    require_nonempty_codes(v002, "code", "configured v002 scored rows")
+    v004a["code"] = normalize_code_series(v004a["code"])
+    v002["code"] = normalize_code_series(v002["code"])
+    v004a["signal_date"] = v004a["signal_date"].astype(str)
+    v002["signal_date"] = v002["signal_date"].astype(str)
+    require_unique_keys(v004a, ("signal_date", "code"), "configured v004a scored rows")
+    require_unique_keys(v002, ("signal_date", "code"), "configured v002 scored rows")
+    if samples_available:
+        annotated = annotate_v004a_input_eligibility(raw_samples)
+        expected = annotated[
+            annotated["v004a_scorable_bool"].fillna(False).astype(bool)
+        ].copy()
+        require_nonempty_codes(expected, "code", "expected scorable samples")
+        require_unique_keys(expected, ("signal_date", "code"), "expected scorable samples")
+        _require_exact_scored_keys(expected, v004a, "configured v004a scored rows")
+        _require_exact_scored_keys(expected, v002, "configured v002 scored rows")
+        return
+    _require_exact_scored_keys(v004a, v002, "configured v002 scored rows")
 
 
 def _key_set_from_rank(frame: pd.DataFrame, rank_column: str, top_k: int) -> set[tuple[str, str]]:

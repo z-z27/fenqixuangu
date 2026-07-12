@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
@@ -52,6 +53,16 @@ from .v004a import annotate_v004a_input_eligibility
 
 DEFAULT_TARGET_RETURN_PCT = 7.0
 DEFAULT_SECONDARY_TARGET_RETURN_PCT = 10.0
+
+
+@dataclass(frozen=True)
+class LookbackResolution:
+    frame: pd.DataFrame
+    expected_dates: tuple[str, ...]
+    data_dates: tuple[str, ...]
+    proven_non_trading_dates: tuple[str, ...]
+    unresolved_dates: tuple[str, ...]
+    errors: tuple[str, ...]
 
 FORBIDDEN_HISTORY_SAMPLE_COLUMNS = {
     "executed",
@@ -263,7 +274,7 @@ def run_history_sample_generation(
         audit_appended = False
         print(f"[history-samples] {date_index}/{total_dates} start {requested_date}", flush=True)
         try:
-            pool = _collect_limitups_for_history_sample(
+            lookback = _collect_limitups_for_history_sample(
                 service=service,
                 requested_date=requested_date,
                 start_date=start_date,
@@ -274,6 +285,8 @@ def run_history_sample_generation(
                 proven_non_trading_dates=proven_non_trading_dates,
                 strict=universe_snapshot_mode != "off",
             )
+            pool = lookback.frame
+            _apply_lookback_resolution(audit_row, run_row, lookback)
             raw_source = _standardize_raw_source_pool(pool, requested_date)
             raw_identity = stage_identity(_raw_stage_snapshot(raw_source))
             _apply_stage_identity(audit_row, "raw_source", raw_identity)
@@ -281,7 +294,33 @@ def run_history_sample_generation(
                 raw_source, ("source_trade_date", "code")
             )
             require_unique_keys(raw_source, ("source_trade_date", "code"), "raw_source_pool")
-            actual_date = _latest_trade_date_from_pool(pool)
+            if lookback.unresolved_dates and universe_snapshot_mode != "off":
+                audit_row["generation_status"] = "failed"
+                audit_row["snapshot_status"] = "LOOKBACK_UNRESOLVED"
+                empty_signal_pool = _empty_signal_pool_frame()
+                empty_candidates = _empty_history_candidates_frame()
+                universe_membership_frames.append(
+                    _build_history_universe_membership(
+                        requested_date=requested_date,
+                        actual_date="",
+                        raw_source=raw_source,
+                        signal_pool=empty_signal_pool,
+                        candidates=empty_candidates,
+                    )
+                )
+                universe_audit_rows.append(audit_row)
+                audit_appended = True
+                raise UniverseAuditError(
+                    "LOOKBACK_UNRESOLVED: "
+                    f"requested_signal_date={requested_date}, "
+                    f"unresolved_dates={list(lookback.unresolved_dates)}, "
+                    f"errors={list(lookback.errors)}"
+                )
+            actual_date = (
+                requested_date
+                if requested_date in lookback.data_dates
+                else _latest_trade_date_from_pool(pool)
+            )
             run_row["actual_signal_date"] = actual_date
             run_row["limitup_rows"] = int(len(pool))
             audit_row["actual_signal_date"] = actual_date
@@ -295,6 +334,34 @@ def run_history_sample_generation(
                     or (not force_refresh and _cached_daily_proves_non_trading(service, requested_date))
                 )
                 if proven_non_trading:
+                    canonical_dir = (
+                        Path(data_config.snapshot_dir)
+                        / "history_universe"
+                        / requested_date
+                        / "canonical"
+                    )
+                    if canonical_dir.exists():
+                        run_row["status"] = "failed"
+                        run_row["error"] = "existing canonical conflicts with non-trading classification"
+                        audit_row["generation_status"] = "failed"
+                        audit_row["snapshot_status"] = "SNAPSHOT_STATUS_CONFLICT"
+                        empty_signal_pool = _empty_signal_pool_frame()
+                        empty_candidates = _empty_history_candidates_frame()
+                        universe_membership_frames.append(
+                            _build_history_universe_membership(
+                                requested_date=requested_date,
+                                actual_date=actual_date,
+                                raw_source=raw_source,
+                                signal_pool=empty_signal_pool,
+                                candidates=empty_candidates,
+                            )
+                        )
+                        universe_audit_rows.append(audit_row)
+                        audit_appended = True
+                        raise UniverseAuditError(
+                            "SNAPSHOT_STATUS_CONFLICT: existing canonical cannot be reclassified "
+                            f"as PROVEN_NON_TRADING_DATE: {canonical_dir}"
+                        )
                     proven_non_trading_dates.add(requested_date)
                     run_row["status"] = "skipped_non_trading"
                     run_row["error"] = "requested date reliably proven to be non-trading"
@@ -305,13 +372,15 @@ def run_history_sample_generation(
                     run_row["error"] = "exact signal date limit-up pool missing and trading status is unconfirmed"
                     audit_row["generation_status"] = "failed"
                     audit_row["snapshot_status"] = "MISSING_EXACT_SIGNAL_DATE"
+                empty_signal_pool = _empty_signal_pool_frame()
+                empty_candidates = _empty_history_candidates_frame()
                 universe_membership_frames.append(
                     _build_history_universe_membership(
                         requested_date=requested_date,
                         actual_date=actual_date,
                         raw_source=raw_source,
-                        signal_pool=pd.DataFrame(),
-                        candidates=pd.DataFrame(),
+                        signal_pool=empty_signal_pool,
+                        candidates=empty_candidates,
                     )
                 )
                 universe_audit_rows.append(audit_row)
@@ -342,8 +411,18 @@ def run_history_sample_generation(
             )
             quality_ok = int(quality_counts.get("ok", 0))
             quality_failed = int(quality_counts.get("failed", 0))
+            quality_failure_meta = _quality_failure_metadata(quality_rows)
             audit_row["quality_ok"] = quality_ok
             audit_row["quality_failed"] = quality_failed
+            audit_row.update(quality_failure_meta)
+            run_row.update(
+                {
+                    "quality_rows": int(len(quality_rows)),
+                    "quality_ok": quality_ok,
+                    "quality_failed": quality_failed,
+                    **quality_failure_meta,
+                }
+            )
             print(
                 f"[history-samples] {requested_date} signals={len(signals)} "
                 f"quality_ok={quality_ok} quality_failed={quality_failed}",
@@ -359,13 +438,25 @@ def run_history_sample_generation(
                 run_root / "data_quality",
                 trade_date=actual_date,
             )
+            run_row.update(
+                {
+                    "signals_csv": str(signals_csv),
+                    "signals_markdown": str(signals_md),
+                    "quality_csv": str(quality_csv),
+                    "quality_markdown": str(quality_md),
+                }
+            )
             if quality_failed and universe_snapshot_mode != "off":
                 audit_row["snapshot_status"] = "GENERATION_FAILED"
                 raise UniverseAuditError(
-                    f"GENERATION_FAILED: signal generation reported {quality_failed} failed rows for {requested_date}"
+                    "GENERATION_FAILED: signal generation data quality failures; "
+                    f"requested_signal_date={requested_date}, failed_count={quality_failed}, "
+                    f"failed_codes={quality_failure_meta['quality_failed_codes']}, "
+                    f"details={quality_failure_meta['quality_failed_details']}"
                 )
             signal_frame = _signals_to_frame(signals)
             signal_frame = _standardize_signal_pool(signal_frame, requested_date, actual_date)
+            audit_row["signal_row_count"] = int(len(signal_frame))
             audit_row["duplicate_signal_key_count"] = count_duplicate_keys(
                 signal_frame, ("requested_signal_date", "code")
             )
@@ -392,6 +483,15 @@ def run_history_sample_generation(
                 force_refresh=force_refresh,
             )
             future_fetch_rows.extend(future_fetch["rows"])
+            audit_row["future_fetch_failed"] = int(future_fetch["failed"])
+            run_row.update(
+                {
+                    "future_fetch_end_date": future_end_date,
+                    "future_fetch_attempted": int(future_fetch["attempted"]),
+                    "future_fetch_ok": int(future_fetch["ok"]),
+                    "future_fetch_failed": int(future_fetch["failed"]),
+                }
+            )
             print(
                 f"[history-samples] {requested_date} future_fetch "
                 f"attempted={future_fetch['attempted']} ok={future_fetch['ok']} failed={future_fetch['failed']} "
@@ -421,6 +521,7 @@ def run_history_sample_generation(
                 )
             day_candidates = annotate_v004a_input_eligibility(pd.DataFrame(day_candidate_rows))
             require_nonempty_codes(day_candidates, "code", "history candidates")
+            audit_row["candidate_row_count"] = int(len(day_candidates))
             audit_row["signal_date_mismatch_count"] = _signal_date_mismatch_count(day_candidates)
             audit_row["duplicate_candidate_key_count"] = count_duplicate_keys(
                 day_candidates, ("requested_signal_date", "code")
@@ -637,6 +738,14 @@ def run_history_sample_generation(
     )
 
 
+def _empty_signal_pool_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=list(SIGNAL_ROW_COLUMNS))
+
+
+def _empty_history_candidates_frame() -> pd.DataFrame:
+    return pd.DataFrame(columns=HISTORY_CANDIDATE_COLUMNS)
+
+
 def _standardize_raw_source_pool(pool: pd.DataFrame, requested_date: str) -> pd.DataFrame:
     frame = pool.copy().reset_index(drop=True)
     missing = [column for column in ("trade_date", "code") if column not in frame.columns]
@@ -828,6 +937,17 @@ def _empty_universe_audit_row(requested_date: str) -> dict[str, Any]:
         "generation_status": "started",
         "quality_ok": 0,
         "quality_failed": 0,
+        "quality_failed_codes": "",
+        "quality_failed_error_classes": "",
+        "quality_failed_details": "",
+        "future_fetch_failed": 0,
+        "signal_row_count": 0,
+        "candidate_row_count": 0,
+        "lookback_expected_dates": "",
+        "lookback_data_dates": "",
+        "lookback_proven_non_trading_dates": "",
+        "lookback_unresolved_dates": "",
+        "lookback_errors": "",
         "signal_date_mismatch_count": 0,
         "duplicate_raw_key_count": 0,
         "duplicate_signal_key_count": 0,
@@ -842,6 +962,58 @@ def _empty_universe_audit_row(requested_date: str) -> dict[str, Any]:
         row[f"{prefix}_key_set_sha256"] = ""
         row[f"{prefix}_rows_sha256"] = ""
     return row
+
+
+def _apply_lookback_resolution(
+    audit_row: dict[str, Any],
+    run_row: dict[str, Any],
+    resolution: LookbackResolution,
+) -> None:
+    values = {
+        "lookback_expected_dates": ",".join(resolution.expected_dates),
+        "lookback_data_dates": ",".join(resolution.data_dates),
+        "lookback_proven_non_trading_dates": ",".join(
+            resolution.proven_non_trading_dates
+        ),
+        "lookback_unresolved_dates": ",".join(resolution.unresolved_dates),
+        "lookback_errors": " | ".join(resolution.errors),
+    }
+    audit_row.update(values)
+    run_row.update(values)
+
+
+def _quality_failure_metadata(quality_rows: list[dict[str, Any]]) -> dict[str, str]:
+    failed = [row for row in quality_rows if str(row.get("status", "")) == "failed"]
+    codes = sorted(
+        {
+            str(row.get("code", "")).zfill(6)
+            for row in failed
+            if str(row.get("code", "")).strip()
+        }
+    )
+    error_classes = sorted(
+        {str(row.get("error_class", "UnknownError")) for row in failed}
+    )
+    details: list[str] = []
+    for row in failed:
+        code = str(row.get("code", "")).zfill(6)
+        error_class = str(row.get("error_class", "UnknownError"))
+        error = str(row.get("error", ""))
+        reason = str(
+            row.get("data_quality_reason", "")
+            or row.get("warnings", "")
+            or error
+        )
+        is_quality_error = _bool_from_value(row.get("is_data_quality_error", False))
+        details.append(
+            f"code={code};error_class={error_class};error={error};"
+            f"data_quality_reason={reason};is_data_quality_error={is_quality_error}"
+        )
+    return {
+        "quality_failed_codes": ",".join(codes),
+        "quality_failed_error_classes": ",".join(error_classes),
+        "quality_failed_details": " | ".join(details),
+    }
 
 
 def _apply_stage_identity(row: dict[str, Any], prefix: str, identity: dict[str, Any]) -> None:
@@ -901,16 +1073,30 @@ def _assess_history_snapshot_completeness(
     )
     failure_reasons: list[str] = []
     if universe_audit.empty:
-        date_rows = pd.DataFrame(columns=["requested_signal_date", "snapshot_status", "generation_status"])
+        date_rows = pd.DataFrame(
+            columns=[
+                "requested_signal_date",
+                "snapshot_status",
+                "generation_status",
+                "candidate_row_count",
+                "lookback_unresolved_dates",
+            ]
+        )
     else:
         required = {"requested_signal_date", "snapshot_status"}
         missing = sorted(required.difference(universe_audit.columns))
         if missing:
             failure_reasons.append(f"universe audit missing columns: {missing}")
         date_rows = universe_audit.copy()
-        for column in ("requested_signal_date", "snapshot_status", "generation_status"):
+        for column in (
+            "requested_signal_date",
+            "snapshot_status",
+            "generation_status",
+            "candidate_row_count",
+            "lookback_unresolved_dates",
+        ):
             if column not in date_rows.columns:
-                date_rows[column] = ""
+                date_rows[column] = 0 if column == "candidate_row_count" else ""
         duplicate_dates = date_rows["requested_signal_date"].astype(str).duplicated(keep=False)
         if duplicate_dates.any():
             preview = sorted(date_rows.loc[duplicate_dates, "requested_signal_date"].astype(str).unique().tolist())
@@ -929,6 +1115,7 @@ def _assess_history_snapshot_completeness(
     successful_snapshot_dates = sorted(
         date for date, status in statuses.items() if status in successful_statuses
     )
+    audited_requested_dates = sorted(statuses)
     proven_non_trading_dates = sorted(
         date for date, status in statuses.items() if status == proven_status
     )
@@ -937,8 +1124,16 @@ def _assess_history_snapshot_completeness(
         failed_rows = date_rows[
             date_rows["generation_status"].astype(str).eq("failed")
             | date_rows["snapshot_status"].astype(str).isin(
-                {"MISSING_EXACT_SIGNAL_DATE", "GENERATION_FAILED", "CORRUPT_CANONICAL", "SNAPSHOT_MISMATCH"}
+                {
+                    "MISSING_EXACT_SIGNAL_DATE",
+                    "GENERATION_FAILED",
+                    "LOOKBACK_UNRESOLVED",
+                    "SNAPSHOT_STATUS_CONFLICT",
+                    "CORRUPT_CANONICAL",
+                    "SNAPSHOT_MISMATCH",
+                }
             )
+            | date_rows["lookback_unresolved_dates"].fillna("").astype(str).ne("")
         ]
         if not failed_rows.empty:
             failure_reasons.append(
@@ -950,6 +1145,8 @@ def _assess_history_snapshot_completeness(
             "snapshot_verified": False,
             "audit_status": "PARTIAL_UNVERIFIED" if failure_reasons else "UNVERIFIED_OFF",
             "sample_signal_dates": sample_signal_dates,
+            "requested_dates": audited_requested_dates,
+            "generated_dates": successful_snapshot_dates,
             "successful_snapshot_dates": successful_snapshot_dates,
             "proven_non_trading_dates": proven_non_trading_dates,
             "failure_reasons": failure_reasons,
@@ -989,17 +1186,54 @@ def _assess_history_snapshot_completeness(
         failure_reasons.append(
             f"inconsistent generation/snapshot statuses: {inconsistent_generation_rows}"
         )
-    if set(sample_signal_dates) != set(successful_snapshot_dates):
+    unresolved_lookback = {
+        str(row["requested_signal_date"]): str(row["lookback_unresolved_dates"])
+        for _, row in date_rows.iterrows()
+        if str(row.get("lookback_unresolved_dates", "")).strip()
+    }
+    if unresolved_lookback:
+        failure_reasons.append(f"lookback unresolved dates remain: {unresolved_lookback}")
+
+    sample_counts = (
+        candidates.assign(signal_date=candidates["signal_date"].astype(str))
+        .groupby("signal_date", dropna=False)
+        .size()
+        .to_dict()
+        if not candidates.empty and "signal_date" in candidates.columns
+        else {}
+    )
+    unexpected_sample_dates = sorted(set(sample_counts).difference(successful_snapshot_dates))
+    if unexpected_sample_dates:
         failure_reasons.append(
-            "samples signal_date set does not match successful snapshot dates: "
-            f"samples={sample_signal_dates}, snapshots={successful_snapshot_dates}"
+            f"samples contain dates without successful snapshots: {unexpected_sample_dates}"
         )
+    for _, row in date_rows.iterrows():
+        requested_date = str(row["requested_signal_date"])
+        if str(row["snapshot_status"]) not in successful_statuses:
+            continue
+        candidate_count = pd.to_numeric(
+            pd.Series([row.get("candidate_row_count")]), errors="coerce"
+        ).iloc[0]
+        if pd.isna(candidate_count) or float(candidate_count) < 0 or not float(candidate_count).is_integer():
+            failure_reasons.append(
+                f"invalid candidate_row_count for {requested_date}: {row.get('candidate_row_count')}"
+            )
+            continue
+        expected_count = int(candidate_count)
+        actual_count = int(sample_counts.get(requested_date, 0))
+        if actual_count != expected_count:
+            failure_reasons.append(
+                "samples row count does not match audit candidate_row_count: "
+                f"date={requested_date}, samples={actual_count}, audit={expected_count}"
+            )
     snapshot_complete = not failure_reasons
     return {
         "snapshot_complete": snapshot_complete,
         "snapshot_verified": snapshot_complete,
         "audit_status": "VERIFIED" if snapshot_complete else "INCOMPLETE",
         "sample_signal_dates": sample_signal_dates,
+        "requested_dates": audited_requested_dates,
+        "generated_dates": successful_snapshot_dates,
         "successful_snapshot_dates": successful_snapshot_dates,
         "proven_non_trading_dates": proven_non_trading_dates,
         "failure_reasons": failure_reasons,
@@ -1214,6 +1448,8 @@ def _write_history_universe_outputs(
         "candidate_universe_snapshot_verified": bool(assessed["snapshot_verified"]),
         "universe_audit_status": str(assessed["audit_status"]),
         "sample_signal_dates": list(assessed["sample_signal_dates"]),
+        "requested_dates": list(assessed["requested_dates"]),
+        "generated_dates": list(assessed["generated_dates"]),
         "successful_snapshot_dates": list(assessed["successful_snapshot_dates"]),
         "proven_non_trading_dates": list(assessed["proven_non_trading_dates"]),
         "failure_reasons": list(assessed["failure_reasons"]),
@@ -1240,33 +1476,66 @@ def _collect_limitups_for_history_sample(
     missing_dates: set[str] | None = None,
     proven_non_trading_dates: set[str] | None = None,
     strict: bool = False,
-) -> pd.DataFrame:
-    """Collect lookback limit-up pools without scanning pre-window holidays."""
+) -> LookbackResolution:
+    """Resolve every calendar date in the lookback before snapshot creation."""
     frames: list[pd.DataFrame] = []
     errors: list[str] = []
     known_missing = missing_dates if missing_dates is not None else set()
     known_non_trading = proven_non_trading_dates if proven_non_trading_dates is not None else set()
     anchor = pd.Timestamp(requested_date)
     start_ts = pd.Timestamp(start_date)
+    expected_dates: list[str] = []
+    data_dates: set[str] = set()
+    resolved_non_trading: set[str] = set()
+    unresolved_dates: set[str] = set()
 
     for offset in range(max(1, int(lookback_days))):
         current = anchor - pd.Timedelta(days=offset)
-        if current.weekday() >= 5:
-            continue
         date_text = current.strftime("%Y-%m-%d")
-        cached = None if force_refresh else service.limit_up_cache.read(date_text)
+        expected_dates.append(date_text)
+        if current.weekday() >= 5:
+            known_missing.add(date_text)
+            known_non_trading.add(date_text)
+            resolved_non_trading.add(date_text)
+            continue
+
+        cached: pd.DataFrame | None = None
+        if not force_refresh:
+            try:
+                cached = service.limit_up_cache.read(date_text)
+            except Exception as exc:
+                errors.append(f"{date_text}: cache read {type(exc).__name__}: {exc}")
         if cached is not None and not cached.empty:
-            frames.append(cached.copy())
+            exact_cached = _rows_for_trade_date(cached, date_text)
+            if not exact_cached.empty:
+                frames.append(exact_cached)
+                data_dates.add(date_text)
+                unresolved_dates.discard(date_text)
+                continue
+            else:
+                errors.append(f"{date_text}: limit-up cache contains no exact trade_date rows")
+                if not strict:
+                    unresolved_dates.add(date_text)
+                    continue
+
+        if date_text in known_non_trading and not force_refresh:
+            resolved_non_trading.add(date_text)
+            unresolved_dates.discard(date_text)
+            print(f"[history-samples] skip proven non-trading date {date_text}", flush=True)
             continue
-        if date_text in known_missing and not force_refresh:
-            print(f"[history-samples] skip known missing limit-up date {date_text}", flush=True)
+        if date_text in known_missing and not force_refresh and not strict:
+            unresolved_dates.add(date_text)
+            print(f"[history-samples] skip known unresolved limit-up date {date_text}", flush=True)
             continue
-        if current < start_ts and not force_refresh:
+        if current < start_ts and not force_refresh and not strict:
+            unresolved_dates.add(date_text)
             print(f"[history-samples] skip pre-window missing limit-up cache {date_text}", flush=True)
             continue
         if not force_refresh and _cached_daily_proves_non_trading(service, date_text):
             known_missing.add(date_text)
             known_non_trading.add(date_text)
+            resolved_non_trading.add(date_text)
+            unresolved_dates.discard(date_text)
             print(f"[history-samples] skip non-trading date from cached daily data {date_text}", flush=True)
             continue
 
@@ -1283,26 +1552,51 @@ def _collect_limitups_for_history_sample(
             if "date_seen=0" in message and not force_refresh:
                 known_missing.add(date_text)
                 known_non_trading.add(date_text)
+                resolved_non_trading.add(date_text)
+                unresolved_dates.discard(date_text)
                 print(f"[history-samples] skip non-trading date after daily scan {date_text}", flush=True)
                 continue
-            errors.append(f"{date_text}: {message}")
-            if strict or offset == 0:
-                raise
+            unresolved_dates.add(date_text)
+            errors.append(f"{date_text}: {type(exc).__name__}: {message}")
             continue
-        if frame is not None and not frame.empty:
-            frames.append(frame)
+        if frame is None or frame.empty:
+            data_dates.add(date_text)
+            unresolved_dates.discard(date_text)
+            continue
+        exact_frame = _rows_for_trade_date(frame, date_text)
+        if exact_frame.empty:
+            unresolved_dates.add(date_text)
+            errors.append(f"{date_text}: collected limit-up rows contain no exact trade_date")
+            continue
+        frames.append(exact_frame)
+        data_dates.add(date_text)
+        unresolved_dates.discard(date_text)
 
-    if not frames:
-        if requested_date in known_non_trading:
-            return pd.DataFrame(columns=["trade_date", "code"])
+    if frames:
+        result = pd.concat(frames, ignore_index=True)
+        result["code"] = normalize_code_series(result.get("code", pd.Series(dtype=object)))
+        result["trade_date"] = result.get("trade_date", "").astype(str)
+        result = result.sort_values(["trade_date", "code"], kind="mergesort").reset_index(drop=True)
+    else:
+        result = pd.DataFrame(columns=["trade_date", "code"])
+    if not frames and unresolved_dates and not strict:
         suffix = "" if not errors else ": " + " | ".join(errors[:5])
         raise RuntimeError(f"no limit-up data collected for history sample lookback ending {requested_date}{suffix}")
+    return LookbackResolution(
+        frame=result,
+        expected_dates=tuple(sorted(expected_dates)),
+        data_dates=tuple(sorted(data_dates)),
+        proven_non_trading_dates=tuple(sorted(resolved_non_trading)),
+        unresolved_dates=tuple(sorted(unresolved_dates)),
+        errors=tuple(errors),
+    )
 
-    result = pd.concat(frames, ignore_index=True)
-    result["code"] = normalize_code_series(result.get("code", pd.Series(dtype=object)))
-    result["trade_date"] = result.get("trade_date", "").astype(str)
-    result = result.sort_values(["trade_date", "code"], kind="mergesort")
-    return result.reset_index(drop=True)
+
+def _rows_for_trade_date(frame: pd.DataFrame, trade_date: str) -> pd.DataFrame:
+    if frame is None or frame.empty or "trade_date" not in frame.columns:
+        return pd.DataFrame(columns=list(frame.columns) if isinstance(frame, pd.DataFrame) else [])
+    exact = frame[frame["trade_date"].astype(str).eq(str(trade_date))].copy()
+    return exact.reset_index(drop=True)
 
 
 def _cached_daily_proves_non_trading(service: MarketDataService, date_text: str, sample_size: int = 50) -> bool:
@@ -1581,6 +1875,8 @@ def build_history_candidates_markdown(
             "requested_signal_date",
             "generation_status",
             "raw_source_code_count",
+            "signal_row_count",
+            "candidate_row_count",
             "signal_code_count",
             "eligible_code_count",
             "scorable_code_count",
@@ -1588,6 +1884,14 @@ def build_history_candidates_markdown(
             "duplicate_signal_key_count",
             "duplicate_candidate_key_count",
             "signal_date_mismatch_count",
+            "quality_failed",
+            "quality_failed_codes",
+            "quality_failed_error_classes",
+            "future_fetch_failed",
+            "lookback_expected_dates",
+            "lookback_data_dates",
+            "lookback_proven_non_trading_dates",
+            "lookback_unresolved_dates",
             "snapshot_status",
         ]
         columns = [column for column in columns if column in audit.columns]
@@ -1774,6 +2078,14 @@ def _empty_generation_row(requested_date: str) -> dict[str, Any]:
         "quality_rows": 0,
         "quality_ok": 0,
         "quality_failed": 0,
+        "quality_failed_codes": "",
+        "quality_failed_error_classes": "",
+        "quality_failed_details": "",
+        "lookback_expected_dates": "",
+        "lookback_data_dates": "",
+        "lookback_proven_non_trading_dates": "",
+        "lookback_unresolved_dates": "",
+        "lookback_errors": "",
         "future_fetch_end_date": "",
         "future_fetch_attempted": 0,
         "future_fetch_ok": 0,

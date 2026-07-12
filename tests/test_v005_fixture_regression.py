@@ -285,6 +285,139 @@ class V005FixtureRegressionTests(unittest.TestCase):
             policy = daily[daily["strategy"].eq("policy_v005_v002_regime_fallback")].iloc[0]
             self.assertEqual(policy["selected_codes"], EXPECTED_FINAL_CODES)
 
+    def test_legacy_identical_non_scorable_duplicates_are_explicitly_excluded(self) -> None:
+        raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
+        noneligible = raw.iloc[0].copy()
+        noneligible.update(
+            {
+                "code": "000009",
+                "name": "Legacy Noneligible",
+                "eligible_for_trade": False,
+                "allowed_bool": False,
+            }
+        )
+        missing_returns = raw.iloc[0].copy()
+        missing_returns.update(
+            {
+                "code": "000010",
+                "name": "Legacy Missing Return",
+                "eligible_for_trade": True,
+                "allowed_bool": True,
+                "d2open_d3high_return_pct": None,
+                "d2open_d3close_return_pct": None,
+                "target7_d2open_d3high": False,
+            }
+        )
+        missing_returns["d2open_d3high_return_pct"] = None
+        missing_returns["d2open_d3close_return_pct"] = None
+        legacy = pd.concat(
+            [
+                raw,
+                pd.DataFrame([noneligible, noneligible, missing_returns, missing_returns]),
+            ],
+            ignore_index=True,
+        )
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            samples_path = root / "legacy_samples.csv"
+            legacy.to_csv(samples_path, index=False, encoding="utf-8-sig")
+            output_dir = root / "holdout"
+            _, daily, _, _, _ = run_fixed_grid_holdout(
+                samples_file=samples_path,
+                output_dir=output_dir,
+            )
+            run_meta = pd.read_csv(output_dir / "v005_fixed_grid_holdout_run_meta.csv").iloc[0]
+            self.assertEqual(
+                run_meta["universe_audit_status"],
+                "LEGACY_UNVERIFIED_DUPLICATES_EXCLUDED",
+            )
+            self.assertEqual(int(run_meta["legacy_duplicate_key_count"]), 2)
+            self.assertEqual(int(run_meta["legacy_duplicate_row_count"]), 4)
+            self.assertEqual(run_meta["legacy_duplicate_codes"], "000009,000010")
+            membership = pd.read_csv(
+                output_dir / "v005_fixed_grid_holdout_universe_membership.csv",
+                dtype={"code": str},
+            )
+            self.assertEqual(len(membership), 8)
+            self.assertFalse(membership["code"].isin(["000009", "000010"]).any())
+            policy = daily[daily["strategy"].eq("policy_v005_v002_regime_fallback")].iloc[0]
+            self.assertEqual(policy["selected_codes"], EXPECTED_FINAL_CODES)
+
+    def test_legacy_different_or_scorable_duplicates_are_rejected(self) -> None:
+        raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
+        valid = raw.iloc[0].copy()
+        valid["code"] = "000009"
+        different = valid.copy()
+        different["name"] = "Different"
+        cases = (
+            ([valid, different], "non-identical"),
+            ([valid, valid], "valid scorable rows"),
+        )
+        for duplicate_rows, expected in cases:
+            with self.subTest(expected=expected), TemporaryDirectory() as temp:
+                root = Path(temp)
+                samples = pd.concat(
+                    [raw, pd.DataFrame(duplicate_rows)], ignore_index=True
+                )
+                path = root / "legacy_invalid.csv"
+                samples.to_csv(path, index=False, encoding="utf-8-sig")
+                with self.assertRaisesRegex(RuntimeError, expected):
+                    run_fixed_grid_holdout(samples_file=path, output_dir=root / "out")
+
+    def test_manifest_backed_samples_reject_even_non_scorable_duplicates(self) -> None:
+        raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
+        duplicate = raw.iloc[0].copy()
+        duplicate["code"] = "000009"
+        duplicate["eligible_for_trade"] = False
+        duplicate["allowed_bool"] = False
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            suffix = "2026-07-10_2026-07-10"
+            samples_path = root / f"history_candidates_{suffix}.csv"
+            pd.concat(
+                [raw, pd.DataFrame([duplicate, duplicate])], ignore_index=True
+            ).to_csv(samples_path, index=False, encoding="utf-8-sig")
+            (root / f"history_universe_manifest_{suffix}.json").write_text(
+                "{}", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "manifest-backed holdout samples contains duplicate keys",
+            ):
+                run_fixed_grid_holdout(
+                    samples_file=samples_path,
+                    output_dir=root / "holdout",
+                )
+
+    def test_scored_only_requires_exact_v002_key_coverage(self) -> None:
+        baseline = pd.read_csv(
+            self.holdout_dir / "v005_fixed_grid_holdout_scored_candidates.csv",
+            dtype={"code": str},
+        )
+        v002_mask = baseline["model_id"].astype(str).eq(self.policy.ranking_model_id)
+        missing = baseline.loc[
+            ~(v002_mask & baseline["code"].astype(str).eq("000008"))
+        ].copy()
+        extra_row = baseline.loc[v002_mask].iloc[0].copy()
+        extra_row["code"] = "000009"
+        extra = pd.concat([baseline, pd.DataFrame([extra_row])], ignore_index=True)
+        for label, changed, expected in (
+            ("missing", missing, "missing_count=1"),
+            ("extra", extra, "extra_count=1"),
+        ):
+            with self.subTest(label=label), TemporaryDirectory() as temp:
+                root = Path(temp)
+                scored_path = root / f"{label}.csv"
+                changed.to_csv(scored_path, index=False, encoding="utf-8-sig")
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    rf"configured v002 scored rows keys do not match expected scorable samples.*{expected}",
+                ):
+                    run_fixed_grid_holdout(
+                        scored_file=scored_path,
+                        output_dir=root / "holdout",
+                    )
+
     def test_holdout_verifies_history_universe_manifest_and_rejects_changed_samples(self) -> None:
         raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
         with TemporaryDirectory() as temp:
@@ -319,6 +452,8 @@ class V005FixtureRegressionTests(unittest.TestCase):
                         "actual_signal_date": "2026-07-10",
                         "generation_status": "generated",
                         "snapshot_status": "CREATED_CANONICAL",
+                        "candidate_row_count": 8,
+                        "lookback_unresolved_dates": "",
                     }
                 ]
             )
@@ -353,7 +488,7 @@ class V005FixtureRegressionTests(unittest.TestCase):
             manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
             with self.assertRaisesRegex(
                 RuntimeError,
-                "samples signal_date set does not match successful snapshot dates",
+                "generated_dates does not match successful snapshots",
             ):
                 run_fixed_grid_holdout(samples_file=samples_path, output_dir=root / "missing-date")
             manifest_path.write_bytes(original_manifest)
