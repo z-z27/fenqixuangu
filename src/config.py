@@ -39,6 +39,7 @@ class DataConfig:
             self.cache_dir / "minute_5m",
             self.cache_dir / "limit_ups",
             self.cache_dir / "listing_metadata",
+            self.cache_dir / "suspension_status",
             self.processed_dir,
             self.snapshot_dir,
             self.reports_dir / "daily_signals",

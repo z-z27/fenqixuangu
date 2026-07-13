@@ -23,6 +23,7 @@ from .backtester import (
     _signals_to_frame,
     _to_float,
     _zone_width_pct,
+    SUSPENSION_EXCLUSION_REASON,
     build_signals_for_pool,
     prefetch_future_bars_for_signals,
 )
@@ -55,7 +56,7 @@ from .v004a import annotate_v004a_input_eligibility
 DEFAULT_TARGET_RETURN_PCT = 7.0
 DEFAULT_SECONDARY_TARGET_RETURN_PCT = 10.0
 LISTING_EXCLUSION_REASON = "insufficient_listing_history"
-LISTING_EXCLUSION_EVIDENCE_COLUMNS = (
+QUALITY_EXCLUSION_EVIDENCE_COLUMNS = (
     "code",
     "exclusion_reason",
     "listing_date",
@@ -64,6 +65,14 @@ LISTING_EXCLUSION_EVIDENCE_COLUMNS = (
     "required_trade_days",
     "maximum_possible_trade_days",
     "proof_method",
+    "latest_daily_date",
+    "latest_minute_trade_date",
+    "suspension_start_date",
+    "suspension_end_date",
+    "suspension_duration",
+    "suspension_reason",
+    "suspension_source",
+    "normalized_rows_sha256",
     "exclusion_evidence_json",
 )
 
@@ -182,6 +191,14 @@ HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS = [
     "required_trade_days",
     "maximum_possible_trade_days",
     "proof_method",
+    "latest_daily_date",
+    "latest_minute_trade_date",
+    "suspension_start_date",
+    "suspension_end_date",
+    "suspension_duration",
+    "suspension_reason",
+    "suspension_source",
+    "normalized_rows_sha256",
     "exclusion_evidence_json",
 ]
 
@@ -1015,6 +1032,14 @@ def _membership_row(
         "required_trade_days": row.get("required_trade_days", ""),
         "maximum_possible_trade_days": row.get("maximum_possible_trade_days", ""),
         "proof_method": row.get("proof_method", ""),
+        "latest_daily_date": row.get("latest_daily_date", ""),
+        "latest_minute_trade_date": row.get("latest_minute_trade_date", ""),
+        "suspension_start_date": row.get("suspension_start_date", ""),
+        "suspension_end_date": row.get("suspension_end_date", ""),
+        "suspension_duration": row.get("suspension_duration", ""),
+        "suspension_reason": row.get("suspension_reason", ""),
+        "suspension_source": row.get("suspension_source", ""),
+        "normalized_rows_sha256": row.get("normalized_rows_sha256", ""),
         "exclusion_evidence_json": row.get("exclusion_evidence_json", ""),
     }
 
@@ -1140,7 +1165,7 @@ def _quality_exclusion_metadata(quality_rows: list[dict[str, Any]]) -> dict[str,
         "quality_exclusion_details": " | ".join(details),
         "quality_exclusion_evidence_sha256": canonical_rows_sha256(
             evidence,
-            LISTING_EXCLUSION_EVIDENCE_COLUMNS,
+            QUALITY_EXCLUSION_EVIDENCE_COLUMNS,
             ("code",),
         ),
     }
@@ -1180,21 +1205,35 @@ def _annotate_raw_source_exclusions(
 
 def _require_complete_exclusion_evidence(row: dict[str, Any]) -> None:
     reason = str(row.get("exclusion_reason", ""))
-    if reason != LISTING_EXCLUSION_REASON:
+    if reason == LISTING_EXCLUSION_REASON:
+        required = (
+            "listing_date",
+            "listing_date_source",
+            "signal_date",
+            "required_trade_days",
+            "maximum_possible_trade_days",
+            "proof_method",
+            "exclusion_evidence_json",
+        )
+    elif reason == SUSPENSION_EXCLUSION_REASON:
+        required = (
+            "latest_daily_date",
+            "latest_minute_trade_date",
+            "signal_date",
+            "suspension_start_date",
+            "suspension_end_date",
+            "suspension_reason",
+            "suspension_source",
+            "proof_method",
+            "normalized_rows_sha256",
+            "exclusion_evidence_json",
+        )
+    else:
         raise UniverseAuditError(f"unsupported quality exclusion reason: {reason!r}")
-    required = (
-        "listing_date",
-        "listing_date_source",
-        "signal_date",
-        "required_trade_days",
-        "maximum_possible_trade_days",
-        "proof_method",
-        "exclusion_evidence_json",
-    )
     missing = [field for field in required if str(row.get(field, "")).strip() == ""]
     if missing:
         raise UniverseAuditError(
-            f"incomplete {LISTING_EXCLUSION_REASON} evidence for code={row.get('code', '')}: {missing}"
+            f"incomplete {reason} evidence for code={row.get('code', '')}: {missing}"
         )
 
 

@@ -23,6 +23,16 @@ LISTING_HISTORY_PROOF_METHOD = "weekday_upper_bound_v1"
 LISTING_HISTORY_ELIGIBLE_FAILURE_CODES = frozenset(
     {"daily_history_shortfall", "missing_latest_daily_ma"}
 )
+SUSPENSION_EXCLUSION_REASON = "suspended_on_signal_date"
+SIGNAL_DATE_COVERAGE_FAILURE_CODES = frozenset(
+    {
+        "missing_signal_date_daily_bar",
+        "missing_signal_date_minute_bar",
+        "stale_daily_end_date",
+        "stale_minute_end_date",
+    }
+)
+EXPECTED_DAILY_PROBE_SOURCES = frozenset({"tencent_daily", "sina_daily"})
 
 
 def execution_model_version(entry_price_mode: str) -> str:
@@ -414,6 +424,16 @@ def build_signals_for_pool(
                         force_refresh=force_refresh,
                     )
                 )
+                if str(quality.get("status", "")) != "excluded":
+                    quality.update(
+                        _signal_date_suspension_exclusion_decision(
+                            service=service,
+                            code=code,
+                            signal_date=as_of_date,
+                            quality=quality,
+                            force_refresh=force_refresh,
+                        )
+                    )
                 if str(quality.get("status", "")) == "excluded":
                     quality.update(
                         {
@@ -1497,6 +1517,213 @@ def _listing_history_exclusion_decision(
     }
 
 
+def _signal_date_suspension_exclusion_decision(
+    service: MarketDataService,
+    code: str,
+    signal_date: str,
+    quality: dict[str, Any],
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    failure_codes = _hard_failure_code_set(quality)
+    if (
+        not failure_codes
+        or not failure_codes.issubset(SIGNAL_DATE_COVERAGE_FAILURE_CODES)
+        or not failure_codes.intersection(
+            {"missing_signal_date_daily_bar", "missing_signal_date_minute_bar"}
+        )
+    ):
+        return {"suspension_check_status": "not_applicable"}
+
+    requested_date = _strict_iso_date(signal_date)
+    latest_daily_date = _strict_iso_date(quality.get("latest_daily_date"))
+    latest_minute_date = _strict_iso_date(quality.get("latest_minute_trade_date"))
+    if not requested_date or not latest_daily_date or not latest_minute_date:
+        _append_quality_hard_failure(
+            quality,
+            "signal_date_coverage_evidence_incomplete",
+            "latest daily or minute trade date is missing or invalid",
+        )
+        return {"suspension_check_status": "coverage_evidence_incomplete"}
+
+    daily_has_requested = bool(quality.get("daily_has_requested_date", False))
+    minute_has_requested = bool(quality.get("minute_has_requested_date", False))
+    if daily_has_requested or minute_has_requested:
+        _append_quality_hard_failure(
+            quality,
+            "signal_date_cross_frequency_conflict",
+            "daily and minute requested-date coverage is inconsistent",
+        )
+        return {"suspension_check_status": "cross_frequency_conflict"}
+
+    try:
+        probe = service.probe_daily_signal_date_sources(code, requested_date)
+    except Exception as exc:
+        _append_quality_hard_failure(
+            quality,
+            "daily_provider_coverage_unconfirmed",
+            f"independent daily provider probe failed: {type(exc).__name__}: {exc}",
+        )
+        return {
+            "suspension_check_status": "daily_provider_probe_failed",
+            "daily_provider_probe_error": f"{type(exc).__name__}: {exc}",
+        }
+
+    probe_json = json.dumps(probe, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    probe_rows = probe.get("sources") if isinstance(probe, dict) else None
+    if not isinstance(probe_rows, list):
+        _append_quality_hard_failure(
+            quality,
+            "daily_provider_coverage_unconfirmed",
+            "independent daily provider probe returned no structured source rows",
+        )
+        return {
+            "suspension_check_status": "daily_provider_probe_invalid",
+            "daily_provider_probe_json": probe_json,
+        }
+    by_source = {
+        str(row.get("source", "")): row
+        for row in probe_rows
+        if isinstance(row, dict) and str(row.get("source", ""))
+    }
+    requested_present = sorted(
+        source
+        for source, row in by_source.items()
+        if bool(row.get("has_requested_date", False))
+    )
+    if requested_present:
+        _append_quality_hard_failure(
+            quality,
+            "daily_provider_coverage_conflict",
+            "requested date exists at independently queried source(s): "
+            + ",".join(requested_present),
+        )
+        return {
+            "suspension_check_status": "daily_provider_coverage_conflict",
+            "daily_provider_probe_json": probe_json,
+        }
+    missing_or_failed = sorted(
+        source
+        for source in EXPECTED_DAILY_PROBE_SOURCES
+        if source not in by_source or str(by_source[source].get("status", "")) != "ok"
+    )
+    if missing_or_failed:
+        _append_quality_hard_failure(
+            quality,
+            "daily_provider_coverage_unconfirmed",
+            "daily provider absence could not be confirmed for: " + ",".join(missing_or_failed),
+        )
+        return {
+            "suspension_check_status": "daily_provider_coverage_unconfirmed",
+            "daily_provider_probe_json": probe_json,
+        }
+
+    try:
+        proof = service.resolve_suspension_on_date(
+            code,
+            requested_date,
+            force_refresh=force_refresh,
+        )
+    except Exception as exc:
+        _append_quality_hard_failure(
+            quality,
+            "suspension_status_unavailable",
+            f"suspension resolver failed: {type(exc).__name__}: {exc}",
+        )
+        return {
+            "suspension_check_status": "suspension_resolver_failed",
+            "suspension_resolver_error": f"{type(exc).__name__}: {exc}",
+            "daily_provider_probe_json": probe_json,
+        }
+    if not proof:
+        _append_quality_hard_failure(
+            quality,
+            "suspension_status_not_proven",
+            f"no strict full-day suspension interval covers {requested_date}",
+        )
+        return {
+            "suspension_check_status": "not_proven",
+            "daily_provider_probe_json": probe_json,
+        }
+
+    normalized_code = str(code).zfill(6)
+    suspension_start = _strict_iso_date(proof.get("suspension_start_date"))
+    suspension_end = _strict_iso_date(proof.get("suspension_end_date"))
+    proof_signal_date = _strict_iso_date(proof.get("signal_date"))
+    source = str(proof.get("suspension_source", "")).strip()
+    proof_method = str(proof.get("proof_method", "")).strip()
+    rows_hash = str(proof.get("normalized_rows_sha256", "")).strip()
+    if (
+        str(proof.get("code", "")).zfill(6) != normalized_code
+        or proof_signal_date != requested_date
+        or not suspension_start
+        or not suspension_end
+        or not (suspension_start <= requested_date <= suspension_end)
+        or not source
+        or not proof_method
+        or len(rows_hash) != 64
+    ):
+        _append_quality_hard_failure(
+            quality,
+            "suspension_status_invalid",
+            "suspension resolver returned incomplete or inconsistent proof",
+        )
+        return {
+            "suspension_check_status": "invalid_proof",
+            "daily_provider_probe_json": probe_json,
+        }
+
+    evidence = {
+        "code": normalized_code,
+        "latest_daily_date": latest_daily_date,
+        "latest_minute_trade_date": latest_minute_date,
+        "normalized_rows_sha256": rows_hash,
+        "proof_method": proof_method,
+        "signal_date": requested_date,
+        "suspension_duration": str(proof.get("suspension_duration", "")),
+        "suspension_end_date": suspension_end,
+        "suspension_reason": str(proof.get("suspension_reason", "")),
+        "suspension_source": source,
+        "suspension_start_date": suspension_start,
+    }
+    return {
+        **evidence,
+        "status": "excluded",
+        "quality_excluded": True,
+        "exclusion_reason": SUSPENSION_EXCLUSION_REASON,
+        "exclusion_evidence_json": json.dumps(
+            evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ),
+        "suspension_check_status": "strictly_proven_full_day_suspension",
+        "suspension_status_schema_version": proof.get("schema_version", ""),
+        "suspension_status_cache_hit": bool(proof.get("from_cache", False)),
+        "daily_provider_probe_json": probe_json,
+    }
+
+
+def _append_quality_hard_failure(
+    quality: dict[str, Any],
+    failure_code: str,
+    message: str,
+) -> None:
+    failures = quality.get("hard_failures")
+    normalized_failures = [dict(item) for item in failures] if isinstance(failures, list) else []
+    if failure_code not in {str(item.get("code", "")) for item in normalized_failures}:
+        normalized_failures.append({"code": failure_code, "message": message})
+    codes = [str(item.get("code", "")) for item in normalized_failures if item.get("code")]
+    quality["hard_failure_codes"] = tuple(codes)
+    quality["hard_failure_codes_json"] = json.dumps(
+        codes, ensure_ascii=False, separators=(",", ":")
+    )
+    quality["hard_failures"] = normalized_failures
+    quality["hard_failures_json"] = json.dumps(
+        normalized_failures, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+    quality["warnings"] = "; ".join(
+        str(item.get("message", "")) for item in normalized_failures if item.get("message")
+    )
+    quality["status"] = "failed"
+
+
 def maximum_possible_weekday_trade_days(listing_date: str, signal_date: str) -> int:
     start = pd.Timestamp(listing_date)
     end = pd.Timestamp(signal_date)
@@ -1564,6 +1791,11 @@ def _failed_quality_row(code: str, name: str, trade_date: str, d0_date: str, exc
         "minute_rows": 0,
         "minute_trade_days": 0,
         "minute_required_days": 0,
+        "requested_signal_date": trade_date,
+        "latest_daily_date": "",
+        "daily_has_requested_date": False,
+        "latest_minute_trade_date": "",
+        "minute_has_requested_date": False,
         "daily_start": "",
         "daily_end": "",
         "minute_start": "",

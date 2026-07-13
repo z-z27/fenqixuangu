@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
+import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -13,7 +14,7 @@ import pandas as pd
 from .cache import FrameCache, StockFrameCache
 from .code_utils import is_main_board_code, normalize_stock_code
 from .config import DataConfig, get_data_config
-from .data_sources import MarketDataProvider
+from .data_sources import MarketDataProvider, SUSPENSION_STATUS_COLUMNS
 from .indicators import enrich_5min_indicators, enrich_daily_indicators
 
 
@@ -23,6 +24,9 @@ LIMIT_UP_MIN_PCT_CHG = 9.7
 DERIVED_LIMITUP_PROGRESS_STEP = 100
 DERIVED_LIMITUP_MAX_WORKERS = 12
 LISTING_METADATA_SCHEMA_VERSION = 1
+SUSPENSION_STATUS_SCHEMA_VERSION = 1
+SUSPENSION_PROOF_METHOD = "eastmoney_suspension_status_v1"
+FULL_DAY_SUSPENSION_DURATIONS = frozenset({"连续停牌", "停牌一天"})
 
 
 @dataclass
@@ -53,6 +57,9 @@ class MarketDataService:
         self.universe_cache = FrameCache(self.config.cache_dir / "universe", "universe")
         self.listing_metadata_cache = FrameCache(
             self.config.cache_dir / "listing_metadata", "listing_metadata"
+        )
+        self.suspension_status_cache = FrameCache(
+            self.config.cache_dir / "suspension_status", "suspension_status"
         )
 
     def collect_limit_ups(
@@ -183,6 +190,7 @@ class MarketDataService:
             daily_required_days=daily_required_days,
             minute_target_days=target_5min_days,
             minute_required_days=min_5min_days,
+            requested_signal_date=end_date_text,
         )
         if quality["status"] != "ok":
             raise DataQualityError(f"{normalized} data quality check failed: {quality['warnings']}", quality)
@@ -228,6 +236,90 @@ class MarketDataService:
         }
         self.listing_metadata_cache.write(normalized, pd.DataFrame([record]))
         return {**record, "from_cache": False}
+
+    def probe_daily_signal_date_sources(
+        self,
+        code: str,
+        signal_date: str,
+    ) -> dict[str, Any]:
+        return self.provider.probe_daily_sources_for_date(
+            normalize_stock_code(code),
+            _normalize_iso_date(signal_date),
+            # Date presence is adjustment-independent; use the common mode that
+            # both Tencent and Sina can answer.
+            adjust="none",
+        )
+
+    def resolve_suspension_on_date(
+        self,
+        code: str,
+        signal_date: str,
+        force_refresh: bool = False,
+    ) -> dict[str, Any] | None:
+        """Return a strict full-day suspension proof, or ``None`` if unproven."""
+        normalized = normalize_stock_code(code)
+        date_text = _normalize_iso_date(signal_date)
+        if not date_text:
+            raise RuntimeError(f"invalid suspension query date: {signal_date!r}")
+        cached = None if force_refresh else self.suspension_status_cache.read(date_text)
+        cache_record = _validated_suspension_status_record(cached, date_text)
+        if cache_record is None:
+            fetched, source = self.provider.fetch_suspension_status(date_text)
+            records_json = _canonical_suspension_records_json(fetched)
+            persisted_record = {
+                "query_date": date_text,
+                "source": str(source).strip(),
+                "schema_version": SUSPENSION_STATUS_SCHEMA_VERSION,
+                "fetched_at": datetime.now(timezone.utc).isoformat(),
+                "normalized_rows_sha256": hashlib.sha256(
+                    records_json.encode("utf-8")
+                ).hexdigest(),
+                "records_json": records_json,
+            }
+            if not persisted_record["source"]:
+                raise RuntimeError("suspension status response has no source")
+            self.suspension_status_cache.write(date_text, pd.DataFrame([persisted_record]))
+            cache_record = {**persisted_record, "from_cache": False}
+        else:
+            cache_record = {**cache_record, "from_cache": True}
+
+        records = json.loads(str(cache_record["records_json"]))
+        matching: list[dict[str, Any]] = []
+        for raw in records:
+            if str(raw.get("code", "")) != normalized:
+                continue
+            start_date = _normalize_iso_date(raw.get("suspension_start_date"))
+            end_date = _normalize_iso_date(raw.get("suspension_end_date"))
+            duration = str(raw.get("suspension_duration", "")).strip()
+            if (
+                start_date
+                and end_date
+                and duration in FULL_DAY_SUSPENSION_DURATIONS
+                and start_date <= date_text <= end_date
+            ):
+                matching.append(raw)
+        if not matching:
+            return None
+        if len(matching) != 1:
+            raise RuntimeError(
+                f"ambiguous suspension proof for {normalized} on {date_text}: {len(matching)} rows"
+            )
+        row = matching[0]
+        return {
+            "code": normalized,
+            "signal_date": date_text,
+            "suspension_start_date": str(row["suspension_start_date"]),
+            "suspension_end_date": str(row["suspension_end_date"]),
+            "suspension_duration": str(row["suspension_duration"]),
+            "suspension_reason": str(row.get("suspension_reason", "")),
+            "suspension_market": str(row.get("suspension_market", "")),
+            "expected_resume_date": str(row.get("expected_resume_date", "")),
+            "suspension_source": str(cache_record["source"]),
+            "proof_method": SUSPENSION_PROOF_METHOD,
+            "normalized_rows_sha256": str(cache_record["normalized_rows_sha256"]),
+            "schema_version": int(cache_record["schema_version"]),
+            "from_cache": bool(cache_record["from_cache"]),
+        }
 
     def ensure_minute_cache(
         self,
@@ -504,6 +596,72 @@ def _validated_listing_metadata_record(
     }
 
 
+def _canonical_suspension_records_json(frame: pd.DataFrame) -> str:
+    source = frame.copy() if frame is not None else pd.DataFrame()
+    for column in SUSPENSION_STATUS_COLUMNS:
+        if column not in source.columns:
+            source[column] = ""
+    records: list[dict[str, str]] = []
+    for raw in source[list(SUSPENSION_STATUS_COLUMNS)].to_dict(orient="records"):
+        record: dict[str, str] = {}
+        for column in SUSPENSION_STATUS_COLUMNS:
+            value = raw.get(column)
+            record[column] = "" if value is None or pd.isna(value) else str(value).strip()
+        if record["code"]:
+            records.append(record)
+    records = sorted(
+        {json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":")) for row in records}
+    )
+    decoded = [json.loads(row) for row in records]
+    return json.dumps(decoded, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+
+
+def _validated_suspension_status_record(
+    frame: pd.DataFrame | None,
+    expected_date: str,
+) -> dict[str, Any] | None:
+    required = {
+        "query_date",
+        "source",
+        "schema_version",
+        "fetched_at",
+        "normalized_rows_sha256",
+        "records_json",
+    }
+    if frame is None or len(frame) != 1 or not required.issubset(frame.columns):
+        return None
+    raw = frame.iloc[0].to_dict()
+    query_date = _normalize_iso_date(raw.get("query_date"))
+    source = str(raw.get("source", "")).strip()
+    fetched_at = str(raw.get("fetched_at", "")).strip()
+    expected_hash = str(raw.get("normalized_rows_sha256", "")).strip()
+    try:
+        schema_version = int(raw.get("schema_version"))
+        decoded = json.loads(str(raw.get("records_json", "")))
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(decoded, list):
+        return None
+    canonical_json = _canonical_suspension_records_json(pd.DataFrame(decoded))
+    actual_hash = hashlib.sha256(canonical_json.encode("utf-8")).hexdigest()
+    if (
+        query_date != expected_date
+        or not source
+        or not fetched_at
+        or schema_version != SUSPENSION_STATUS_SCHEMA_VERSION
+        or expected_hash != actual_hash
+    ):
+        return None
+    return {
+        "query_date": query_date,
+        "source": source,
+        "schema_version": schema_version,
+        "fetched_at": fetched_at,
+        "normalized_rows_sha256": expected_hash,
+        "records_json": canonical_json,
+    }
+
+
 def _normalize_iso_date(value: Any) -> str:
     if value is None or isinstance(value, bool):
         return ""
@@ -776,6 +934,7 @@ def _build_quality_report(
     daily_required_days: int,
     minute_target_days: int,
     minute_required_days: int,
+    requested_signal_date: str | None = None,
 ) -> dict[str, Any]:
     ma_columns = ("ma5", "ma10", "ma20", "ma30")
     latest = daily.iloc[-1] if daily is not None and not daily.empty else {}
@@ -787,6 +946,15 @@ def _build_quality_report(
     daily_history_rows = int(daily_history["date"].dropna().nunique()) if "date" in daily_history.columns else 0
     minute_trade_days = int(minute["trade_date"].dropna().nunique()) if "trade_date" in minute.columns else 0
     cross_check = _daily_minute_close_cross_check(daily, minute)
+    requested_date = _normalize_iso_date(requested_signal_date)
+    latest_daily_date = _date_only_max(daily, "date")
+    latest_minute_trade_date = _date_only_max(minute, "trade_date")
+    daily_has_requested_date = bool(
+        requested_date and _frame_has_date(daily, "date", requested_date)
+    )
+    minute_has_requested_date = bool(
+        requested_date and _frame_has_date(minute, "trade_date", requested_date)
+    )
     missing_daily_amount = int(daily["amount"].isna().sum()) if "amount" in daily.columns else len(daily)
     missing_daily_volume = int(daily["volume"].isna().sum()) if "volume" in daily.columns else len(daily)
     missing_minute_amount = int(minute["amount"].isna().sum()) if "amount" in minute.columns else len(minute)
@@ -814,6 +982,26 @@ def _build_quality_report(
             "missing_latest_daily_ma",
             "missing latest daily MA: " + ",".join(missing_latest_ma),
         )
+    if requested_date and not daily_has_requested_date:
+        add_hard_failure(
+            "missing_signal_date_daily_bar",
+            f"daily data does not contain requested signal date {requested_date}",
+        )
+        if latest_daily_date and latest_daily_date < requested_date:
+            add_hard_failure(
+                "stale_daily_end_date",
+                f"latest daily date {latest_daily_date} < requested {requested_date}",
+            )
+    if requested_date and not minute_has_requested_date:
+        add_hard_failure(
+            "missing_signal_date_minute_bar",
+            f"minute data does not contain requested signal date {requested_date}",
+        )
+        if latest_minute_trade_date and latest_minute_trade_date < requested_date:
+            add_hard_failure(
+                "stale_minute_end_date",
+                f"latest minute trade date {latest_minute_trade_date} < requested {requested_date}",
+            )
     if not cross_check["passed"]:
         add_hard_failure(
             "daily_minute_close_mismatch",
@@ -834,6 +1022,11 @@ def _build_quality_report(
         "minute_trade_days": minute_trade_days,
         "minute_target_days": int(minute_target_days),
         "minute_required_days": int(minute_required_days),
+        "requested_signal_date": requested_date,
+        "latest_daily_date": latest_daily_date,
+        "daily_has_requested_date": daily_has_requested_date,
+        "latest_minute_trade_date": latest_minute_trade_date,
+        "minute_has_requested_date": minute_has_requested_date,
         "daily_start": _date_min(daily, "date"),
         "daily_end": _date_max(daily, "date"),
         "minute_start": _date_min(minute, "datetime"),
@@ -902,3 +1095,17 @@ def _date_max(frame: pd.DataFrame, column: str) -> str:
         return ""
     values = pd.to_datetime(frame[column], errors="coerce").dropna()
     return "" if values.empty else values.max().strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _date_only_max(frame: pd.DataFrame, column: str) -> str:
+    if frame is None or frame.empty or column not in frame.columns:
+        return ""
+    values = pd.to_datetime(frame[column], errors="coerce").dropna()
+    return "" if values.empty else values.max().strftime("%Y-%m-%d")
+
+
+def _frame_has_date(frame: pd.DataFrame, column: str, date_text: str) -> bool:
+    if frame is None or frame.empty or column not in frame.columns:
+        return False
+    dates = pd.to_datetime(frame[column], errors="coerce").dropna().dt.strftime("%Y-%m-%d")
+    return bool(dates.eq(date_text).any())

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from importlib import import_module
 import json
-from typing import Callable
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -20,6 +20,17 @@ from .http_client import RequestClient
 
 
 LISTING_METADATA_SOURCE = "eastmoney_stock_info_f189"
+SUSPENSION_STATUS_SOURCE = "eastmoney_RPT_CUSTOM_SUSPEND_DATA_INTERFACE_via_akshare"
+SUSPENSION_STATUS_COLUMNS = (
+    "code",
+    "name",
+    "suspension_start_date",
+    "suspension_end_date",
+    "suspension_duration",
+    "suspension_reason",
+    "suspension_market",
+    "expected_resume_date",
+)
 
 
 class MarketDataProvider:
@@ -88,6 +99,73 @@ class MarketDataProvider:
             "code": normalized,
             "listing_date": listing_date,
             "metadata_source": LISTING_METADATA_SOURCE,
+        }
+
+    def fetch_suspension_status(self, query_date: str) -> tuple[pd.DataFrame, str]:
+        """Fetch and normalize Eastmoney's suspension report for one query date.
+
+        The upstream report may contain records whose suspension interval does not
+        cover ``query_date``.  Callers must prove interval coverage rather than
+        treating report membership as proof of an active suspension.
+        """
+        date_text = normalize_date_text(query_date)
+        ak = load_akshare()
+        raw = ak.stock_tfp_em(date=date_text.replace("-", ""))
+        if raw is None:
+            raise RuntimeError(f"Eastmoney suspension report returned no frame for {date_text}")
+        return normalize_suspension_status_frame(raw), SUSPENSION_STATUS_SOURCE
+
+    def probe_daily_sources_for_date(
+        self,
+        code: str,
+        query_date: str,
+        adjust: str = "none",
+    ) -> dict[str, Any]:
+        """Query Tencent and Sina independently for exact daily-date coverage."""
+        normalized = normalize_stock_code(code)
+        date_text = normalize_date_text(query_date)
+        start_text = (pd.Timestamp(date_text) - pd.Timedelta(days=14)).strftime("%Y-%m-%d")
+        attempts = (
+            (
+                "tencent_daily",
+                lambda: self._fetch_daily_tencent(normalized, start_text, date_text, adjust),
+            ),
+            (
+                "sina_daily",
+                lambda: self._fetch_daily_sina(normalized, start_text, date_text, adjust),
+            ),
+        )
+        rows: list[dict[str, Any]] = []
+        for source, fetcher in attempts:
+            try:
+                frame = normalize_daily_frame(fetcher(), normalized, source)
+                dates = pd.to_datetime(frame.get("date"), errors="coerce").dropna()
+                if dates.empty:
+                    raise RuntimeError("normalized daily frame has no valid dates")
+                normalized_dates = dates.dt.strftime("%Y-%m-%d")
+                rows.append(
+                    {
+                        "source": source,
+                        "status": "ok",
+                        "has_requested_date": bool(normalized_dates.eq(date_text).any()),
+                        "latest_date": str(normalized_dates.max()),
+                        "error": "",
+                    }
+                )
+            except Exception as exc:
+                rows.append(
+                    {
+                        "source": source,
+                        "status": "error",
+                        "has_requested_date": False,
+                        "latest_date": "",
+                        "error": f"{type(exc).__name__}: {exc}",
+                    }
+                )
+        return {
+            "code": normalized,
+            "query_date": date_text,
+            "sources": rows,
         }
 
     def fetch_daily_history(
@@ -500,6 +578,74 @@ def normalize_listing_date(value: object) -> str:
     if pd.isna(parsed):
         return ""
     return parsed.strftime("%Y-%m-%d")
+
+
+def normalize_suspension_status_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """Normalize the documented fields returned by ``stock_tfp_em``."""
+    if frame is None or frame.empty:
+        return pd.DataFrame(columns=list(SUSPENSION_STATUS_COLUMNS))
+    aliases = {
+        "code": ("代码", "SECURITY_CODE"),
+        "name": ("名称", "SECURITY_NAME_ABBR"),
+        "suspension_start_date": ("停牌时间", "SUSPEND_START_DATE"),
+        "suspension_end_date": ("停牌截止时间", "SUSPEND_END_TIME"),
+        "suspension_duration": ("停牌期限", "SUSPEND_EXPIRE"),
+        "suspension_reason": ("停牌原因", "SUSPEND_REASON"),
+        "suspension_market": ("所属市场", "TRADE_MARKET"),
+        "expected_resume_date": ("预计复牌时间", "预计复牌日期", "PREDICT_RESUME_DATE"),
+    }
+
+    def source_column(names: tuple[str, ...]) -> pd.Series:
+        for name in names:
+            if name in frame.columns:
+                return frame[name]
+        return pd.Series([""] * len(frame), index=frame.index, dtype=object)
+
+    result = pd.DataFrame(index=frame.index)
+    raw_codes = source_column(aliases["code"])
+    normalized_codes: list[str] = []
+    for value in raw_codes.tolist():
+        try:
+            normalized_codes.append(normalize_stock_code(value))
+        except (TypeError, ValueError):
+            normalized_codes.append("")
+    result["code"] = normalized_codes
+    result["name"] = source_column(aliases["name"]).map(_clean_text)
+    result["suspension_start_date"] = source_column(
+        aliases["suspension_start_date"]
+    ).map(_normalize_iso_date_value)
+    result["suspension_end_date"] = source_column(
+        aliases["suspension_end_date"]
+    ).map(_normalize_iso_date_value)
+    result["suspension_duration"] = source_column(
+        aliases["suspension_duration"]
+    ).map(_clean_text)
+    result["suspension_reason"] = source_column(aliases["suspension_reason"]).map(
+        _clean_text
+    )
+    result["suspension_market"] = source_column(aliases["suspension_market"]).map(
+        _clean_text
+    )
+    result["expected_resume_date"] = source_column(
+        aliases["expected_resume_date"]
+    ).map(_normalize_iso_date_value)
+    result = result[result["code"].ne("")]
+    return result[list(SUSPENSION_STATUS_COLUMNS)].sort_values(
+        ["code", "suspension_start_date", "suspension_end_date"], kind="mergesort"
+    ).reset_index(drop=True)
+
+
+def _normalize_iso_date_value(value: object) -> str:
+    if value is None or isinstance(value, bool) or pd.isna(value):
+        return ""
+    parsed = pd.to_datetime(str(value).strip(), errors="coerce")
+    return "" if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
+
+
+def _clean_text(value: object) -> str:
+    if value is None or (not isinstance(value, (list, dict, tuple, set)) and pd.isna(value)):
+        return ""
+    return str(value).strip()
 
 
 def extract_sina_json_payload(text: str) -> str:
