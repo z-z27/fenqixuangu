@@ -109,6 +109,247 @@ class StableUniverseHashTests(unittest.TestCase):
         self.assertEqual(diff["diff_type"].tolist(), ["changed"])
 
 
+class CanonicalTextEncodingTests(unittest.TestCase):
+    def test_real_float_round_trip_uses_identical_text_hash_and_self_verifies(self) -> None:
+        value = 9.1357
+        legacy_text = format(value, ".17g")
+        reparsed = float(pd.read_csv(StringIO(f"score\n{legacy_text}\n")).iloc[0, 0])
+        self.assertNotEqual(legacy_text, format(reparsed, ".17g"))
+        self.assertEqual(
+            universe_audit.canonical_scalar_text(value, "score"),
+            universe_audit.canonical_scalar_text(reparsed, "score"),
+        )
+        base = pd.DataFrame(
+            [
+                {
+                    "requested_signal_date": "2026-07-10",
+                    "code": "000001",
+                    "name": "A",
+                    "score": value,
+                    "flag_bool": True,
+                }
+            ]
+        )
+        round_tripped = base.copy()
+        round_tripped["score"] = reparsed
+        self.assertEqual(
+            canonical_rows_sha256(base, ROW_COLUMNS, KEY_COLUMNS),
+            canonical_rows_sha256(round_tripped, ROW_COLUMNS, KEY_COLUMNS),
+        )
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            status, _, manifest = create_or_verify_snapshot(
+                "2026-07-10",
+                {"signal_pool": _snapshot(base)},
+                root / "snapshots",
+                root / "run",
+            )
+            self.assertEqual(status, "CREATED_CANONICAL")
+            self.assertEqual(
+                manifest["stages"]["signal_pool"]["rows_sha256"],
+                canonical_rows_sha256(base, ROW_COLUMNS, KEY_COLUMNS),
+            )
+            status, _, _ = create_or_verify_snapshot(
+                "2026-07-10",
+                {"signal_pool": _snapshot(round_tripped)},
+                root / "snapshots",
+                root / "run",
+                mode="verify-only",
+            )
+            self.assertEqual(status, "VERIFIED_MATCH")
+
+    def test_difference_after_twelfth_significant_digit_is_semantically_equal(self) -> None:
+        left = pd.DataFrame(
+            [{"requested_signal_date": "2026-07-10", "code": "1", "name": "A", "score": 1.2345678901234, "flag_bool": True}]
+        )
+        right = left.copy()
+        right["score"] = 1.23456789012349
+        self.assertEqual(
+            universe_audit.canonical_scalar_text(left.iloc[0]["score"], "score"),
+            universe_audit.canonical_scalar_text(right.iloc[0]["score"], "score"),
+        )
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            create_or_verify_snapshot(
+                "2026-07-10", {"signal_pool": _snapshot(left)}, root / "snapshots", root / "run"
+            )
+            status, _, _ = create_or_verify_snapshot(
+                "2026-07-10",
+                {"signal_pool": _snapshot(right)},
+                root / "snapshots",
+                root / "run",
+                mode="verify-only",
+            )
+            self.assertEqual(status, "VERIFIED_MATCH")
+
+    def test_difference_within_twelfth_significant_digit_is_a_mismatch(self) -> None:
+        left = pd.DataFrame(
+            [{"requested_signal_date": "2026-07-10", "code": "1", "name": "A", "score": 1.23456789012, "flag_bool": True}]
+        )
+        right = left.copy()
+        right["score"] = 1.23456789013
+        self.assertNotEqual(
+            universe_audit.canonical_scalar_text(left.iloc[0]["score"], "score"),
+            universe_audit.canonical_scalar_text(right.iloc[0]["score"], "score"),
+        )
+        self.assertNotEqual(
+            canonical_rows_sha256(left, ROW_COLUMNS, KEY_COLUMNS),
+            canonical_rows_sha256(right, ROW_COLUMNS, KEY_COLUMNS),
+        )
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            create_or_verify_snapshot(
+                "2026-07-10", {"signal_pool": _snapshot(left)}, root / "snapshots", root / "run"
+            )
+            with self.assertRaises(UniverseSnapshotMismatch):
+                create_or_verify_snapshot(
+                    "2026-07-10",
+                    {"signal_pool": _snapshot(right)},
+                    root / "snapshots",
+                    root / "run",
+                    mode="verify-only",
+                )
+
+    def test_non_float_business_fields_remain_strict(self) -> None:
+        columns = (
+            "requested_signal_date",
+            "code",
+            "included_bool",
+            "exclusion_reason",
+            "signal_type",
+            "score",
+        )
+
+        def snapshot(frame: pd.DataFrame) -> StageSnapshot:
+            return StageSnapshot("signal_pool", frame, KEY_COLUMNS, columns)
+
+        base_row = {
+            "requested_signal_date": "2026-07-10",
+            "code": "000001",
+            "included_bool": True,
+            "exclusion_reason": "",
+            "signal_type": "D2_LOW_ABSORB",
+            "score": 1.0,
+        }
+        changes = {
+            "code": "000002",
+            "requested_signal_date": "2026-07-11",
+            "included_bool": False,
+            "exclusion_reason": "suspended_on_signal_date",
+            "signal_type": "WATCH_ONLY",
+        }
+        for field, value in changes.items():
+            with self.subTest(field=field), TemporaryDirectory() as temp:
+                root = Path(temp)
+                base = pd.DataFrame([base_row])
+                changed = pd.DataFrame([{**base_row, field: value}])
+                create_or_verify_snapshot(
+                    "2026-07-10",
+                    {"signal_pool": snapshot(base)},
+                    root / "snapshots",
+                    root / "run",
+                )
+                with self.assertRaises(UniverseSnapshotMismatch):
+                    create_or_verify_snapshot(
+                        "2026-07-10",
+                        {"signal_pool": snapshot(changed)},
+                        root / "snapshots",
+                        root / "run",
+                        mode="verify-only",
+                    )
+
+    def test_missing_values_share_one_empty_text_representation(self) -> None:
+        values = (None, float("nan"), pd.NA, pd.NaT)
+        self.assertEqual(
+            {universe_audit.canonical_scalar_text(value, "score") for value in values},
+            {""},
+        )
+
+    def test_negative_and_positive_zero_share_one_representation(self) -> None:
+        self.assertEqual(
+            universe_audit.canonical_scalar_text(-0.0, "score"),
+            "0",
+        )
+        self.assertEqual(
+            universe_audit.canonical_scalar_text(0.0, "score"),
+            "0",
+        )
+
+    def test_non_finite_numeric_values_are_rejected_with_context(self) -> None:
+        for value in (float("inf"), float("-inf")):
+            with self.subTest(value=value):
+                frame = pd.DataFrame(
+                    [{"requested_signal_date": "2026-07-10", "code": "000001", "name": "A", "score": value, "flag_bool": True}]
+                )
+                with self.assertRaisesRegex(
+                    UniverseAuditError,
+                    r"stage=signal_pool, code=000001, field=score",
+                ):
+                    universe_audit.canonical_stage_frame(_snapshot(frame))
+        with self.assertRaisesRegex(
+            UniverseAuditError,
+            r"stage=signal_pool, code=000001, field=score",
+        ):
+            universe_audit.canonical_scalar_text(
+                float("nan"),
+                "score",
+                stage="signal_pool",
+                code="000001",
+                nan_is_missing=False,
+            )
+
+    def test_snapshot_reader_disables_type_inference_and_preserves_codes(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {"requested_signal_date": "2026-07-10", "code": "000001", "name": None, "score": 1.25, "flag_bool": True},
+                {"requested_signal_date": "2026-07-10", "code": "000002", "name": "B", "score": 2.5, "flag_bool": False},
+            ]
+        )
+        original_read_csv = pd.read_csv
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            with mock.patch.object(
+                universe_audit.pd,
+                "read_csv",
+                wraps=original_read_csv,
+            ) as read_csv:
+                status, manifest_path, _ = create_or_verify_snapshot(
+                    "2026-07-10",
+                    {"signal_pool": _snapshot(frame)},
+                    root / "snapshots",
+                    root / "run",
+                )
+            self.assertEqual(status, "CREATED_CANONICAL")
+            self.assertEqual(read_csv.call_args.kwargs["dtype"], str)
+            self.assertFalse(read_csv.call_args.kwargs["keep_default_na"])
+            self.assertFalse(read_csv.call_args.kwargs["na_filter"])
+            loaded = original_read_csv(
+                manifest_path.parent / "signal_pool.csv",
+                dtype=str,
+                keep_default_na=False,
+                na_filter=False,
+            )
+            self.assertEqual(loaded["code"].tolist(), ["000001", "000002"])
+            self.assertEqual(loaded["name"].tolist(), ["", "B"])
+            self.assertEqual(loaded["flag_bool"].tolist(), ["true", "false"])
+            self.assertTrue(all(isinstance(value, str) for value in loaded.iloc[0].tolist()))
+
+    def test_float_hashes_are_input_order_independent(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {"requested_signal_date": "2026-07-10", "code": "000001", "name": "A", "score": 9.1357, "flag_bool": True},
+                {"requested_signal_date": "2026-07-10", "code": "000002", "name": "B", "score": 21.755001535818117, "flag_bool": False},
+            ]
+        )
+        shuffled = frame.iloc[::-1].reset_index(drop=True)
+        self.assertEqual(code_set_sha256(frame), code_set_sha256(shuffled))
+        self.assertEqual(key_set_sha256(frame, KEY_COLUMNS), key_set_sha256(shuffled, KEY_COLUMNS))
+        self.assertEqual(
+            canonical_rows_sha256(frame, ROW_COLUMNS, KEY_COLUMNS),
+            canonical_rows_sha256(shuffled, ROW_COLUMNS, KEY_COLUMNS),
+        )
+
+
 class HistoryUniverseIntegrityTests(unittest.TestCase):
     def test_empty_or_unnormalizable_codes_are_a_hard_failure(self) -> None:
         frame = pd.DataFrame({"code": ["000001", " ", None, "not-a-code"]})

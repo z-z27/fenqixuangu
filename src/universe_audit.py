@@ -17,6 +17,8 @@ from pandas.errors import ParserError
 
 
 UNIVERSE_SNAPSHOT_SCHEMA_VERSION = 1
+CANONICAL_FLOAT_SIGNIFICANT_DIGITS = 12
+CANONICAL_MISSING_TEXT = ""
 UNIVERSE_STAGES = (
     "raw_source_pool",
     "signal_pool",
@@ -164,7 +166,12 @@ def canonical_row_lines(
     return sorted(lines)
 
 
-def canonicalize_frame(frame: pd.DataFrame, columns: Iterable[str]) -> pd.DataFrame:
+def canonicalize_frame(
+    frame: pd.DataFrame,
+    columns: Iterable[str],
+    *,
+    stage: str = "",
+) -> pd.DataFrame:
     selected_columns = tuple(str(column) for column in columns)
     source = frame.copy()
     for column in selected_columns:
@@ -172,12 +179,27 @@ def canonicalize_frame(frame: pd.DataFrame, columns: Iterable[str]) -> pd.DataFr
             source[column] = None
     rows: list[dict[str, Any]] = []
     for raw_row in source[list(selected_columns)].to_dict(orient="records"):
-        rows.append({column: _canonical_value(raw_row.get(column), column) for column in selected_columns})
+        code = normalize_code(raw_row.get("code")) if "code" in raw_row else ""
+        rows.append(
+            {
+                column: canonical_scalar_text(
+                    raw_row.get(column),
+                    column,
+                    stage=stage,
+                    code=code,
+                )
+                for column in selected_columns
+            }
+        )
     return pd.DataFrame(rows, columns=list(selected_columns))
 
 
 def canonical_stage_frame(snapshot: StageSnapshot) -> pd.DataFrame:
-    frame = canonicalize_frame(snapshot.frame, snapshot.row_columns)
+    frame = canonicalize_frame(
+        snapshot.frame,
+        snapshot.row_columns,
+        stage=snapshot.stage,
+    )
     if frame.empty:
         return frame
     lines = canonical_row_lines(frame, snapshot.row_columns, snapshot.key_columns)
@@ -240,8 +262,12 @@ def require_requested_signal_date_match(
     missing = [column for column in required if column not in frame.columns]
     if missing:
         raise UniverseAuditError(f"signal date alignment check missing columns: {missing}")
-    requested = frame[requested_column].map(lambda value: _canonical_value(value, requested_column))
-    actual = frame[actual_column].map(lambda value: _canonical_value(value, actual_column))
+    requested = frame[requested_column].map(
+        lambda value: canonical_scalar_text(value, requested_column)
+    )
+    actual = frame[actual_column].map(
+        lambda value: canonical_scalar_text(value, actual_column)
+    )
     mismatch = requested.ne(actual)
     if not mismatch.any():
         return
@@ -586,16 +612,13 @@ def write_json(path: Path, payload: Mapping[str, Any]) -> None:
 
 def write_canonical_csv(path: Path, snapshot: StageSnapshot) -> None:
     frame = canonical_stage_frame(snapshot)
-    csv_frame = frame.copy()
-    for column in csv_frame.columns:
-        csv_frame[column] = csv_frame[column].map(_csv_value)
     atomic_write_csv(
         Path(path),
-        csv_frame,
+        frame,
         index=False,
         encoding="utf-8-sig",
         lineterminator="\n",
-        na_rep="null",
+        na_rep=CANONICAL_MISSING_TEXT,
     )
 
 
@@ -653,7 +676,12 @@ def _load_canonical_stages(directory: Path, manifest: Mapping[str, Any]) -> dict
                 canonical_manifest_path=manifest_path,
             )
         try:
-            frame = pd.read_csv(path, dtype={"code": str}, keep_default_na=True)
+            frame = pd.read_csv(
+                path,
+                dtype=str,
+                keep_default_na=False,
+                na_filter=False,
+            )
             snapshot = StageSnapshot(
                 stage=str(stage),
                 frame=frame,
@@ -822,23 +850,37 @@ def _member_key(row: Mapping[str, Any], key_columns: Iterable[str]) -> str:
     return json.dumps([row.get(column) for column in key_columns], ensure_ascii=False, separators=(",", ":"))
 
 
-def _canonical_value(value: Any, column: str) -> Any:
-    if _is_missing(value):
-        return None
+def canonical_scalar_text(
+    value: Any,
+    column: str,
+    *,
+    stage: str = "",
+    code: str = "",
+    nan_is_missing: bool = True,
+) -> str:
+    """Encode one audit scalar into the only canonical snapshot representation."""
     if column == "code":
         return normalize_code(value)
+    if isinstance(value, Real) and not isinstance(value, bool):
+        number = float(value)
+        if math.isnan(number):
+            if nan_is_missing:
+                return CANONICAL_MISSING_TEXT
+            _raise_non_finite_canonical_value(value, column, stage, code)
+    if _is_missing(value):
+        return CANONICAL_MISSING_TEXT
     if column.endswith("_date") or column in {"date", "signal_date", "trade_date"}:
         parsed = pd.to_datetime(value, errors="coerce")
         if pd.notna(parsed):
             return parsed.strftime("%Y-%m-%d")
     if isinstance(value, (bool,)) or value.__class__.__name__ == "bool_":
-        return bool(value)
+        return "true" if bool(value) else "false"
     if column.endswith("_bool"):
         text = str(value).strip().lower()
-        if text in {"true", "1", "yes", "y", "t"}:
-            return True
-        if text in {"false", "0", "no", "n", "f"}:
-            return False
+        if text in {"true", "1", "1.0", "yes", "y", "t"}:
+            return "true"
+        if text in {"false", "0", "0.0", "no", "n", "f"}:
+            return "false"
     if isinstance(value, (date, datetime, pd.Timestamp)):
         return pd.Timestamp(value).strftime("%Y-%m-%d")
     if isinstance(value, Integral):
@@ -846,12 +888,25 @@ def _canonical_value(value: Any, column: str) -> Any:
     if isinstance(value, Real):
         number = float(value)
         if not math.isfinite(number):
-            return None
-        if number == 0:
-            number = 0.0
-        return format(number, ".17g")
+            _raise_non_finite_canonical_value(value, column, stage, code)
+        if number == 0.0:
+            return "0"
+        return format(number, f".{CANONICAL_FLOAT_SIGNIFICANT_DIGITS}g")
     text = str(value).replace("\r\n", "\n").replace("\r", "\n").strip()
-    return text if text else None
+    return text if text else CANONICAL_MISSING_TEXT
+
+
+def _raise_non_finite_canonical_value(
+    value: Any,
+    column: str,
+    stage: str,
+    code: str,
+) -> None:
+    raise UniverseAuditError(
+        "non-finite canonical numeric value: "
+        f"stage={stage or '<unspecified>'}, code={code or '<unknown>'}, "
+        f"field={column}, value={value!r}"
+    )
 
 
 def _is_missing(value: Any) -> bool:
@@ -866,14 +921,6 @@ def _is_missing(value: Any) -> bool:
 
 def _sort_token(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-
-
-def _csv_value(value: Any) -> Any:
-    if value is None:
-        return None
-    if isinstance(value, bool):
-        return "true" if value else "false"
-    return value
 
 
 def _sha256_text(text: str) -> str:
