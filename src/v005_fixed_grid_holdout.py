@@ -30,8 +30,8 @@ from .universe_audit import (
     UniverseAuditError,
     atomic_write_csv,
     atomic_write_text,
-    canonical_row_lines,
     canonical_rows_sha256,
+    canonicalize_frame,
     code_set_sha256,
     count_duplicate_keys,
     normalize_code_series,
@@ -375,6 +375,13 @@ def run_fixed_grid_holdout(
                 "legacy_duplicate_key_count": int(history_universe["legacy_duplicate_key_count"]),
                 "legacy_duplicate_row_count": int(history_universe["legacy_duplicate_row_count"]),
                 "legacy_duplicate_codes": str(history_universe["legacy_duplicate_codes"]),
+                "legacy_nonidentical_duplicate_key_count": int(
+                    history_universe["legacy_nonidentical_duplicate_key_count"]
+                ),
+                "legacy_duplicate_representative_policy": str(
+                    history_universe["legacy_duplicate_representative_policy"]
+                ),
+                "legacy_duplicate_details": str(history_universe["legacy_duplicate_details"]),
             }
         ]
     )
@@ -422,6 +429,9 @@ def _empty_legacy_duplicate_meta() -> dict[str, Any]:
         "legacy_duplicate_key_count": 0,
         "legacy_duplicate_row_count": 0,
         "legacy_duplicate_codes": "",
+        "legacy_nonidentical_duplicate_key_count": 0,
+        "legacy_duplicate_representative_policy": "min_canonical_history_candidate_row_json_v1",
+        "legacy_duplicate_details": "[]",
     }
 
 
@@ -438,20 +448,14 @@ def _validate_and_exclude_legacy_duplicates(
     keys = duplicate_rows[["signal_date", "code"]].drop_duplicates().sort_values(
         ["signal_date", "code"], kind="mergesort"
     )
-    invalid_content: list[str] = []
     scorable_keys: list[str] = []
+    representative_rows: list[pd.DataFrame] = []
+    duplicate_details: list[dict[str, Any]] = []
+    nonidentical_key_count = 0
     for signal_date, code in keys.itertuples(index=False, name=None):
         key_mask = frame["signal_date"].eq(signal_date) & frame["code"].eq(code)
         group = frame.loc[key_mask]
-        canonical_lines = canonical_row_lines(
-            group,
-            HISTORY_CANDIDATE_COLUMNS,
-            ("signal_date", "code"),
-        )
         key_text = f"{signal_date}|{code}"
-        if len(set(canonical_lines)) != 1:
-            invalid_content.append(key_text)
-
         annotated_group = annotated.loc[key_mask]
         intrinsic_reasons = annotated_group["v004a_exclusion_reason"].fillna("").astype(str).map(
             lambda value: "|".join(
@@ -460,19 +464,40 @@ def _validate_and_exclude_legacy_duplicates(
                 if reason and reason != "duplicate_signal_code"
             )
         )
-        explicitly_scorable = (
-            frame.loc[key_mask, "v004a_scorable_bool"].map(_bool_value).any()
-            if "v004a_scorable_bool" in frame.columns
-            else False
-        )
-        if explicitly_scorable or intrinsic_reasons.eq("").any():
+        if intrinsic_reasons.eq("").any():
             scorable_keys.append(key_text)
+            continue
 
-    if invalid_content:
-        raise UniverseAuditError(
-            "legacy duplicate groups contain non-identical HISTORY_CANDIDATE_COLUMNS rows: "
-            f"{invalid_content[:10]}"
+        canonical = canonicalize_frame(group, HISTORY_CANDIDATE_COLUMNS)
+        row_jsons = [
+            json.dumps(row, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            for row in canonical.to_dict(orient="records")
+        ]
+        unique_canonical_row_count = len(set(row_jsons))
+        if unique_canonical_row_count > 1:
+            nonidentical_key_count += 1
+        representative_position = min(range(len(row_jsons)), key=lambda index: row_jsons[index])
+        representative_index = group.index[representative_position]
+        representative = frame.loc[[representative_index]].copy()
+        representative["v004a_scorable_bool"] = False
+        representative["v004a_exclusion_reason"] = intrinsic_reasons.loc[representative_index]
+        representative_rows.append(representative)
+        representative_hash = canonical_rows_sha256(
+            representative,
+            HISTORY_CANDIDATE_COLUMNS,
+            ("signal_date", "code"),
         )
+        duplicate_details.append(
+            {
+                "signal_date": str(signal_date),
+                "code": str(code),
+                "row_count": int(len(group)),
+                "unique_canonical_row_count": int(unique_canonical_row_count),
+                "intrinsic_exclusion_reasons": sorted(set(intrinsic_reasons.tolist())),
+                "representative_rows_sha256": representative_hash,
+            }
+        )
+
     if scorable_keys:
         raise UniverseAuditError(
             "legacy duplicate groups contain valid scorable rows and cannot be excluded: "
@@ -483,14 +508,20 @@ def _validate_and_exclude_legacy_duplicates(
         "legacy_duplicate_key_count": int(len(keys)),
         "legacy_duplicate_row_count": int(duplicate_mask.sum()),
         "legacy_duplicate_codes": ",".join(sorted(keys["code"].astype(str).unique().tolist())),
+        "legacy_nonidentical_duplicate_key_count": int(nonidentical_key_count),
+        "legacy_duplicate_representative_policy": "min_canonical_history_candidate_row_json_v1",
+        "legacy_duplicate_details": json.dumps(
+            duplicate_details,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ),
     }
-    return frame.loc[~duplicate_mask].reset_index(drop=True), metadata
-
-
-def _bool_value(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in {"true", "1", "yes", "y"}
+    kept = [frame.loc[~duplicate_mask].copy(), *representative_rows]
+    output = pd.concat(kept, ignore_index=True).sort_values(
+        ["signal_date", "code"], kind="mergesort"
+    )
+    return output.reset_index(drop=True), metadata
 
 
 def _load_history_universe_context(
@@ -881,6 +912,13 @@ def _write_holdout_universe_outputs(
                 "legacy_duplicate_key_count": int(history_universe["legacy_duplicate_key_count"]),
                 "legacy_duplicate_row_count": int(history_universe["legacy_duplicate_row_count"]),
                 "legacy_duplicate_codes": str(history_universe["legacy_duplicate_codes"]),
+                "legacy_nonidentical_duplicate_key_count": int(
+                    history_universe["legacy_nonidentical_duplicate_key_count"]
+                ),
+                "legacy_duplicate_representative_policy": str(
+                    history_universe["legacy_duplicate_representative_policy"]
+                ),
+                "legacy_duplicate_details": str(history_universe["legacy_duplicate_details"]),
                 "v004a_topk_codes": ",".join(day_v4_top["code"].astype(str).tolist()),
                 "v002_topk_codes": ",".join(day_v2_top["code"].astype(str).tolist()),
                 "v005_candidate_pool_codes": ",".join(day_candidate["code"].astype(str).tolist()),
@@ -920,6 +958,13 @@ def _write_holdout_universe_outputs(
         "legacy_duplicate_key_count": int(history_universe["legacy_duplicate_key_count"]),
         "legacy_duplicate_row_count": int(history_universe["legacy_duplicate_row_count"]),
         "legacy_duplicate_codes": str(history_universe["legacy_duplicate_codes"]),
+        "legacy_nonidentical_duplicate_key_count": int(
+            history_universe["legacy_nonidentical_duplicate_key_count"]
+        ),
+        "legacy_duplicate_representative_policy": str(
+            history_universe["legacy_duplicate_representative_policy"]
+        ),
+        "legacy_duplicate_details": str(history_universe["legacy_duplicate_details"]),
         "eligible_count_available": bool(samples_available),
         "eligible_source": (
             "samples_annotated_v004a_input"

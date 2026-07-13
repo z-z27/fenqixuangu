@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 from pathlib import Path
+import re
 from typing import Any
 import uuid
 
@@ -61,6 +62,7 @@ class LookbackResolution:
     expected_dates: tuple[str, ...]
     data_dates: tuple[str, ...]
     proven_non_trading_dates: tuple[str, ...]
+    non_trading_proof_methods: tuple[str, ...]
     unresolved_dates: tuple[str, ...]
     errors: tuple[str, ...]
 
@@ -331,7 +333,7 @@ def run_history_sample_generation(
             if actual_date != requested_date:
                 proven_non_trading = (
                     requested_date in proven_non_trading_dates
-                    or (not force_refresh and _cached_daily_proves_non_trading(service, requested_date))
+                    or _cached_daily_proves_non_trading(service, requested_date)
                 )
                 if proven_non_trading:
                     canonical_dir = (
@@ -946,6 +948,7 @@ def _empty_universe_audit_row(requested_date: str) -> dict[str, Any]:
         "lookback_expected_dates": "",
         "lookback_data_dates": "",
         "lookback_proven_non_trading_dates": "",
+        "lookback_non_trading_proof_methods": "",
         "lookback_unresolved_dates": "",
         "lookback_errors": "",
         "signal_date_mismatch_count": 0,
@@ -974,6 +977,9 @@ def _apply_lookback_resolution(
         "lookback_data_dates": ",".join(resolution.data_dates),
         "lookback_proven_non_trading_dates": ",".join(
             resolution.proven_non_trading_dates
+        ),
+        "lookback_non_trading_proof_methods": "|".join(
+            resolution.non_trading_proof_methods
         ),
         "lookback_unresolved_dates": ",".join(resolution.unresolved_dates),
         "lookback_errors": " | ".join(resolution.errors),
@@ -1487,6 +1493,7 @@ def _collect_limitups_for_history_sample(
     expected_dates: list[str] = []
     data_dates: set[str] = set()
     resolved_non_trading: set[str] = set()
+    non_trading_proof_methods: dict[str, str] = {}
     unresolved_dates: set[str] = set()
 
     for offset in range(max(1, int(lookback_days))):
@@ -1497,6 +1504,14 @@ def _collect_limitups_for_history_sample(
             known_missing.add(date_text)
             known_non_trading.add(date_text)
             resolved_non_trading.add(date_text)
+            non_trading_proof_methods[date_text] = "weekend"
+            continue
+
+        if date_text in known_non_trading:
+            resolved_non_trading.add(date_text)
+            non_trading_proof_methods[date_text] = "known_calendar"
+            unresolved_dates.discard(date_text)
+            print(f"[history-samples] skip proven non-trading date {date_text}", flush=True)
             continue
 
         cached: pd.DataFrame | None = None
@@ -1518,11 +1533,6 @@ def _collect_limitups_for_history_sample(
                     unresolved_dates.add(date_text)
                     continue
 
-        if date_text in known_non_trading and not force_refresh:
-            resolved_non_trading.add(date_text)
-            unresolved_dates.discard(date_text)
-            print(f"[history-samples] skip proven non-trading date {date_text}", flush=True)
-            continue
         if date_text in known_missing and not force_refresh and not strict:
             unresolved_dates.add(date_text)
             print(f"[history-samples] skip known unresolved limit-up date {date_text}", flush=True)
@@ -1531,10 +1541,11 @@ def _collect_limitups_for_history_sample(
             unresolved_dates.add(date_text)
             print(f"[history-samples] skip pre-window missing limit-up cache {date_text}", flush=True)
             continue
-        if not force_refresh and _cached_daily_proves_non_trading(service, date_text):
+        if _cached_daily_proves_non_trading(service, date_text):
             known_missing.add(date_text)
             known_non_trading.add(date_text)
             resolved_non_trading.add(date_text)
+            non_trading_proof_methods[date_text] = "cached_daily_cross_section"
             unresolved_dates.discard(date_text)
             print(f"[history-samples] skip non-trading date from cached daily data {date_text}", flush=True)
             continue
@@ -1549,10 +1560,11 @@ def _collect_limitups_for_history_sample(
             )
         except Exception as exc:
             message = str(exc)
-            if "date_seen=0" in message and not force_refresh:
+            if _is_daily_scan_non_trading_error(message):
                 known_missing.add(date_text)
                 known_non_trading.add(date_text)
                 resolved_non_trading.add(date_text)
+                non_trading_proof_methods[date_text] = "daily_scan_date_seen_zero"
                 unresolved_dates.discard(date_text)
                 print(f"[history-samples] skip non-trading date after daily scan {date_text}", flush=True)
                 continue
@@ -1587,9 +1599,24 @@ def _collect_limitups_for_history_sample(
         expected_dates=tuple(sorted(expected_dates)),
         data_dates=tuple(sorted(data_dates)),
         proven_non_trading_dates=tuple(sorted(resolved_non_trading)),
+        non_trading_proof_methods=tuple(
+            f"{date}={non_trading_proof_methods[date]}"
+            for date in sorted(non_trading_proof_methods)
+        ),
         unresolved_dates=tuple(sorted(unresolved_dates)),
         errors=tuple(errors),
     )
+
+
+def _is_daily_scan_non_trading_error(message: str) -> bool:
+    text = str(message).strip()
+    if not text or "sample_errors=" in text:
+        return False
+    match = re.fullmatch(
+        r"no daily-derived limit-up rows for \d{4}-\d{2}-\d{2}; checked=(\d+); date_seen=0",
+        text,
+    )
+    return bool(match and int(match.group(1)) > 0)
 
 
 def _rows_for_trade_date(frame: pd.DataFrame, trade_date: str) -> pd.DataFrame:
@@ -1891,6 +1918,7 @@ def build_history_candidates_markdown(
             "lookback_expected_dates",
             "lookback_data_dates",
             "lookback_proven_non_trading_dates",
+            "lookback_non_trading_proof_methods",
             "lookback_unresolved_dates",
             "snapshot_status",
         ]
@@ -2084,6 +2112,7 @@ def _empty_generation_row(requested_date: str) -> dict[str, Any]:
         "lookback_expected_dates": "",
         "lookback_data_dates": "",
         "lookback_proven_non_trading_dates": "",
+        "lookback_non_trading_proof_methods": "",
         "lookback_unresolved_dates": "",
         "lookback_errors": "",
         "future_fetch_end_date": "",

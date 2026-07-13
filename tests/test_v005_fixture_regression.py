@@ -285,84 +285,159 @@ class V005FixtureRegressionTests(unittest.TestCase):
             policy = daily[daily["strategy"].eq("policy_v005_v002_regime_fallback")].iloc[0]
             self.assertEqual(policy["selected_codes"], EXPECTED_FINAL_CODES)
 
-    def test_legacy_identical_non_scorable_duplicates_are_explicitly_excluded(self) -> None:
+    def test_legacy_nonidentical_non_scorable_duplicates_are_deterministic(self) -> None:
         raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
-        noneligible = raw.iloc[0].copy()
-        noneligible.update(
-            {
-                "code": "000009",
-                "name": "Legacy Noneligible",
-                "eligible_for_trade": False,
-                "allowed_bool": False,
-            }
-        )
-        missing_returns = raw.iloc[0].copy()
-        missing_returns.update(
-            {
-                "code": "000010",
-                "name": "Legacy Missing Return",
-                "eligible_for_trade": True,
-                "allowed_bool": True,
-                "d2open_d3high_return_pct": None,
-                "d2open_d3close_return_pct": None,
-                "target7_d2open_d3high": False,
-            }
-        )
-        missing_returns["d2open_d3high_return_pct"] = None
-        missing_returns["d2open_d3close_return_pct"] = None
+        noneligible_rows = []
+        for reason in ("Reason C", "Reason A", "Reason B"):
+            row = raw.iloc[0].copy()
+            row["code"] = "000009"
+            row["name"] = "Legacy Noneligible"
+            row["eligible_for_trade"] = False
+            row["allowed_bool"] = False
+            row["reasons"] = reason
+            noneligible_rows.append(row)
+        missing_return_rows = []
+        for score, reason in ((51.0, "Missing B"), (49.0, "Missing A")):
+            row = raw.iloc[0].copy()
+            row["code"] = "000010"
+            row["name"] = "Legacy Missing Return"
+            row["eligible_for_trade"] = True
+            row["allowed_bool"] = True
+            row["d2open_d3high_return_pct"] = None
+            row["d2open_d3close_return_pct"] = None
+            row["target7_d2open_d3high"] = False
+            row["total_score"] = score
+            row["reasons"] = reason
+            missing_return_rows.append(row)
         legacy = pd.concat(
-            [
-                raw,
-                pd.DataFrame([noneligible, noneligible, missing_returns, missing_returns]),
-            ],
+            [raw, pd.DataFrame([*noneligible_rows, *missing_return_rows])],
             ignore_index=True,
         )
         with TemporaryDirectory() as temp:
             root = Path(temp)
-            samples_path = root / "legacy_samples.csv"
-            legacy.to_csv(samples_path, index=False, encoding="utf-8-sig")
-            output_dir = root / "holdout"
-            _, daily, _, _, _ = run_fixed_grid_holdout(
-                samples_file=samples_path,
-                output_dir=output_dir,
-            )
-            run_meta = pd.read_csv(output_dir / "v005_fixed_grid_holdout_run_meta.csv").iloc[0]
+            outputs = []
+            for label, samples in (
+                ("original", legacy),
+                ("shuffled", legacy.sample(frac=1.0, random_state=73)),
+            ):
+                samples_path = root / f"legacy_samples_{label}.csv"
+                samples.to_csv(samples_path, index=False, encoding="utf-8-sig")
+                output_dir = root / f"holdout_{label}"
+                _, daily, _, _, _ = run_fixed_grid_holdout(
+                    samples_file=samples_path,
+                    output_dir=output_dir,
+                )
+                outputs.append((output_dir, daily))
+
+            baseline_dir, baseline_daily = outputs[0]
+            shuffled_dir, shuffled_daily = outputs[1]
+            run_meta = pd.read_csv(
+                baseline_dir / "v005_fixed_grid_holdout_run_meta.csv"
+            ).iloc[0]
             self.assertEqual(
                 run_meta["universe_audit_status"],
                 "LEGACY_UNVERIFIED_DUPLICATES_EXCLUDED",
             )
             self.assertEqual(int(run_meta["legacy_duplicate_key_count"]), 2)
-            self.assertEqual(int(run_meta["legacy_duplicate_row_count"]), 4)
+            self.assertEqual(int(run_meta["legacy_duplicate_row_count"]), 5)
             self.assertEqual(run_meta["legacy_duplicate_codes"], "000009,000010")
+            self.assertEqual(int(run_meta["legacy_nonidentical_duplicate_key_count"]), 2)
+            self.assertEqual(
+                run_meta["legacy_duplicate_representative_policy"],
+                "min_canonical_history_candidate_row_json_v1",
+            )
+            details = json.loads(run_meta["legacy_duplicate_details"])
+            self.assertEqual([item["row_count"] for item in details], [3, 2])
+            self.assertEqual(
+                [item["unique_canonical_row_count"] for item in details], [3, 2]
+            )
+            self.assertEqual(
+                [item["intrinsic_exclusion_reasons"] for item in details],
+                [
+                    ["not_eligible"],
+                    ["missing_high_return|missing_close_return"],
+                ],
+            )
+            self.assertTrue(
+                all(item["representative_rows_sha256"] for item in details)
+            )
             membership = pd.read_csv(
-                output_dir / "v005_fixed_grid_holdout_universe_membership.csv",
+                baseline_dir / "v005_fixed_grid_holdout_universe_membership.csv",
                 dtype={"code": str},
             )
             self.assertEqual(len(membership), 8)
             self.assertFalse(membership["code"].isin(["000009", "000010"]).any())
-            policy = daily[daily["strategy"].eq("policy_v005_v002_regime_fallback")].iloc[0]
-            self.assertEqual(policy["selected_codes"], EXPECTED_FINAL_CODES)
+            audit = pd.read_csv(
+                baseline_dir / "v005_fixed_grid_holdout_universe_audit.csv"
+            ).iloc[0]
+            self.assertEqual(int(audit["eligible_count"]), 9)
+            scored = pd.read_csv(
+                baseline_dir / "v005_fixed_grid_holdout_scored_candidates.csv",
+                dtype={"code": str},
+            )
+            self.assertFalse(scored["code"].isin(["000009", "000010"]).any())
 
-    def test_legacy_different_or_scorable_duplicates_are_rejected(self) -> None:
+            shuffled_meta = pd.read_csv(
+                shuffled_dir / "v005_fixed_grid_holdout_run_meta.csv"
+            ).iloc[0]
+            for column in (
+                "legacy_duplicate_key_count",
+                "legacy_duplicate_row_count",
+                "legacy_duplicate_codes",
+                "legacy_nonidentical_duplicate_key_count",
+                "legacy_duplicate_representative_policy",
+                "legacy_duplicate_details",
+            ):
+                self.assertEqual(run_meta[column], shuffled_meta[column], column)
+            shuffled_audit = pd.read_csv(
+                shuffled_dir / "v005_fixed_grid_holdout_universe_audit.csv"
+            ).iloc[0]
+            for column in (
+                "eligible_count",
+                "legacy_duplicate_key_count",
+                "legacy_duplicate_row_count",
+                "legacy_duplicate_codes",
+                "legacy_nonidentical_duplicate_key_count",
+                "legacy_duplicate_representative_policy",
+                "legacy_duplicate_details",
+            ):
+                self.assertEqual(audit[column], shuffled_audit[column], column)
+            baseline_manifest = json.loads(
+                (baseline_dir / "v005_fixed_grid_holdout_universe_manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            shuffled_manifest = json.loads(
+                (shuffled_dir / "v005_fixed_grid_holdout_universe_manifest.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertEqual(
+                baseline_manifest["membership_canonical_rows_sha256"],
+                shuffled_manifest["membership_canonical_rows_sha256"],
+            )
+            for daily in (baseline_daily, shuffled_daily):
+                policy = daily[
+                    daily["strategy"].eq("policy_v005_v002_regime_fallback")
+                ].iloc[0]
+                self.assertEqual(policy["selected_codes"], EXPECTED_FINAL_CODES)
+                self.assertFalse(bool(policy["gate_triggered"]))
+
+    def test_legacy_intrinsically_scorable_duplicates_are_rejected(self) -> None:
         raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
         valid = raw.iloc[0].copy()
         valid["code"] = "000009"
         different = valid.copy()
-        different["name"] = "Different"
-        cases = (
-            ([valid, different], "non-identical"),
-            ([valid, valid], "valid scorable rows"),
-        )
-        for duplicate_rows, expected in cases:
-            with self.subTest(expected=expected), TemporaryDirectory() as temp:
-                root = Path(temp)
-                samples = pd.concat(
-                    [raw, pd.DataFrame(duplicate_rows)], ignore_index=True
-                )
-                path = root / "legacy_invalid.csv"
-                samples.to_csv(path, index=False, encoding="utf-8-sig")
-                with self.assertRaisesRegex(RuntimeError, expected):
-                    run_fixed_grid_holdout(samples_file=path, output_dir=root / "out")
+        different["name"] = "Different but still scorable"
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            samples = pd.concat(
+                [raw, pd.DataFrame([valid, different])], ignore_index=True
+            )
+            path = root / "legacy_invalid.csv"
+            samples.to_csv(path, index=False, encoding="utf-8-sig")
+            with self.assertRaisesRegex(RuntimeError, "valid scorable rows"):
+                run_fixed_grid_holdout(samples_file=path, output_dir=root / "out")
 
     def test_manifest_backed_samples_reject_even_non_scorable_duplicates(self) -> None:
         raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
