@@ -12,10 +12,14 @@ from .code_utils import (
     is_excluded_name,
     is_main_board_code,
     normalize_stock_code,
+    to_eastmoney_secid,
     to_market_symbol,
 )
 from .config import DataConfig
 from .http_client import RequestClient
+
+
+LISTING_METADATA_SOURCE = "eastmoney_stock_info_f189"
 
 
 class MarketDataProvider:
@@ -54,6 +58,37 @@ class MarketDataProvider:
         if frame.empty:
             raise RuntimeError("main-board stock universe is empty")
         return frame, "eastmoney_spot_universe"
+
+    def fetch_listing_metadata(self, code: str) -> dict[str, str]:
+        """Fetch a verified exchange listing date from Eastmoney stock metadata."""
+        normalized = normalize_stock_code(code)
+        payload = self.client.get_json(
+            "https://push2.eastmoney.com/api/qt/stock/get",
+            params={
+                "fltt": "2",
+                "invt": "2",
+                "fields": "f57,f58,f189",
+                "secid": to_eastmoney_secid(normalized),
+            },
+        )
+        data = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(data, dict):
+            raise RuntimeError(f"{normalized} Eastmoney listing metadata response missing data")
+        returned_code = normalize_stock_code(data.get("f57", ""))
+        if returned_code != normalized:
+            raise RuntimeError(
+                f"{normalized} Eastmoney listing metadata code mismatch: returned={returned_code}"
+            )
+        listing_date = normalize_listing_date(data.get("f189"))
+        if not listing_date:
+            raise RuntimeError(
+                f"{normalized} Eastmoney listing metadata missing or invalid f189 listing date"
+            )
+        return {
+            "code": normalized,
+            "listing_date": listing_date,
+            "metadata_source": LISTING_METADATA_SOURCE,
+        }
 
     def fetch_daily_history(
         self,
@@ -451,6 +486,20 @@ def normalize_5min_frame(frame: pd.DataFrame, code: str, source: str, adjust: st
 
 def normalize_date_text(value: str) -> str:
     return pd.Timestamp(value).strftime("%Y-%m-%d")
+
+
+def normalize_listing_date(value: object) -> str:
+    if value is None or isinstance(value, bool):
+        return ""
+    text = str(value).strip()
+    if text.endswith(".0") and text[:-2].isdigit():
+        text = text[:-2]
+    if len(text) != 8 or not text.isdigit():
+        return ""
+    parsed = pd.to_datetime(text, format="%Y%m%d", errors="coerce")
+    if pd.isna(parsed):
+        return ""
+    return parsed.strftime("%Y-%m-%d")
 
 
 def extract_sina_json_payload(text: str) -> str:

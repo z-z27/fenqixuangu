@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
+import json
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ LIMIT_UP_PRICE_TOLERANCE = 0.011
 LIMIT_UP_MIN_PCT_CHG = 9.7
 DERIVED_LIMITUP_PROGRESS_STEP = 100
 DERIVED_LIMITUP_MAX_WORKERS = 12
+LISTING_METADATA_SCHEMA_VERSION = 1
 
 
 @dataclass
@@ -49,6 +51,9 @@ class MarketDataService:
         self.daily_unadjusted_cache = StockFrameCache(self.config.cache_dir / "daily_unadjusted", "daily")
         self.minute_cache = StockFrameCache(self.config.cache_dir / "minute_5m", "5min")
         self.universe_cache = FrameCache(self.config.cache_dir / "universe", "universe")
+        self.listing_metadata_cache = FrameCache(
+            self.config.cache_dir / "listing_metadata", "listing_metadata"
+        )
 
     def collect_limit_ups(
         self,
@@ -114,8 +119,7 @@ class MarketDataService:
         normalized = normalize_stock_code(code)
         target_5min_days = int(days or self.config.default_5min_days)
         min_5min_days = min(target_5min_days, max(1, int(getattr(self.config, "min_5min_trade_days", 20))))
-        warmup_days = max(int(self.config.indicator_warmup_trading_days), 120)
-        daily_required_days = max(int(self.config.daily_history_days), target_5min_days + warmup_days)
+        daily_required_days = required_daily_trade_days(self.config, target_5min_days)
         cached_daily = None if force_refresh else self.daily_cache.read(normalized)
         cached_minute = None if force_refresh else self.minute_cache.read(normalized)
         end_ts = pd.Timestamp(end_date or datetime.now().strftime("%Y-%m-%d"))
@@ -168,7 +172,6 @@ class MarketDataService:
         minute_recent = _keep_recent_trade_days(minute_until_end, "trade_date", target_5min_days)
         daily_recent = enrich_daily_indicators(daily_recent, full_daily=daily_history)
         minute_recent = enrich_5min_indicators(minute_recent)
-        _ensure_daily_ma_coverage(daily_recent, normalized)
         quality = _build_quality_report(
             code=normalized,
             daily=daily_recent,
@@ -198,6 +201,33 @@ class MarketDataService:
             from_cache=from_cache,
             quality=quality,
         )
+
+    def resolve_listing_metadata(
+        self,
+        code: str,
+        force_refresh: bool = False,
+    ) -> dict[str, Any]:
+        normalized = normalize_stock_code(code)
+        cached = None if force_refresh else self.listing_metadata_cache.read(normalized)
+        cached_record = _validated_listing_metadata_record(cached, normalized)
+        if cached_record is not None:
+            return {**cached_record, "from_cache": True}
+
+        fetched = self.provider.fetch_listing_metadata(normalized)
+        listing_date = _normalize_iso_date(fetched.get("listing_date"))
+        source = str(fetched.get("metadata_source", "")).strip()
+        returned_code = normalize_stock_code(fetched.get("code", normalized))
+        if returned_code != normalized or not listing_date or not source:
+            raise RuntimeError(f"{normalized} listing metadata response failed validation")
+        record = {
+            "code": normalized,
+            "listing_date": listing_date,
+            "metadata_source": source,
+            "schema_version": LISTING_METADATA_SCHEMA_VERSION,
+            "fetched_at": datetime.now(timezone.utc).isoformat(),
+        }
+        self.listing_metadata_cache.write(normalized, pd.DataFrame([record]))
+        return {**record, "from_cache": False}
 
     def ensure_minute_cache(
         self,
@@ -433,6 +463,57 @@ def load_limitup_file(path: str | Path) -> pd.DataFrame:
     frame = pd.read_csv(path, dtype={"code": str})
     frame["code"] = frame["code"].map(normalize_stock_code)
     return frame
+
+
+def required_daily_trade_days(config: DataConfig, signal_days: int | None = None) -> int:
+    target_days = int(signal_days or config.default_5min_days)
+    warmup_days = max(int(config.indicator_warmup_trading_days), 120)
+    return max(int(config.daily_history_days), target_days + warmup_days)
+
+
+def _validated_listing_metadata_record(
+    frame: pd.DataFrame | None,
+    expected_code: str,
+) -> dict[str, Any] | None:
+    required = {"code", "listing_date", "metadata_source", "schema_version", "fetched_at"}
+    if frame is None or len(frame) != 1 or not required.issubset(frame.columns):
+        return None
+    raw = frame.iloc[0].to_dict()
+    try:
+        code = normalize_stock_code(raw.get("code", ""))
+        schema_version = int(raw.get("schema_version"))
+    except (TypeError, ValueError):
+        return None
+    listing_date = _normalize_iso_date(raw.get("listing_date"))
+    source = str(raw.get("metadata_source", "")).strip()
+    fetched_at = str(raw.get("fetched_at", "")).strip()
+    if (
+        code != expected_code
+        or schema_version != LISTING_METADATA_SCHEMA_VERSION
+        or not listing_date
+        or not source
+        or not fetched_at
+    ):
+        return None
+    return {
+        "code": code,
+        "listing_date": listing_date,
+        "metadata_source": source,
+        "schema_version": schema_version,
+        "fetched_at": fetched_at,
+    }
+
+
+def _normalize_iso_date(value: Any) -> str:
+    if value is None or isinstance(value, bool):
+        return ""
+    text = str(value).strip()
+    if not text:
+        return ""
+    parsed = pd.to_datetime(text, format="%Y-%m-%d", errors="coerce")
+    if pd.isna(parsed):
+        return ""
+    return parsed.strftime("%Y-%m-%d")
 
 
 def _normalise_worker_count(workers: int | None) -> int:
@@ -711,19 +792,34 @@ def _build_quality_report(
     missing_minute_amount = int(minute["amount"].isna().sum()) if "amount" in minute.columns else len(minute)
     missing_minute_volume = int(minute["volume"].isna().sum()) if "volume" in minute.columns else len(minute)
     zero_minute_volume = int((pd.to_numeric(minute.get("volume"), errors="coerce").fillna(0) == 0).sum()) if "volume" in minute.columns else 0
-    warnings: list[str] = []
-    hard_failures: list[str] = []
+    hard_failure_codes: list[str] = []
+    hard_failures: list[dict[str, Any]] = []
+
+    def add_hard_failure(code: str, message: str) -> None:
+        hard_failure_codes.append(code)
+        hard_failures.append({"code": code, "message": message})
+
     if daily_history_rows < daily_required_days:
-        hard_failures.append(f"daily history rows {daily_history_rows} < required {daily_required_days}")
-    if minute_trade_days < minute_required_days:
-        hard_failures.append(f"minute trade days {minute_trade_days} < required {minute_required_days}")
-    if missing_latest_ma:
-        hard_failures.append("missing latest daily MA: " + ",".join(missing_latest_ma))
-    if not cross_check["passed"]:
-        hard_failures.append(
-            f"daily/minute close cross-check failed: matched={cross_check['matched_days']}, max_diff={cross_check['max_abs_difference']}"
+        add_hard_failure(
+            "daily_history_shortfall",
+            f"daily history rows {daily_history_rows} < required {daily_required_days}",
         )
-    warnings.extend(hard_failures)
+    if minute_trade_days < minute_required_days:
+        add_hard_failure(
+            "minute_history_shortfall",
+            f"minute trade days {minute_trade_days} < required {minute_required_days}",
+        )
+    if missing_latest_ma:
+        add_hard_failure(
+            "missing_latest_daily_ma",
+            "missing latest daily MA: " + ",".join(missing_latest_ma),
+        )
+    if not cross_check["passed"]:
+        add_hard_failure(
+            "daily_minute_close_mismatch",
+            f"daily/minute close cross-check failed: matched={cross_check['matched_days']}, "
+            f"max_diff={cross_check['max_abs_difference']}",
+        )
     status = "failed" if hard_failures else "ok"
     return {
         "code": code,
@@ -752,7 +848,15 @@ def _build_quality_report(
         "daily_minute_close_matched_days": cross_check["matched_days"],
         "daily_minute_close_max_abs_diff": cross_check["max_abs_difference"],
         "daily_minute_close_check_ok": cross_check["passed"],
-        "warnings": "; ".join(warnings),
+        "hard_failure_codes": tuple(hard_failure_codes),
+        "hard_failure_codes_json": json.dumps(
+            hard_failure_codes, ensure_ascii=False, separators=(",", ":")
+        ),
+        "hard_failures": hard_failures,
+        "hard_failures_json": json.dumps(
+            hard_failures, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ),
+        "warnings": "; ".join(item["message"] for item in hard_failures),
         "error": "",
     }
 

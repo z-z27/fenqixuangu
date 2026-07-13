@@ -19,6 +19,10 @@ DEFAULT_ENTRY_PRICE_MODE = "confirmation_close"
 EXECUTION_MODEL_VERSION = "conservative_confirmation_close_v1"
 LEGACY_ZONE_MAX_EXECUTION_MODEL_VERSION = "legacy_zone_max_v0"
 HISTORY_HORIZONS = (2, 3, 5, 10)
+LISTING_HISTORY_PROOF_METHOD = "weekday_upper_bound_v1"
+LISTING_HISTORY_ELIGIBLE_FAILURE_CODES = frozenset(
+    {"daily_history_shortfall", "missing_latest_daily_ma"}
+)
 
 
 def execution_model_version(entry_price_mode: str) -> str:
@@ -399,14 +403,42 @@ def build_signals_for_pool(
                         "name": name,
                         "trade_date": as_of_date,
                         "d0_date": d0_date,
-                        "error_class": type(exc).__name__,
-                        "error": str(exc),
-                        "data_quality_reason": str(
-                            quality.get("warnings") or quality.get("hard_failures") or str(exc)
-                        ),
-                        "is_data_quality_error": True,
                     }
                 )
+                quality.update(
+                    _listing_history_exclusion_decision(
+                        service=service,
+                        code=code,
+                        signal_date=as_of_date,
+                        quality=quality,
+                        force_refresh=force_refresh,
+                    )
+                )
+                if str(quality.get("status", "")) == "excluded":
+                    quality.update(
+                        {
+                            "original_error_class": type(exc).__name__,
+                            "original_error": str(exc),
+                            "original_data_quality_reason": str(
+                                quality.get("warnings") or quality.get("hard_failures") or str(exc)
+                            ),
+                            "error_class": "",
+                            "error": "",
+                            "data_quality_reason": "",
+                            "is_data_quality_error": False,
+                        }
+                    )
+                else:
+                    quality.update(
+                        {
+                            "error_class": type(exc).__name__,
+                            "error": str(exc),
+                            "data_quality_reason": str(
+                                quality.get("warnings") or quality.get("hard_failures") or str(exc)
+                            ),
+                            "is_data_quality_error": True,
+                        }
+                    )
                 quality_rows.append(quality)
             else:
                 quality_rows.append(_failed_quality_row(code, name, as_of_date, d0_date, exc))
@@ -1384,7 +1416,139 @@ def _latest_possible_market_date() -> str:
     return current.strftime("%Y-%m-%d")
 
 
+def _listing_history_exclusion_decision(
+    service: MarketDataService,
+    code: str,
+    signal_date: str,
+    quality: dict[str, Any],
+    force_refresh: bool = False,
+) -> dict[str, Any]:
+    failure_codes = _hard_failure_code_set(quality)
+    if (
+        "daily_history_shortfall" not in failure_codes
+        or not failure_codes.issubset(LISTING_HISTORY_ELIGIBLE_FAILURE_CODES)
+    ):
+        return {"listing_history_check_status": "not_applicable"}
+
+    required_days = _positive_int(quality.get("daily_required_days"))
+    if required_days is None:
+        return {
+            "listing_history_check_status": "invalid_required_trade_days",
+            "listing_metadata_error": "daily_required_days is missing or invalid",
+        }
+
+    try:
+        metadata = service.resolve_listing_metadata(code, force_refresh=force_refresh)
+    except Exception as exc:
+        return {
+            "listing_history_check_status": "listing_metadata_unavailable",
+            "listing_metadata_error": f"{type(exc).__name__}: {exc}",
+        }
+
+    listing_date = _strict_iso_date(metadata.get("listing_date"))
+    normalized_signal_date = _strict_iso_date(signal_date)
+    source = str(metadata.get("metadata_source", "")).strip()
+    if not listing_date or not normalized_signal_date or not source:
+        return {
+            "listing_history_check_status": "listing_metadata_invalid",
+            "listing_metadata_error": "listing date, signal date, or metadata source is invalid",
+        }
+    if listing_date > normalized_signal_date:
+        return {
+            "listing_history_check_status": "listing_date_after_signal_date",
+            "listing_date": listing_date,
+            "listing_date_source": source,
+            "signal_date": normalized_signal_date,
+            "required_trade_days": required_days,
+            "listing_metadata_error": "listing_date is later than signal_date",
+        }
+
+    maximum_days = maximum_possible_weekday_trade_days(listing_date, normalized_signal_date)
+    common = {
+        "listing_date": listing_date,
+        "listing_date_source": source,
+        "signal_date": normalized_signal_date,
+        "required_trade_days": required_days,
+        "maximum_possible_trade_days": maximum_days,
+        "proof_method": LISTING_HISTORY_PROOF_METHOD,
+        "listing_metadata_schema_version": metadata.get("schema_version", ""),
+        "listing_metadata_cache_hit": bool(metadata.get("from_cache", False)),
+    }
+    if maximum_days >= required_days:
+        return {**common, "listing_history_check_status": "sufficient_history_possible"}
+
+    evidence = {
+        "listing_date": listing_date,
+        "listing_date_source": source,
+        "maximum_possible_trade_days": maximum_days,
+        "proof_method": LISTING_HISTORY_PROOF_METHOD,
+        "required_trade_days": required_days,
+        "signal_date": normalized_signal_date,
+    }
+    return {
+        **common,
+        "status": "excluded",
+        "quality_excluded": True,
+        "exclusion_reason": "insufficient_listing_history",
+        "exclusion_evidence_json": json.dumps(
+            evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ),
+        "listing_history_check_status": "strictly_proven_insufficient",
+    }
+
+
+def maximum_possible_weekday_trade_days(listing_date: str, signal_date: str) -> int:
+    start = pd.Timestamp(listing_date)
+    end = pd.Timestamp(signal_date)
+    if start > end:
+        return 0
+    return int(len(pd.bdate_range(start=start, end=end, inclusive="both")))
+
+
+def _hard_failure_code_set(quality: dict[str, Any]) -> set[str]:
+    raw = quality.get("hard_failure_codes")
+    if isinstance(raw, (list, tuple, set, frozenset)):
+        return {str(value).strip() for value in raw if str(value).strip()}
+    if isinstance(raw, str) and raw.strip():
+        text = raw.strip()
+        if text.startswith("["):
+            try:
+                decoded = json.loads(text)
+            except json.JSONDecodeError:
+                decoded = None
+            if isinstance(decoded, list):
+                return {str(value).strip() for value in decoded if str(value).strip()}
+        return {value.strip() for value in text.split(",") if value.strip()}
+    raw_json = quality.get("hard_failure_codes_json")
+    if isinstance(raw_json, str) and raw_json.strip():
+        try:
+            decoded = json.loads(raw_json)
+        except json.JSONDecodeError:
+            return set()
+        if isinstance(decoded, list):
+            return {str(value).strip() for value in decoded if str(value).strip()}
+    return set()
+
+
+def _strict_iso_date(value: Any) -> str:
+    text = str(value or "").strip()
+    parsed = pd.to_datetime(text, format="%Y-%m-%d", errors="coerce")
+    return "" if pd.isna(parsed) else parsed.strftime("%Y-%m-%d")
+
+
+def _positive_int(value: Any) -> int | None:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return None
+    return parsed if parsed > 0 else None
+
+
 def _failed_quality_row(code: str, name: str, trade_date: str, d0_date: str, exc: Exception) -> dict[str, Any]:
+    failure = {
+        "code": "provider_or_processing_error",
+        "message": f"{type(exc).__name__}: {exc}",
+    }
     return {
         "code": str(code).zfill(6),
         "name": name,
@@ -1414,6 +1578,12 @@ def _failed_quality_row(code: str, name: str, trade_date: str, d0_date: str, exc
         "daily_minute_close_matched_days": 0,
         "daily_minute_close_max_abs_diff": None,
         "daily_minute_close_check_ok": False,
+        "hard_failure_codes": ("provider_or_processing_error",),
+        "hard_failure_codes_json": '["provider_or_processing_error"]',
+        "hard_failures": [failure],
+        "hard_failures_json": json.dumps(
+            [failure], ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ),
         "warnings": "",
         "error_class": type(exc).__name__,
         "error": str(exc),

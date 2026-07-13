@@ -54,6 +54,18 @@ from .v004a import annotate_v004a_input_eligibility
 
 DEFAULT_TARGET_RETURN_PCT = 7.0
 DEFAULT_SECONDARY_TARGET_RETURN_PCT = 10.0
+LISTING_EXCLUSION_REASON = "insufficient_listing_history"
+LISTING_EXCLUSION_EVIDENCE_COLUMNS = (
+    "code",
+    "exclusion_reason",
+    "listing_date",
+    "listing_date_source",
+    "signal_date",
+    "required_trade_days",
+    "maximum_possible_trade_days",
+    "proof_method",
+    "exclusion_evidence_json",
+)
 
 
 @dataclass(frozen=True)
@@ -164,6 +176,13 @@ HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS = [
     "d0_date",
     "included_bool",
     "exclusion_reason",
+    "listing_date",
+    "listing_date_source",
+    "signal_date",
+    "required_trade_days",
+    "maximum_possible_trade_days",
+    "proof_method",
+    "exclusion_evidence_json",
 ]
 
 RAW_SOURCE_ROW_COLUMNS = (
@@ -193,6 +212,8 @@ RAW_SOURCE_ROW_COLUMNS = (
     "limitup_basis",
     "limitup_price_tolerance",
     "limitup_min_pct_chg",
+    "signal_pool_exclusion_reason",
+    "signal_pool_exclusion_evidence_json",
 )
 
 SIGNAL_ROW_COLUMNS = (
@@ -274,6 +295,7 @@ def run_history_sample_generation(
         run_row["universe_snapshot_mode"] = universe_snapshot_mode
         audit_row = _empty_universe_audit_row(requested_date)
         audit_appended = False
+        pending_membership: pd.DataFrame | None = None
         print(f"[history-samples] {date_index}/{total_dates} start {requested_date}", flush=True)
         try:
             lookback = _collect_limitups_for_history_sample(
@@ -412,22 +434,31 @@ def run_history_sample_generation(
                 else pd.Series(dtype=int)
             )
             quality_ok = int(quality_counts.get("ok", 0))
+            quality_excluded = int(quality_counts.get("excluded", 0))
             quality_failed = int(quality_counts.get("failed", 0))
             quality_failure_meta = _quality_failure_metadata(quality_rows)
+            quality_exclusion_meta = _quality_exclusion_metadata(quality_rows)
+            raw_source = _annotate_raw_source_exclusions(raw_source, quality_rows)
+            _apply_stage_identity(audit_row, "raw_source", stage_identity(_raw_stage_snapshot(raw_source)))
             audit_row["quality_ok"] = quality_ok
+            audit_row["quality_excluded"] = quality_excluded
             audit_row["quality_failed"] = quality_failed
             audit_row.update(quality_failure_meta)
+            audit_row.update(quality_exclusion_meta)
             run_row.update(
                 {
                     "quality_rows": int(len(quality_rows)),
                     "quality_ok": quality_ok,
+                    "quality_excluded": quality_excluded,
                     "quality_failed": quality_failed,
                     **quality_failure_meta,
+                    **quality_exclusion_meta,
                 }
             )
             print(
                 f"[history-samples] {requested_date} signals={len(signals)} "
-                f"quality_ok={quality_ok} quality_failed={quality_failed}",
+                f"quality_ok={quality_ok} quality_excluded={quality_excluded} "
+                f"quality_failed={quality_failed}",
                 flush=True,
             )
             signals_csv, signals_md = write_signal_reports(
@@ -458,6 +489,14 @@ def run_history_sample_generation(
                 )
             signal_frame = _signals_to_frame(signals)
             signal_frame = _standardize_signal_pool(signal_frame, requested_date, actual_date)
+            pending_membership = _build_history_universe_membership(
+                requested_date=requested_date,
+                actual_date=actual_date,
+                raw_source=raw_source,
+                signal_pool=signal_frame,
+                candidates=_empty_history_candidates_frame(),
+                quality_rows=quality_rows,
+            )
             audit_row["signal_row_count"] = int(len(signal_frame))
             audit_row["duplicate_signal_key_count"] = count_duplicate_keys(
                 signal_frame, ("requested_signal_date", "code")
@@ -553,6 +592,7 @@ def run_history_sample_generation(
                 raw_source=raw_source,
                 signal_pool=signal_frame,
                 candidates=day_candidates,
+                quality_rows=quality_rows,
             )
             try:
                 snapshot_status, canonical_manifest_path, _ = create_or_verify_snapshot(
@@ -590,7 +630,9 @@ def run_history_sample_generation(
                     "candidate_rows": int(len(signal_frame)),
                     "quality_rows": int(len(quality_rows)),
                     "quality_ok": quality_ok,
+                    "quality_excluded": quality_excluded,
                     "quality_failed": quality_failed,
+                    **quality_exclusion_meta,
                     "future_fetch_end_date": future_end_date,
                     "future_fetch_attempted": int(future_fetch["attempted"]),
                     "future_fetch_ok": int(future_fetch["ok"]),
@@ -608,6 +650,8 @@ def run_history_sample_generation(
             run_row["status"] = "failed"
             run_row["error"] = str(exc)
             run_row["signal_date_mismatch"] = "signal_date_mismatch" in str(exc)
+            if pending_membership is not None and not audit_appended:
+                universe_membership_frames.append(pending_membership)
             if not audit_appended:
                 audit_row["generation_status"] = "failed"
                 audit_row["snapshot_status"] = (
@@ -632,6 +676,8 @@ def run_history_sample_generation(
         except Exception as exc:
             run_row["status"] = "failed"
             run_row["error"] = str(exc)
+            if pending_membership is not None and not audit_appended:
+                universe_membership_frames.append(pending_membership)
             if not audit_appended:
                 audit_row["generation_status"] = "failed"
                 audit_row["snapshot_status"] = "GENERATION_FAILED"
@@ -851,6 +897,7 @@ def _build_history_universe_membership(
     raw_source: pd.DataFrame,
     signal_pool: pd.DataFrame,
     candidates: pd.DataFrame,
+    quality_rows: list[dict[str, Any]] | None = None,
 ) -> pd.DataFrame:
     require_nonempty_codes(raw_source, "code", "raw_source_pool membership")
     require_nonempty_codes(signal_pool, "code", "signal_pool membership")
@@ -886,6 +933,39 @@ def _build_history_universe_membership(
                 row,
                 eligible,
                 "" if eligible else "not_eligible",
+            )
+        )
+    signal_codes = {
+        str(code)
+        for code in signal_pool.get("code", pd.Series(dtype=str)).astype(str).tolist()
+        if str(code)
+    }
+    excluded_rows = sorted(
+        (
+            row
+            for row in (quality_rows or [])
+            if str(row.get("status", "")) == "excluded"
+        ),
+        key=lambda row: str(row.get("code", "")).zfill(6),
+    )
+    for raw_row in excluded_rows:
+        code = str(raw_row.get("code", "")).zfill(6)
+        if code in signal_codes:
+            raise UniverseAuditError(
+                f"signal_pool exclusion also appears as included signal: requested={requested_date}, code={code}"
+            )
+        _require_complete_exclusion_evidence(raw_row)
+        row = pd.Series(raw_row)
+        rows.append(
+            _membership_row(
+                requested_date,
+                actual_date,
+                "signal_pool",
+                f"{requested_date}|{code}",
+                "",
+                row,
+                False,
+                str(raw_row.get("exclusion_reason", "")),
             )
         )
     for _, row in candidates.iterrows():
@@ -929,6 +1009,13 @@ def _membership_row(
         "d0_date": row.get("d0_date", ""),
         "included_bool": bool(included),
         "exclusion_reason": exclusion_reason,
+        "listing_date": row.get("listing_date", ""),
+        "listing_date_source": row.get("listing_date_source", ""),
+        "signal_date": row.get("signal_date", ""),
+        "required_trade_days": row.get("required_trade_days", ""),
+        "maximum_possible_trade_days": row.get("maximum_possible_trade_days", ""),
+        "proof_method": row.get("proof_method", ""),
+        "exclusion_evidence_json": row.get("exclusion_evidence_json", ""),
     }
 
 
@@ -938,7 +1025,12 @@ def _empty_universe_audit_row(requested_date: str) -> dict[str, Any]:
         "actual_signal_date": "",
         "generation_status": "started",
         "quality_ok": 0,
+        "quality_excluded": 0,
         "quality_failed": 0,
+        "quality_excluded_codes": "",
+        "quality_exclusion_reasons": "",
+        "quality_exclusion_details": "",
+        "quality_exclusion_evidence_sha256": "",
         "quality_failed_codes": "",
         "quality_failed_error_classes": "",
         "quality_failed_details": "",
@@ -1020,6 +1112,90 @@ def _quality_failure_metadata(quality_rows: list[dict[str, Any]]) -> dict[str, s
         "quality_failed_error_classes": ",".join(error_classes),
         "quality_failed_details": " | ".join(details),
     }
+
+
+def _quality_exclusion_metadata(quality_rows: list[dict[str, Any]]) -> dict[str, str]:
+    excluded = [row for row in quality_rows if str(row.get("status", "")) == "excluded"]
+    if not excluded:
+        return {
+            "quality_excluded_codes": "",
+            "quality_exclusion_reasons": "",
+            "quality_exclusion_details": "",
+            "quality_exclusion_evidence_sha256": "",
+        }
+    for row in excluded:
+        _require_complete_exclusion_evidence(row)
+    evidence = pd.DataFrame(excluded)
+    codes = sorted({str(row.get("code", "")).zfill(6) for row in excluded})
+    reasons = sorted({str(row.get("exclusion_reason", "")) for row in excluded})
+    details = [
+        f"code={str(row.get('code', '')).zfill(6)};"
+        f"reason={row.get('exclusion_reason', '')};"
+        f"evidence={row.get('exclusion_evidence_json', '')}"
+        for row in sorted(excluded, key=lambda item: str(item.get("code", "")).zfill(6))
+    ]
+    return {
+        "quality_excluded_codes": ",".join(codes),
+        "quality_exclusion_reasons": ",".join(reasons),
+        "quality_exclusion_details": " | ".join(details),
+        "quality_exclusion_evidence_sha256": canonical_rows_sha256(
+            evidence,
+            LISTING_EXCLUSION_EVIDENCE_COLUMNS,
+            ("code",),
+        ),
+    }
+
+
+def _annotate_raw_source_exclusions(
+    raw_source: pd.DataFrame,
+    quality_rows: list[dict[str, Any]],
+) -> pd.DataFrame:
+    frame = raw_source.copy()
+    exclusions: dict[str, dict[str, Any]] = {}
+    for row in quality_rows:
+        if str(row.get("status", "")) != "excluded":
+            continue
+        _require_complete_exclusion_evidence(row)
+        code = str(row.get("code", "")).zfill(6)
+        prior = exclusions.get(code)
+        if prior is not None and (
+            str(prior.get("exclusion_reason", "")) != str(row.get("exclusion_reason", ""))
+            or str(prior.get("exclusion_evidence_json", ""))
+            != str(row.get("exclusion_evidence_json", ""))
+        ):
+            raise UniverseAuditError(f"conflicting signal-pool exclusions for code={code}")
+        exclusions[code] = row
+    reason_by_code = {
+        code: str(row.get("exclusion_reason", "")) for code, row in exclusions.items()
+    }
+    evidence_by_code = {
+        code: str(row.get("exclusion_evidence_json", "")) for code, row in exclusions.items()
+    }
+    frame["signal_pool_exclusion_reason"] = frame["code"].astype(str).map(reason_by_code).fillna("")
+    frame["signal_pool_exclusion_evidence_json"] = (
+        frame["code"].astype(str).map(evidence_by_code).fillna("")
+    )
+    return frame
+
+
+def _require_complete_exclusion_evidence(row: dict[str, Any]) -> None:
+    reason = str(row.get("exclusion_reason", ""))
+    if reason != LISTING_EXCLUSION_REASON:
+        raise UniverseAuditError(f"unsupported quality exclusion reason: {reason!r}")
+    required = (
+        "listing_date",
+        "listing_date_source",
+        "signal_date",
+        "required_trade_days",
+        "maximum_possible_trade_days",
+        "proof_method",
+        "exclusion_evidence_json",
+    )
+    missing = [field for field in required if str(row.get(field, "")).strip() == ""]
+    if missing:
+        raise UniverseAuditError(
+            f"incomplete {LISTING_EXCLUSION_REASON} evidence for code={row.get('code', '')}: {missing}"
+        )
 
 
 def _apply_stage_identity(row: dict[str, Any], prefix: str, identity: dict[str, Any]) -> None:
@@ -1911,6 +2087,10 @@ def build_history_candidates_markdown(
             "duplicate_signal_key_count",
             "duplicate_candidate_key_count",
             "signal_date_mismatch_count",
+            "quality_ok",
+            "quality_excluded",
+            "quality_excluded_codes",
+            "quality_exclusion_reasons",
             "quality_failed",
             "quality_failed_codes",
             "quality_failed_error_classes",
@@ -1935,6 +2115,7 @@ def build_history_candidates_markdown(
             "signal_rows_sha256",
             "eligible_rows_sha256",
             "scorable_rows_sha256",
+            "quality_exclusion_evidence_sha256",
         ]
         hash_columns = [column for column in hash_columns if column in audit.columns]
         lines.append("| " + " | ".join(hash_columns) + " |")
@@ -2105,7 +2286,12 @@ def _empty_generation_row(requested_date: str) -> dict[str, Any]:
         "candidate_rows": 0,
         "quality_rows": 0,
         "quality_ok": 0,
+        "quality_excluded": 0,
         "quality_failed": 0,
+        "quality_excluded_codes": "",
+        "quality_exclusion_reasons": "",
+        "quality_exclusion_details": "",
+        "quality_exclusion_evidence_sha256": "",
         "quality_failed_codes": "",
         "quality_failed_error_classes": "",
         "quality_failed_details": "",

@@ -163,6 +163,7 @@ def build_data_quality_markdown(frame: pd.DataFrame, trade_date: str) -> str:
 
     status_counts = frame["status"].value_counts(dropna=False) if "status" in frame.columns else pd.Series(dtype=int)
     ok_count = int(status_counts.get("ok", 0))
+    excluded_count = int(status_counts.get("excluded", 0))
     failed_count = int(status_counts.get("failed", 0))
     ma_ok = _bool_count(frame, "daily_ma_coverage_ok")
     close_ok = _bool_count(frame, "daily_minute_close_check_ok")
@@ -170,6 +171,7 @@ def build_data_quality_markdown(frame: pd.DataFrame, trade_date: str) -> str:
     lines.append("")
     lines.append(f"- 总标的: **{len(frame)}**")
     lines.append(f"- 数据成功: **{ok_count}**")
+    lines.append(f"- 结构性排除: **{excluded_count}**")
     lines.append(f"- 数据失败: **{failed_count}**")
     lines.append(f"- 最新日线 MA 覆盖正常: **{ma_ok}**")
     lines.append(f"- 日线/分钟收盘价校验通过: **{close_ok}**")
