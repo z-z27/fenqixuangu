@@ -19,7 +19,8 @@ from src.v005_daily_selector import (
     run_v005_daily_selector,
     signals_to_frame,
 )
-from src.v005_fixed_grid_holdout import run_fixed_grid_holdout
+from src.universe_audit import canonical_rows_sha256, canonical_scalar_text
+from src.v005_fixed_grid_holdout import _read_history_candidates_csv, run_fixed_grid_holdout
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -464,6 +465,46 @@ class V005FixtureRegressionTests(unittest.TestCase):
                     output_dir=root / "holdout",
                 )
 
+    def test_holdout_csv_reader_preserves_round_trip_float_for_manifest_hash(self) -> None:
+        value_text = "-4.0015100037749995"
+        value = float(value_text)
+        columns = ["signal_date", "code", "candidate_d10_max_drawdown_pct"]
+        expected = pd.DataFrame(
+            [
+                {
+                    "signal_date": "2026-07-02",
+                    "code": "002317",
+                    "candidate_d10_max_drawdown_pct": value,
+                }
+            ]
+        )
+        with TemporaryDirectory() as temp:
+            path = Path(temp) / "history_candidates_parser_regression.csv"
+            path.write_text(
+                "signal_date,code,candidate_d10_max_drawdown_pct\n"
+                f"2026-07-02,002317,{value_text}\n",
+                encoding="utf-8",
+            )
+            parsed = _read_history_candidates_csv(path)
+            default_parsed = pd.read_csv(path, dtype={"code": str})
+
+        expected_hash = canonical_rows_sha256(expected, columns, ("signal_date", "code"))
+        self.assertEqual(
+            canonical_scalar_text(
+                parsed.iloc[0]["candidate_d10_max_drawdown_pct"],
+                "candidate_d10_max_drawdown_pct",
+            ),
+            "-4.00151000377",
+        )
+        self.assertEqual(
+            canonical_rows_sha256(parsed, columns, ("signal_date", "code")),
+            expected_hash,
+        )
+        self.assertNotEqual(
+            canonical_rows_sha256(default_parsed, columns, ("signal_date", "code")),
+            expected_hash,
+        )
+
     def test_scored_only_requires_exact_v002_key_coverage(self) -> None:
         baseline = pd.read_csv(
             self.holdout_dir / "v005_fixed_grid_holdout_scored_candidates.csv",
@@ -495,6 +536,8 @@ class V005FixtureRegressionTests(unittest.TestCase):
 
     def test_holdout_verifies_history_universe_manifest_and_rejects_changed_samples(self) -> None:
         raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
+        raw.loc[0, "candidate_d10_max_drawdown_pct"] = float("-4.0015100037749995")
+        raw["v004a_scorable_bool"] = True
         with TemporaryDirectory() as temp:
             root = Path(temp)
             history_dir = root / "history"
@@ -573,6 +616,28 @@ class V005FixtureRegressionTests(unittest.TestCase):
             changed.to_csv(samples_path, index=False, encoding="utf-8-sig")
             with self.assertRaisesRegex(RuntimeError, "does not match samples input"):
                 run_fixed_grid_holdout(samples_file=samples_path, output_dir=root / "changed")
+
+            discrete_changes = {
+                "code": {"code": "999999"},
+                "signal_date": {
+                    "signal_date": "2026-07-11",
+                    "requested_signal_date": "2026-07-11",
+                },
+                "v004a_scorable_bool": {
+                    "v004a_scorable_bool": not bool(raw.iloc[0]["v004a_scorable_bool"]),
+                },
+            }
+            for label, replacements in discrete_changes.items():
+                with self.subTest(discrete_field=label):
+                    changed = raw.copy()
+                    for column, value in replacements.items():
+                        changed.loc[changed.index[0], column] = value
+                    changed.to_csv(samples_path, index=False, encoding="utf-8-sig")
+                    with self.assertRaisesRegex(RuntimeError, "does not match samples input"):
+                        run_fixed_grid_holdout(
+                            samples_file=samples_path,
+                            output_dir=root / f"changed-{label}",
+                        )
 
 
 if __name__ == "__main__":

@@ -145,6 +145,14 @@ HOLDOUT_DAILY_COLUMNS = [
 ]
 
 
+def _read_history_candidates_csv(path: str | Path) -> pd.DataFrame:
+    return pd.read_csv(
+        path,
+        dtype={"code": str},
+        float_precision="round_trip",
+    )
+
+
 def run_fixed_grid_holdout(
     samples_file: str | Path | None = DEFAULT_SAMPLES_FILE,
     scored_file: str | Path | None = None,
@@ -172,7 +180,7 @@ def run_fixed_grid_holdout(
     out_dir.mkdir(parents=True, exist_ok=True)
     samples_path = Path(samples_file) if samples_file else None
     raw_samples = (
-        pd.read_csv(samples_path, dtype={"code": str})
+        _read_history_candidates_csv(samples_path)
         if samples_path is not None and samples_path.is_file()
         else pd.DataFrame()
     )
@@ -1103,7 +1111,7 @@ def build_holdout_scored_candidates(
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
     if not samples_file.exists():
         raise RuntimeError(f"missing samples file: {samples_file}")
-    raw = pd.read_csv(samples_file, dtype={"code": str})
+    raw = _read_history_candidates_csv(samples_file)
     samples, feature_info, data_quality = prepare_v004a_samples(raw, target_return_pct=float(target_return_pct))
     beta, feature_columns, coefficient_meta = load_fixed_v004a_beta(
         coefficients_file=coefficients_file,
