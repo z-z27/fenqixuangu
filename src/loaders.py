@@ -7,6 +7,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import json
 from pathlib import Path
+import shutil
 from typing import Any
 
 import pandas as pd
@@ -27,6 +28,12 @@ LISTING_METADATA_SCHEMA_VERSION = 1
 SUSPENSION_STATUS_SCHEMA_VERSION = 1
 SUSPENSION_PROOF_METHOD = "eastmoney_suspension_status_v1"
 FULL_DAY_SUSPENSION_DURATIONS = frozenset({"连续停牌", "停牌一天"})
+PRESERVED_MINUTE_REPAIR_SOURCES = frozenset(
+    {
+        "sina_5m_closing_auction_repaired",
+        "sina_5m_daily_aggregate_repaired",
+    }
+)
 
 
 @dataclass
@@ -128,7 +135,8 @@ class MarketDataService:
         min_5min_days = min(target_5min_days, max(1, int(getattr(self.config, "min_5min_trade_days", 20))))
         daily_required_days = required_daily_trade_days(self.config, target_5min_days)
         cached_daily = None if force_refresh else self.daily_cache.read(normalized)
-        cached_minute = None if force_refresh else self.minute_cache.read(normalized)
+        stored_minute = self.minute_cache.read(normalized)
+        cached_minute = None if force_refresh else stored_minute
         end_ts = pd.Timestamp(end_date or datetime.now().strftime("%Y-%m-%d"))
         end_date_text = end_ts.strftime("%Y-%m-%d")
         daily_start_ts = end_ts - pd.Timedelta(days=max(365, int(daily_required_days * 2.4)))
@@ -167,7 +175,7 @@ class MarketDataService:
                 minute_end,
                 adjust=self.config.adjust,
             )
-            cached_minute = minute
+            cached_minute = _preserve_verified_minute_repairs(stored_minute, minute)
             self.minute_cache.write(normalized, cached_minute)
             from_cache = False
 
@@ -265,39 +273,14 @@ class MarketDataService:
         cache_record = _validated_suspension_status_record(cached, date_text)
         if cache_record is None:
             fetched, source = self.provider.fetch_suspension_status(date_text)
-            records_json = _canonical_suspension_records_json(fetched)
-            persisted_record = {
-                "query_date": date_text,
-                "source": str(source).strip(),
-                "schema_version": SUSPENSION_STATUS_SCHEMA_VERSION,
-                "fetched_at": datetime.now(timezone.utc).isoformat(),
-                "normalized_rows_sha256": hashlib.sha256(
-                    records_json.encode("utf-8")
-                ).hexdigest(),
-                "records_json": records_json,
-            }
-            if not persisted_record["source"]:
-                raise RuntimeError("suspension status response has no source")
+            persisted_record = _build_suspension_status_cache_record(fetched, source, date_text)
             self.suspension_status_cache.write(date_text, pd.DataFrame([persisted_record]))
             cache_record = {**persisted_record, "from_cache": False}
         else:
             cache_record = {**cache_record, "from_cache": True}
 
         records = json.loads(str(cache_record["records_json"]))
-        matching: list[dict[str, Any]] = []
-        for raw in records:
-            if str(raw.get("code", "")) != normalized:
-                continue
-            start_date = _normalize_iso_date(raw.get("suspension_start_date"))
-            end_date = _normalize_iso_date(raw.get("suspension_end_date"))
-            duration = str(raw.get("suspension_duration", "")).strip()
-            if (
-                start_date
-                and end_date
-                and duration in FULL_DAY_SUSPENSION_DURATIONS
-                and start_date <= date_text <= end_date
-            ):
-                matching.append(raw)
+        matching = _strict_full_day_suspension_matches(records, normalized, date_text)
         if not matching:
             return None
         if len(matching) != 1:
@@ -321,6 +304,56 @@ class MarketDataService:
             "from_cache": bool(cache_record["from_cache"]),
         }
 
+    def refresh_suspension_status_cache(
+        self,
+        query_date: str,
+        required_code: str,
+    ) -> dict[str, Any]:
+        """Refresh one suspension-date cache only after strict proof validation."""
+        date_text = _normalize_iso_date(query_date)
+        if not date_text:
+            raise RuntimeError(f"invalid suspension query date: {query_date!r}")
+        normalized = normalize_stock_code(required_code)
+        cache_path = self.suspension_status_cache.path(date_text)
+        cached = self.suspension_status_cache.read(date_text)
+        cached_record = _validated_suspension_status_record(cached, date_text)
+        before_hash = "" if cached_record is None else str(cached_record["normalized_rows_sha256"])
+
+        fetched, source = self.provider.fetch_suspension_status(date_text)
+        if fetched is None or fetched.empty:
+            raise RuntimeError(f"suspension status refresh returned no rows for {date_text}")
+        persisted_record = _build_suspension_status_cache_record(fetched, source, date_text)
+        records = json.loads(str(persisted_record["records_json"]))
+        matching = _strict_full_day_suspension_matches(records, normalized, date_text)
+        if not matching:
+            raise RuntimeError(
+                f"refreshed suspension status does not strictly prove {normalized} on {date_text}"
+            )
+        if len(matching) != 1:
+            raise RuntimeError(
+                f"ambiguous suspension proof for {normalized} on {date_text}: {len(matching)} rows"
+            )
+
+        backup_path: Path | None = None
+        if cache_path.exists():
+            backup_root = self.config.cache_dir.parent / "backups" / "suspension_status"
+            backup_root.mkdir(parents=True, exist_ok=True)
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+            backup_path = backup_root / (
+                f"{cache_path.stem}.before_refresh_{timestamp}{cache_path.suffix}"
+            )
+            shutil.copy2(cache_path, backup_path)
+
+        self.suspension_status_cache.write(date_text, pd.DataFrame([persisted_record]))
+        return {
+            "query_date": date_text,
+            "required_code": normalized,
+            "backup_path": "" if backup_path is None else str(backup_path),
+            "before_hash": before_hash,
+            "after_hash": str(persisted_record["normalized_rows_sha256"]),
+            "record": matching[0],
+        }
+
     def ensure_minute_cache(
         self,
         code: str,
@@ -331,7 +364,8 @@ class MarketDataService:
         """Ensure 5m cache coverage without daily indicators or raw report writes."""
         normalized = normalize_stock_code(code)
         target_5min_days = int(days or self.config.default_5min_days)
-        cached_minute = None if force_refresh else self.minute_cache.read(normalized)
+        stored_minute = self.minute_cache.read(normalized)
+        cached_minute = None if force_refresh else stored_minute
         end_ts = pd.Timestamp(end_date or datetime.now().strftime("%Y-%m-%d"))
         end_date_text = end_ts.strftime("%Y-%m-%d")
 
@@ -357,6 +391,7 @@ class MarketDataService:
             minute_end,
             adjust=self.config.adjust,
         )
+        minute = _preserve_verified_minute_repairs(stored_minute, minute)
         self.minute_cache.write(normalized, minute)
         return {
             "code": normalized,
@@ -616,6 +651,47 @@ def _canonical_suspension_records_json(frame: pd.DataFrame) -> str:
     return json.dumps(decoded, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
 
+def _build_suspension_status_cache_record(
+    frame: pd.DataFrame,
+    source: str,
+    query_date: str,
+) -> dict[str, Any]:
+    records_json = _canonical_suspension_records_json(frame)
+    record = {
+        "query_date": query_date,
+        "source": str(source).strip(),
+        "schema_version": SUSPENSION_STATUS_SCHEMA_VERSION,
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "normalized_rows_sha256": hashlib.sha256(records_json.encode("utf-8")).hexdigest(),
+        "records_json": records_json,
+    }
+    if not record["source"]:
+        raise RuntimeError("suspension status response has no source")
+    return record
+
+
+def _strict_full_day_suspension_matches(
+    records: list[dict[str, Any]],
+    normalized_code: str,
+    query_date: str,
+) -> list[dict[str, Any]]:
+    matching: list[dict[str, Any]] = []
+    for raw in records:
+        if str(raw.get("code", "")) != normalized_code:
+            continue
+        start_date = _normalize_iso_date(raw.get("suspension_start_date"))
+        end_date = _normalize_iso_date(raw.get("suspension_end_date"))
+        duration = str(raw.get("suspension_duration", "")).strip()
+        if (
+            start_date
+            and end_date
+            and duration in FULL_DAY_SUSPENSION_DURATIONS
+            and start_date <= query_date <= end_date
+        ):
+            matching.append(raw)
+    return matching
+
+
 def _validated_suspension_status_record(
     frame: pd.DataFrame | None,
     expected_date: str,
@@ -847,6 +923,32 @@ def _merge_daily_frames(cached: pd.DataFrame | None, fetched: pd.DataFrame) -> p
         result["code"] = result["code"].map(normalize_stock_code)
     result["date"] = pd.to_datetime(result["date"], errors="coerce").dt.strftime("%Y-%m-%d")
     return result.dropna(subset=["date"]).drop_duplicates(["code", "date"], keep="last").sort_values("date").reset_index(drop=True)
+
+
+def _preserve_verified_minute_repairs(
+    cached: pd.DataFrame | None,
+    fetched: pd.DataFrame,
+) -> pd.DataFrame:
+    """Keep only explicitly audited minute repairs when replacing a fetched cache."""
+    result = fetched.copy()
+    if cached is None or cached.empty or "source" not in cached.columns:
+        return result
+    repaired = cached[
+        cached["source"].astype(str).isin(PRESERVED_MINUTE_REPAIR_SOURCES)
+    ].copy()
+    if repaired.empty:
+        return result
+    combined = pd.concat([result, repaired], ignore_index=True, sort=False)
+    combined["datetime"] = pd.to_datetime(combined["datetime"], errors="coerce")
+    combined = combined.dropna(subset=["datetime"])
+    keys = ["datetime"]
+    if "code" in combined.columns:
+        keys.insert(0, "code")
+    return (
+        combined.drop_duplicates(keys, keep="last")
+        .sort_values("datetime")
+        .reset_index(drop=True)
+    )
 
 
 def _round_price_limit(prev_close: float, ratio: Decimal) -> float:

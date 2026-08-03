@@ -1,0 +1,16 @@
+[1] 真实训练 fold 上的基本性质测试
+  PASS finite 
+  PASS positive 
+  PASS mean==1 mean=1.000000000000
+  PASS per_date_totals_equal max-min=7.11e-15
+[2] 合成数据: 事件重复的基础影响减半
+  PASS event_double_base_halved E3(双次, base=0.5000) 为 E1(单次, base=1.0000) 的一半
+[3] 验证集增加或删除不改变训练权重 (函数只读取输入训练数据)
+  PASS validation_irrelevant 
+  PASS deterministic 
+[4] 行顺序改变不影响对应权重
+  PASS row_order_invariant matched=728
+[5] 函数不修改输入 DataFrame
+  PASS input_untouched 
+
+RESULT: PASS=9 FAIL=0

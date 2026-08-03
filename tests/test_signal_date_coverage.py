@@ -23,7 +23,12 @@ from src.history_samples import (
     _standardize_raw_source_pool,
     _standardize_signal_pool,
 )
-from src.loaders import DataQualityError, MarketDataService, _build_quality_report
+from src.loaders import (
+    DataQualityError,
+    MarketDataService,
+    _build_quality_report,
+    _daily_minute_close_cross_check,
+)
 from src.universe_audit import UniverseAuditError, require_requested_signal_date_match
 
 
@@ -327,6 +332,33 @@ class SuspensionResolverCacheTests(unittest.TestCase):
             ]
         )
 
+    @staticmethod
+    def _002036_cross_section(*, terminal: bool) -> pd.DataFrame:
+        return pd.DataFrame(
+            [
+                {
+                    "code": "002036",
+                    "name": "联创电子",
+                    "suspension_start_date": "2026-07-23",
+                    "suspension_end_date": "2026-07-29" if terminal else "",
+                    "suspension_duration": "连续停牌",
+                    "suspension_reason": "刊登重要公告",
+                    "suspension_market": "深交所主板",
+                    "expected_resume_date": "2026-07-30" if terminal else "",
+                }
+            ]
+        )
+
+    @staticmethod
+    def _temp_config(root: Path) -> DataConfig:
+        return DataConfig(
+            raw_dir=root / "raw",
+            cache_dir=root / "cache",
+            processed_dir=root / "processed",
+            reports_dir=root / "reports",
+            snapshot_dir=root / "snapshots",
+        )
+
     def test_date_cross_section_is_cached_and_reused_with_same_hash(self) -> None:
         with TemporaryDirectory() as temp:
             root = Path(temp)
@@ -411,6 +443,159 @@ class SuspensionResolverCacheTests(unittest.TestCase):
                 return_value=(normalized, SUSPENSION_STATUS_SOURCE)
             )
             self.assertIsNone(service.resolve_suspension_on_date("603001", SIGNAL_DATE))
+
+    def test_terminal_002036_interval_proves_both_dates(self) -> None:
+        with TemporaryDirectory() as temp:
+            service = MarketDataService(self._temp_config(Path(temp)))
+            service.provider.fetch_suspension_status = mock.Mock(
+                return_value=(self._002036_cross_section(terminal=True), SUSPENSION_STATUS_SOURCE)
+            )
+            for date_text in ("2026-07-23", "2026-07-24"):
+                with self.subTest(date_text=date_text):
+                    proof = service.resolve_suspension_on_date("002036", date_text)
+                    self.assertIsNotNone(proof)
+                    self.assertEqual(proof["suspension_start_date"], "2026-07-23")
+                    self.assertEqual(proof["suspension_end_date"], "2026-07-29")
+                    self.assertEqual(proof["expected_resume_date"], "2026-07-30")
+
+    def test_open_ended_002036_continuous_suspension_remains_unproven(self) -> None:
+        with TemporaryDirectory() as temp:
+            service = MarketDataService(self._temp_config(Path(temp)))
+            service.provider.fetch_suspension_status = mock.Mock(
+                return_value=(self._002036_cross_section(terminal=False), SUSPENSION_STATUS_SOURCE)
+            )
+            self.assertIsNone(service.resolve_suspension_on_date("002036", "2026-07-23"))
+
+    def test_targeted_refresh_proves_002036_for_both_dates_and_backs_up(self) -> None:
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            service = MarketDataService(self._temp_config(root))
+            service.provider.fetch_suspension_status = mock.Mock(
+                return_value=(self._002036_cross_section(terminal=False), SUSPENSION_STATUS_SOURCE)
+            )
+            before_hashes: dict[str, str] = {}
+            for date_text in ("2026-07-23", "2026-07-24"):
+                self.assertIsNone(service.resolve_suspension_on_date("002036", date_text))
+                cached = service.suspension_status_cache.read(date_text)
+                before_hashes[date_text] = str(cached.iloc[0]["normalized_rows_sha256"])
+
+            service.provider.fetch_suspension_status = mock.Mock(
+                return_value=(self._002036_cross_section(terminal=True), SUSPENSION_STATUS_SOURCE)
+            )
+            for date_text in ("2026-07-23", "2026-07-24"):
+                with self.subTest(date_text=date_text):
+                    result = service.refresh_suspension_status_cache(date_text, "002036")
+                    self.assertTrue(Path(result["backup_path"]).exists())
+                    self.assertEqual(result["before_hash"], before_hashes[date_text])
+                    self.assertNotEqual(result["after_hash"], before_hashes[date_text])
+                    proof = service.resolve_suspension_on_date("002036", date_text)
+                    self.assertIsNotNone(proof)
+                    self.assertEqual(proof["suspension_end_date"], "2026-07-29")
+
+    def test_targeted_refresh_failure_keeps_original_cache(self) -> None:
+        failures = {
+            "network": RuntimeError("network unavailable"),
+            "empty": (pd.DataFrame(), SUSPENSION_STATUS_SOURCE),
+            "open_ended": (
+                self._002036_cross_section(terminal=False),
+                SUSPENSION_STATUS_SOURCE,
+            ),
+        }
+        for name, failure in failures.items():
+            with self.subTest(name=name), TemporaryDirectory() as temp:
+                service = MarketDataService(self._temp_config(Path(temp)))
+                service.provider.fetch_suspension_status = mock.Mock(
+                    return_value=(self._002036_cross_section(terminal=False), SUSPENSION_STATUS_SOURCE)
+                )
+                self.assertIsNone(service.resolve_suspension_on_date("002036", "2026-07-23"))
+                cache_path = service.suspension_status_cache.path("2026-07-23")
+                before = cache_path.read_bytes()
+                if isinstance(failure, Exception):
+                    service.provider.fetch_suspension_status = mock.Mock(side_effect=failure)
+                else:
+                    service.provider.fetch_suspension_status = mock.Mock(return_value=failure)
+                with self.assertRaises(RuntimeError):
+                    service.refresh_suspension_status_cache("2026-07-23", "002036")
+                self.assertEqual(cache_path.read_bytes(), before)
+
+
+class MinuteRepairPersistenceTests(unittest.TestCase):
+    def test_ensure_minute_cache_preserves_only_verified_repair_rows(self) -> None:
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = DataConfig(
+                raw_dir=root / "raw",
+                cache_dir=root / "cache",
+                processed_dir=root / "processed",
+                reports_dir=root / "reports",
+                snapshot_dir=root / "snapshots",
+            )
+            service = MarketDataService(config)
+            repaired = pd.DataFrame(
+                [
+                    {
+                        "datetime": pd.Timestamp("2026-07-17 15:00:00"),
+                        "trade_date": "2026-07-17",
+                        "code": "002857",
+                        "close": 14.38,
+                        "volume": 121900,
+                        "amount": 1762118.9972,
+                        "source": "sina_5m_daily_aggregate_repaired",
+                    },
+                    {
+                        "datetime": pd.Timestamp("2026-07-16 15:00:00"),
+                        "trade_date": "2026-07-16",
+                        "code": "002857",
+                        "close": 99.99,
+                        "source": "sina_5m",
+                    },
+                ]
+            )
+            fetched = pd.DataFrame(
+                [
+                    {
+                        "datetime": pd.Timestamp("2026-07-16 15:00:00"),
+                        "trade_date": "2026-07-16",
+                        "code": "002857",
+                        "close": 15.02,
+                        "source": "sina_5m",
+                    },
+                    {
+                        "datetime": pd.Timestamp("2026-07-17 15:00:00"),
+                        "trade_date": "2026-07-17",
+                        "code": "002857",
+                        "close": 14.34,
+                        "volume": 79000,
+                        "amount": 1134481.0,
+                        "source": "sina_5m",
+                    },
+                ]
+            )
+            service.minute_cache.write("002857", repaired)
+            service.provider.fetch_5min_history = mock.Mock(
+                return_value=(fetched, "sina_5m")
+            )
+
+            service.ensure_minute_cache(
+                "002857",
+                days=1,
+                end_date="2026-07-17",
+                force_refresh=True,
+            )
+
+            cached = service.minute_cache.read("002857").sort_values("datetime")
+            ordinary = cached[cached["trade_date"].eq("2026-07-16")].iloc[-1]
+            closing = cached[cached["trade_date"].eq("2026-07-17")].iloc[-1]
+            self.assertEqual(float(ordinary["close"]), 15.02)
+            self.assertEqual(float(closing["close"]), 14.38)
+            self.assertEqual(int(closing["volume"]), 121900)
+            self.assertEqual(closing["source"], "sina_5m_daily_aggregate_repaired")
+            check = _daily_minute_close_cross_check(
+                pd.DataFrame([{"date": "2026-07-17", "close": 14.38}]),
+                cached[cached["trade_date"].eq("2026-07-17")],
+            )
+            self.assertTrue(check["passed"])
+            self.assertEqual(check["max_abs_difference"], 0.0)
 
 
 class SuspensionAuditTests(unittest.TestCase):

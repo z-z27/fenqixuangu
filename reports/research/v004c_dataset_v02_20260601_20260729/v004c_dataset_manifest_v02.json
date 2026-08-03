@@ -1,0 +1,157 @@
+{
+  "dataset_version": "v004c-dataset-0.2",
+  "model_id": "model_v004c_break_repair_target7",
+  "model_role": "break_repair_single_stock_ranker",
+  "candidate_definition_version": "break-repair-0.1",
+  "feature_definition_version": "v004c-features-0.2",
+  "target": "target7_d2open_d3high",
+  "deployment_status": "research_only",
+  "primary_training_start_date": "2026-06-01",
+  "primary_training_end_date": "2026-07-29",
+  "may_sensitivity_start_date": "2026-05-06",
+  "may_sensitivity_end_date": "2026-05-31",
+  "full_study_start_date": "2026-05-06",
+  "full_study_end_date": "2026-07-29",
+  "label_end_date": "2026-07-31",
+  "timezone": "Asia/Shanghai",
+  "generated_at": "2026-08-03T00:00:00+08:00",
+  "generated_by": "claude-code-research",
+  "git_commit": "9f45af1f0ab8f506fb1cd41939e2c2985d0d9671",
+  "git_branch": "research-sample-analysis",
+  "network_fetch": "none",
+  "cache_refresh": "none",
+  "model_training": "none",
+  "base_dataset": {
+    "version": "v004c-dataset-0.1",
+    "path": "reports/research/v004c_dataset_20260506_20260729/",
+    "rows_preserved": 1020,
+    "label_value_changes_target7": 0,
+    "label_value_changes_tail_loss": 0
+  },
+  "sample_role_rules": {
+    "TRAIN_PRIMARY": "signal_date 2026-06-01..2026-07-29 且 label_quality_ok=true",
+    "SENSITIVITY_MAY_COMPLETE": "signal_date 2026-05-06..2026-05-31 且 label_quality_ok=true; 不进入首版主训练",
+    "may_exclusion_reason": "minute_data_coverage_selection_bias",
+    "AUDIT_ONLY_MAY_INCOMPLETE": "五月候选事件但分钟/标签/特征不完整 (仅审计)",
+    "EXCLUDED_QUALITY": "数据或标签质量不符合要求"
+  },
+  "label_quality_rule": {
+    "expected_bar_count": 48,
+    "expected_first_bar_time": "09:35",
+    "expected_last_bar_time": "15:00",
+    "minute_grid_source": "5min 缓存实测 (2026-04-01..2026-07-31, 11554/11624 完整交易日为 48bar/09:35/15:00)",
+    "date_shift_rule": "actual != expected 时必须有严格停牌证明 (suspension_duration in {连续停牌, 停牌一天}) 才允许偏移",
+    "calendar_source": "涨停池缓存日期 ∪ 日线缓存日期 (窗口内 62 个交易日)"
+  },
+  "source_files_or_cache_patterns": [
+    "reports/research/v004c_dataset_20260506_20260729/v004c_break_repair_dataset.csv",
+    "reports/research/v004c_dataset_20260506_20260729/v004c_candidate_audit.csv",
+    "reports/research/v004c_dataset_20260506_20260729/v004c_dataset_summary.csv",
+    "reports/research/v004c_dataset_20260506_20260729/v004c_data_quality_report.csv",
+    "reports/research/v004c_dataset_20260506_20260729/v004c_feature_definitions.md",
+    "reports/research/v004c_dataset_20260506_20260729/v004c_dataset_manifest.json",
+    "data/cache/limit_ups/*.pkl (62 files)",
+    "data/cache/daily/*_daily.pkl (1576 files)",
+    "data/cache/minute_5m/*_5min.pkl (1576 files)",
+    "data/cache/suspension_status/*.pkl (8 files)",
+    "data/cache/universe/eastmoney_main_board_universe.pkl"
+  ],
+  "output_files": {
+    "v004c_dataset_v02_all.csv": {
+      "rows": 1020,
+      "bytes": 1517585,
+      "sha256": "abd92fd484bb02a468da8c9d479a4127fe18b87b3d35bf8790771d3976ac48dd"
+    },
+    "v004c_training_primary_20260601_20260729.csv": {
+      "rows": 877,
+      "bytes": 432757,
+      "sha256": "23e6e0654b85a80bcf0b64b73f9b18afb67aeaae2d320de8b51e4f41ce252571"
+    },
+    "v004c_may_sensitivity_complete.csv": {
+      "rows": 141,
+      "bytes": 212072,
+      "sha256": "2073fb387dd3a1edbbee310a07c0ce3e7d6e35c8f978b33447369ef9c533b0c4"
+    },
+    "v004c_candidate_audit_v02.csv": {
+      "rows": 9803,
+      "bytes": 1525294,
+      "sha256": "7bdb684ff27701a2e8b349d62a16f9f41ea879d655e6cf363f9bdefb5b5eda81"
+    },
+    "v004c_label_quality_report_v02.csv": {
+      "rows": 1026,
+      "bytes": 246816,
+      "sha256": "a099fb85be4620f4c055d0c5c540662966bea5a8b4ba00f1fb0309a24dabda40"
+    },
+    "v004c_factor_quality_report_v02.csv": {
+      "rows": 152,
+      "bytes": 22952,
+      "sha256": "bfefb42d66441cf61a5f8aaa0f8d54c9932cabc1c6f31487bd67dfb7f71a0e3b"
+    },
+    "v004c_factor_redundancy_report_v02.csv": {
+      "rows": 18,
+      "bytes": 3512,
+      "sha256": "c8ec7cd1fb2dcf0fdb9cee6ff6827655773b0cfc7b38a97bb6952aaebaeed3d3"
+    },
+    "v004c_dataset_v01_v02_diff.csv": {
+      "rows": 2076,
+      "bytes": 193963,
+      "sha256": "dcb594451773b66aae3d5ea460863a9b6e50e67bb1627a400eb9c9bd0b2a8e56"
+    },
+    "v004c_dataset_summary_v02.csv": {
+      "rows": 80,
+      "bytes": 8849,
+      "sha256": "06b2ff4178b8c17ce6620a4fad7352c44c2abc460c89aed3fef69ff660f80f25"
+    },
+    "v004c_feature_definitions_v02.md": {
+      "rows": null,
+      "bytes": 15946,
+      "sha256": "306d335d5fa64a921f4a8840ec98a6ed5ff831d0d55e593e9ce00b3493ab92f9"
+    },
+    "v004c_dataset_manifest_v02.json": {
+      "rows": null,
+      "bytes": 6194,
+      "sha256": "eaa76c7624d15cac80801c654b040e26f42dcd5d965c322e6533a6e1d28567a6",
+      "hash_method_note": "self-hash computed with this field replaced by literal \"self-hash-placeholder\" (stable, reproducible)"
+    },
+    "v004c_dataset_v02_review.md": {
+      "rows": null,
+      "bytes": 11318,
+      "sha256": "9f8786c5693b358f76ee2323f641edb88bb74e79e161610ecee2980e47dabe5d"
+    },
+    "git_status_before.txt": {
+      "rows": null,
+      "bytes": 162,
+      "sha256": "3e6da78d0fa1b3f2ab8a2732ef6eed6a3f4d1c96a84298a36fd501fd0d2705d5"
+    },
+    "git_commit.txt": {
+      "rows": null,
+      "bytes": 41,
+      "sha256": "2d331e55abdd6a10e1523dd052158e3deaff52897339f386fe6892d50239671d"
+    },
+    "git_diff_stat_before.txt": {
+      "rows": null,
+      "bytes": 253,
+      "sha256": "085529b836f7ed737fd1bcd0511e8f0010448049490d30231e182bf7cb29e3c8"
+    },
+    "git_diff_name_only_before.txt": {
+      "rows": null,
+      "bytes": 60,
+      "sha256": "b4c6e3ae8fa17a718e95c0d983a60c193cf3034688a55d6bc99489c59443f4d6"
+    },
+    "git_status_after.txt": {
+      "rows": null,
+      "bytes": 162,
+      "sha256": "3e6da78d0fa1b3f2ab8a2732ef6eed6a3f4d1c96a84298a36fd501fd0d2705d5"
+    },
+    "git_diff_stat_after.txt": {
+      "rows": null,
+      "bytes": 253,
+      "sha256": "085529b836f7ed737fd1bcd0511e8f0010448049490d30231e182bf7cb29e3c8"
+    },
+    "git_diff_name_only_after.txt": {
+      "rows": null,
+      "bytes": 60,
+      "sha256": "b4c6e3ae8fa17a718e95c0d983a60c193cf3034688a55d6bc99489c59443f4d6"
+    }
+  }
+}

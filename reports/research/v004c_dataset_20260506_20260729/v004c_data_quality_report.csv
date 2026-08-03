@@ -1,0 +1,128 @@
+﻿section,column,dtype,row_count,missing_count,missing_rate,non_finite_count,min,max,p01,p50,p99,source,available_at_d1_close
+column_stats,event_id,str,1020.0,1020.0,1.0,1020.0,,,,,,derived: code+break_date,True
+column_stats,code,str,1020.0,0.0,0.0,0.0,11.0,605589.0,29.0,3043.0,605377.0,identity,True
+column_stats,name,str,1020.0,1020.0,1.0,1020.0,,,,,,limit-up pool/universe,True
+column_stats,signal_date,str,1020.0,1020.0,1.0,1020.0,,,,,,identity,True
+column_stats,break_date,str,1020.0,1020.0,1.0,1020.0,,,,,,derived: daily flags,True
+column_stats,board_streak_before_break,int64,1020.0,0.0,0.0,0.0,2.0,3.0,2.0,2.0,3.0,derived: daily flags,True
+column_stats,days_since_break,int64,1020.0,0.0,0.0,0.0,0.0,2.0,0.0,1.0,2.0,derived: observation slot,True
+column_stats,days_since_last_limit_up,int64,1020.0,0.0,0.0,0.0,1.0,3.0,1.0,2.0,3.0,derived: daily flags,True
+column_stats,repair_attempt_count,int64,1020.0,0.0,0.0,0.0,1.0,3.0,1.0,2.0,3.0,derived: observation slots,True
+column_stats,recent_limit_up_count_10d,int64,1020.0,0.0,0.0,0.0,2.0,8.0,2.0,2.0,6.0,derived: daily flags,True
+column_stats,recent_limit_up_count_20d,int64,1020.0,0.0,0.0,0.0,2.0,11.0,2.0,3.0,8.0,derived: daily flags,True
+column_stats,recent_pool_appearance_count_10d,int64,1020.0,0.0,0.0,0.0,0.0,8.0,0.0,2.0,6.0,derived: limit-up pool,True
+column_stats,recent_pool_appearance_count_20d,int64,1020.0,0.0,0.0,0.0,0.0,10.0,0.0,3.0,8.0,derived: limit-up pool,True
+column_stats,max_board_streak_20d,int64,1020.0,0.0,0.0,0.0,2.0,8.0,2.0,2.0,4.0,derived: daily flags,True
+column_stats,board_day_amount_rank,float64,1020.0,245.0,0.24019607843137256,245.0,1.0,127.0,1.0,26.0,110.0,derived: limit-up pool amount,True
+column_stats,board_day_turnover_rank,float64,1020.0,245.0,0.24019607843137256,245.0,1.0,126.0,1.0,26.0,111.0,derived: limit-up pool turnover,True
+column_stats,board_day_volume_rank,float64,1020.0,39.0,0.03823529411764706,39.0,1.0,126.0,1.0,29.0,110.0,derived: daily volume,True
+column_stats,recognition_score,float64,1020.0,245.0,0.24019607843137256,245.0,0.0131233595800524,0.9935897435897436,0.0282485875706214,0.6274509803921569,0.9750769927536231,derived: 3 rank percentiles mean,True
+column_stats,break_open,float64,1020.0,0.0,0.0,0.0,1.49,558.2,2.76,19.39,256.0,daily cache,True
+column_stats,break_high,float64,1020.0,0.0,0.0,0.0,1.53,594.0,2.84,20.365000000000002,270.36,daily cache,True
+column_stats,break_low,float64,1020.0,0.0,0.0,0.0,1.34,553.18,2.63,18.35,247.0,daily cache,True
+column_stats,break_close,float64,1020.0,0.0,0.0,0.0,1.35,580.0,2.64,19.02,258.9,daily cache,True
+column_stats,break_prev_close,float64,1020.0,0.0,0.0,0.0,1.43,570.58,2.86,18.79,251.55,daily cache,True
+column_stats,break_open_return,float64,1020.0,0.0,0.0,0.0,-0.100494233937397,0.1004514672686232,-0.09737196371085756,0.0015814443858725,0.10009251670806987,derived,True
+column_stats,break_high_return,float64,1020.0,0.0,0.0,0.0,-0.0999719180005617,0.101010101010101,-0.04905645821984593,0.0570066334991707,0.10056202902758976,derived,True
+column_stats,break_close_return,float64,1020.0,0.0,0.0,0.0,-0.1054938174988261,0.0980742252263742,-0.1006944444444444,-0.010032528267114399,0.09215277684956213,derived,True
+column_stats,break_intraday_range,float64,1020.0,0.0,0.0,0.0,0.0,0.2001853568118627,0.0358814352574103,0.0941324827535049,0.186040195545899,derived,True
+column_stats,break_high_to_close_drawdown,float64,1020.0,0.0,0.0,0.0,0.0,0.173044925124792,0.002208134642356239,0.0531829170024174,0.15408139534883694,derived,True
+column_stats,break_upper_shadow_ratio,float64,1020.0,5.0,0.004901960784313725,5.0,0.0,1.0,0.0,0.3235294117647043,0.8408663130413162,derived,True
+column_stats,break_lower_shadow_ratio,float64,1020.0,5.0,0.004901960784313725,5.0,0.0,0.8333333333333338,0.0,0.1969696969696981,0.7508854781582055,derived,True
+column_stats,break_close_location,float64,1020.0,5.0,0.004901960784313725,5.0,0.0,1.0,0.0,0.3305785123966943,0.9550264102680309,derived,True
+column_stats,break_volume,float64,1020.0,0.0,0.0,0.0,27094.0,352760547.0,47190.04,734534.5,26376314.46999924,daily cache,True
+column_stats,break_amount,float64,1020.0,17.0,0.016666666666666666,17.0,86836270.0,35140741684.3214,174419001.9691,1287099612.5911,24312010717.68011,5min sum>=30bar else daily,True
+column_stats,break_volume_ratio_vs_board_days,float64,1020.0,0.0,0.0,0.0,0.0851824177252201,32.94142699037559,0.6845556257820525,1.8891576223069757,13.246358476559106,derived,True
+column_stats,break_amount_ratio_vs_board_days,float64,1020.0,28.0,0.027450980392156862,28.0,0.0881861955582029,36.04867930179479,0.6573521951716098,2.004672921364542,14.568800545339563,derived,True
+column_stats,break_turnover_ratio,float64,1020.0,1020.0,1.0,1020.0,,,,,,derived; 日线 turnover_rate 缓存缺失 → 全空,True
+column_stats,break_touched_limit_up,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,derived: daily flags+limit price,True
+column_stats,break_opened_from_limit_up,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,derived: daily flags+limit price,True
+column_stats,d1_open,float64,1020.0,0.0,0.0,0.0,1.31,598.0,2.5995,18.88,254.6585999999996,daily cache,True
+column_stats,d1_high,float64,1020.0,0.0,0.0,0.0,1.36,600.0,2.76,19.485,269.2085999999997,daily cache,True
+column_stats,d1_low,float64,1020.0,0.0,0.0,0.0,1.26,565.0,2.5238,17.935,246.56299999999987,daily cache,True
+column_stats,d1_close,float64,1020.0,0.0,0.0,0.0,1.28,580.0,2.6219,18.6,258.6909999999999,daily cache,True
+column_stats,d1_volume,float64,1020.0,0.0,0.0,0.0,15784.0,352760547.0,46276.27,570697.0,17135815.83999986,daily cache,True
+column_stats,d1_amount,float64,1020.0,0.0,0.0,0.0,51979355.8921,35140741684.3214,96077184.847769,1010820544.21275,22126425829.474056,5min sum>=30bar else daily,True
+column_stats,d1_ma5,float64,1020.0,0.0,0.0,0.0,1.266,557.458,2.59856,17.957,233.92059999999987,derived: daily close MA5,True
+column_stats,d1_ma10,float64,1020.0,0.0,0.0,0.0,1.226,507.024,2.4915200000000004,17.161500000000004,219.36998999999966,derived: daily close MA10,True
+column_stats,d1_ma20,float64,1020.0,0.0,0.0,0.0,1.2815,470.7875,2.52333,16.8345,201.0601699999998,derived: daily close MA20,True
+column_stats,d1_close_to_ma5,float64,1020.0,0.0,0.0,0.0,-0.2502706604114038,0.1974965229485394,-0.10534743237120857,0.04348901612672635,0.17002956756101403,derived,True
+column_stats,d1_low_to_ma5,float64,1020.0,0.0,0.0,0.0,-0.3306859668225197,0.161654135338346,-0.12128326990932596,0.009198536877457,0.11467314167319881,derived,True
+column_stats,d1_high_to_ma5,float64,1020.0,0.0,0.0,0.0,-0.207711522449241,0.2411125052279379,-0.06761735465695298,0.10034406479380781,0.21697345739701848,derived,True
+column_stats,d1_close_to_ma10,float64,1020.0,0.0,0.0,0.0,-0.2001668324296577,0.3939168289609349,-0.07201714487798964,0.10623792881770175,0.3132676253247705,derived,True
+column_stats,d1_low_to_ma10,float64,1020.0,0.0,0.0,0.0,-0.2735235844137788,0.3354843665975264,-0.09585897768407395,0.06815336711772245,0.25309303722267923,derived,True
+column_stats,d1_close_to_ma20,float64,1020.0,0.0,0.0,0.0,-0.2119758772971177,0.6589885604844972,-0.1273899876643256,0.14559679336840453,0.4800655297409656,derived,True
+column_stats,d1_ma5_slope,float64,1020.0,0.0,0.0,0.0,-0.0623162180502149,0.095079335679447,-0.01306814631706608,0.033086735832112454,0.07785224412300576,derived,True
+column_stats,d1_ma10_slope,float64,1020.0,0.0,0.0,0.0,-0.0314345589636121,0.0729353921794575,-0.01930832133315141,0.0176170098815535,0.05704649116594092,derived,True
+column_stats,d1_reclaimed_ma5,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,1.0,1.0,derived,True
+column_stats,d1_reclaimed_ma10,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,1.0,1.0,derived,True
+column_stats,consecutive_days_below_ma5,int64,1020.0,0.0,0.0,0.0,0.0,3.0,0.0,0.0,2.0,derived,True
+column_stats,consecutive_days_below_ma10,int64,1020.0,0.0,0.0,0.0,0.0,21.0,0.0,0.0,2.0,derived,True
+column_stats,d1_open_to_close_return,float64,1020.0,0.0,0.0,0.0,-0.1678145087235997,0.1837320574162679,-0.12666362221069008,-0.011228918538196249,0.10797848350562451,5min cache,True
+column_stats,d1_low_to_close_recovery,float64,1020.0,0.0,0.0,0.0,0.0,0.1837320574162679,0.0,0.0294321952176257,0.13748899350649338,5min cache,True
+column_stats,d1_high_to_close_drawdown,float64,1020.0,0.0,0.0,0.0,0.0,0.1817895400126024,0.0,0.046936464803312594,0.14449626334519555,5min cache,True
+column_stats,d1_close_location,float64,1020.0,10.0,0.00980392156862745,10.0,0.0,1.0,0.0,0.3549901878329132,0.9742342342342346,5min cache,True
+column_stats,d1_vwap,float64,1020.0,0.0,0.0,0.0,1.3019819935219552,579.7675016286461,2.6306697755190425,18.698733687899903,259.98256703807914,5min cache (infer_vwap),True
+column_stats,d1_close_to_vwap,float64,1020.0,0.0,0.0,0.0,-0.1213678233199349,0.0881891757134776,-0.0662708888318139,-0.005376844173895549,0.048822457312053945,5min cache,True
+column_stats,d1_intraday_range,float64,1020.0,0.0,0.0,0.0,0.0,0.2001853568118627,0.01304924020250172,0.08483690357003004,0.17913852285930318,5min cache,True
+column_stats,d1_afternoon_return,float64,1020.0,0.0,0.0,0.0,-0.164951768488746,0.1197822141560798,-0.06620965085639006,-0.0020133796810207997,0.07162681912681917,5min cache,True
+column_stats,d1_last_hour_return,float64,1020.0,0.0,0.0,0.0,-0.1337558372248165,0.1187165775401071,-0.051795378482714496,0.0,0.04469026504645453,5min cache,True
+column_stats,d1_up_bar_volume_ratio,float64,1020.0,0.0,0.0,0.0,0.0,0.8384429824368163,0.0,0.45664301427977433,0.7020160201088174,5min cache,True
+column_stats,d1_down_bar_volume_ratio,float64,1020.0,0.0,0.0,0.0,0.0,0.9255450696359372,0.0,0.4945613990105374,0.7717169283796839,5min cache,True
+column_stats,volume_above_d1_close_ratio,float64,1020.0,0.0,0.0,0.0,0.0178623783419175,1.0,0.02667080629195757,0.6548391013688926,1.0,5min cache,True
+column_stats,amount_above_d1_close_ratio,float64,1020.0,0.0,0.0,0.0,0.018227312301159,1.0,0.028136691066202174,0.6620182208494068,1.0,5min cache,True
+column_stats,volume_above_break_close_ratio,float64,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.46593762873354855,1.0,5min cache,True
+column_stats,high_zone_volume_ratio,float64,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.16165601631431953,0.8791584914342246,5min cache,True
+column_stats,high_zone_amount_ratio,float64,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.16568986513700829,0.8857619920773072,5min cache,True
+column_stats,late_day_sell_volume_ratio,float64,1020.0,0.0,0.0,0.0,0.0,0.4139691649844499,0.0,0.07479659196434604,0.19397165007131512,5min cache,True
+column_stats,late_day_sell_amount_ratio,float64,1020.0,0.0,0.0,0.0,0.0,0.409234818076627,0.0,0.07404554895400015,0.1890004716088413,5min cache,True
+column_stats,down_bar_volume_ratio,float64,1020.0,0.0,0.0,0.0,0.0,0.9255450696359372,0.0,0.4945613990105374,0.7717169283796839,5min cache,True
+column_stats,d1_vwap_to_close_gap,float64,1020.0,0.0,0.0,0.0,-0.0810421364976873,0.1381326868525649,-0.04654976340531049,0.00540591114443245,0.07097444442240386,5min cache,True
+column_stats,is_v004a_scorable,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,1.0,1.0,existing scored files/frozen reconstruction,True
+column_stats,v004a_probability,float64,1020.0,436.0,0.42745098039215684,436.0,0.3412629038121764,0.510060139754054,0.3567185059549785,0.4497463674155695,0.5040667506238744,existing scored files/frozen reconstruction,True
+column_stats,v004a_rank,float64,1020.0,436.0,0.42745098039215684,436.0,1.0,209.0,1.0,29.0,167.16999999999996,existing scored files/frozen reconstruction,True
+column_stats,is_v004a_top3,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,derived from v004a_rank,True
+column_stats,is_v004a_top10,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,derived from v004a_rank,True
+column_stats,is_v004a_top15,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,derived from v004a_rank,True
+column_stats,is_v002_scorable,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,daily signals CSVs,True
+column_stats,v002_rank,float64,1020.0,820.0,0.803921568627451,820.0,1.0,138.0,1.0,29.5,133.01999999999998,daily signals CSVs,True
+column_stats,is_v002_top3,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,derived from v002_rank,True
+column_stats,is_v002_top10,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,derived from v002_rank,True
+column_stats,is_v002_top15,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,derived from v002_rank,True
+column_stats,d2_trade_date,str,1020.0,1020.0,1.0,1020.0,,,,,,5min cache future dates,False
+column_stats,d3_trade_date,str,1020.0,1020.0,1.0,1020.0,,,,,,5min cache future dates,False
+column_stats,d2_open,float64,1020.0,0.0,0.0,0.0,1.26,598.0,2.5819,18.41,256.07609999999954,"5min first bar, fallback daily",False
+column_stats,d2_high,float64,1020.0,0.0,0.0,0.0,1.34,600.0,2.73,19.14,263.5513999999998,"5min max, fallback daily",False
+column_stats,d2_low,float64,1020.0,0.0,0.0,0.0,1.23,565.0,2.4876,17.585,244.26679999999988,"5min min, fallback daily",False
+column_stats,d2_close,float64,1020.0,0.0,0.0,0.0,1.28,575.0,2.5938,18.45,256.40159999999963,"5min last, fallback daily",False
+column_stats,d3_high,float64,1020.0,0.0,0.0,0.0,1.31,582.0,2.7219,18.85,268.0630999999995,5min max (项目口径),False
+column_stats,d3_low,float64,1020.0,0.0,0.0,0.0,1.22,533.0,2.4776000000000002,17.47,242.32499999999996,"5min min, fallback daily",False
+column_stats,d3_close,float64,1020.0,0.0,0.0,0.0,1.24,545.9,2.5995,18.085,256.4096999999996,5min last (项目口径),False
+column_stats,d2open_to_d3high_return,float64,1020.0,0.0,0.0,0.0,-0.3156443831840111,0.2799043062200959,-0.10014588980397009,0.0305174329662486,0.2319699966006626,derived label,False
+column_stats,d2open_to_d3close_return,float64,1020.0,0.0,0.0,0.0,-0.3551573627383414,0.2784688995215312,-0.16025613733127997,-0.01490290346907995,0.2063808704284416,derived label,False
+column_stats,target7_d2open_d3high,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,derived label (>=0.07),False
+column_stats,tail_loss_5pct,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,derived label (<=-0.05),False
+column_stats,future_data_status,str,1020.0,1020.0,1.0,1020.0,,,,,,derived,False
+column_stats,last_board_date,str,1020.0,1020.0,1.0,1020.0,,,,,,audit only,True
+column_stats,break_day_in_pool,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,0.0,1.0,audit only,True
+column_stats,last_board_day_in_pool,bool,1020.0,0.0,0.0,0.0,0.0,1.0,0.0,1.0,1.0,audit only,True
+column_stats,pool_consecutive_count_last_board,float64,1020.0,39.0,0.03823529411764706,39.0,1.0,3.0,1.0,2.0,3.0,audit only,True
+column_stats,v004a_score_source,str,1020.0,1020.0,1.0,1020.0,,,,,,audit only,True
+overall_check,duplicate_key_count_event_id_signal_date,check,,,,,0,,,,,,
+overall_check,event_observation_count_distribution,check,,,,,"{1: 25, 2: 115, 3: 255}",,,,,,
+overall_check,all_codes_six_digit,check,,,,,True,,,,,,
+overall_check,signal_date_earlier_than_break_date_count,check,,,,,0,,,,,,
+overall_check,days_since_break_vs_actual_trade_gap_consistent,check,,,,,True,,,,,,
+overall_check,days_since_break_max_abs_diff_checked_rows,check,,,,,0 / 1020,,,,,,
+overall_check,future_data_in_d1_features,check,,,,,False (D1 特征全部取自 <= signal_date 的数据; 构造保证),,,,,,
+overall_check,daily_minute_volume_unit_ratio_distribution,check,,,,,n=1020 p50=100.0 p01=94.20 p99=100.0,,,,,,
+overall_check,daily_minute_close_diff_max,check,,,,,0.0000,,,,,,
+overall_check,daily_minute_close_diff_p50,check,,,,,0.0000,,,,,,
+overall_check,label_unavailable_count,check,,,,,7,,,,,,
+overall_check,suspended_sample_count,check,,,,,0,,,,,,
+overall_check,unevaluable_quality_failed_count,check,,,,,299,,,,,,
+overall_check,candidate_count,check,,,,,1020,,,,,,
+overall_check,independent_event_count,check,,,,,395,,,,,,
+overall_check,v004a_score_coverage_rate,check,,,,,0.5725,,,,,,
+overall_check,v002_score_coverage_rate,check,,,,,0.1961,,,,,,
+overall_check,target7_rate,check,,,,,0.2980,,,,,,

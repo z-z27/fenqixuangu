@@ -1,0 +1,133 @@
+{
+  "dataset_version": "v004c-dataset-0.1",
+  "model_id": "model_v004c_break_repair_target7",
+  "model_role": "break_repair_single_stock_ranker",
+  "target": "target7_d2open_d3high",
+  "deployment_status": "research_only",
+  "candidate_definition_version": "break-repair-0.1",
+  "feature_definition_version": "v004c-features-0.1",
+  "candidate_start_date": "2026-05-06",
+  "candidate_end_date": "2026-07-29",
+  "raw_lookup_start_date": "2026-04-01",
+  "label_end_date": "2026-07-31",
+  "timezone": "Asia/Shanghai",
+  "generated_at": "2026-08-03T00:00:00+08:00",
+  "generated_by": "claude-code-research",
+  "git_commit": "9f45af1f0ab8f506fb1cd41939e2c2985d0d9671",
+  "git_branch": "research-sample-analysis",
+  "network_fetch": "none",
+  "cache_refresh": "none",
+  "model_training": "none",
+  "source_files_or_cache_patterns": [
+    "data/cache/limit_ups/2026-05-06_limitups.pkl .. 2026-07-31_limitups.pkl (62 files)",
+    "data/cache/daily/*_daily.pkl (1576 files)",
+    "data/cache/minute_5m/*_5min.pkl (1576 files)",
+    "data/cache/universe/eastmoney_main_board_universe.pkl",
+    "reports/v004a/grid_v2_scored/v004a_scored_candidates.csv",
+    "reports/v005_fixed_grid_holdout_2026-06-26_2026-06-30/v005_fixed_grid_holdout_scored_candidates.csv",
+    "reports/v005_fixed_grid_holdout_2026-07-01_2026-07-03/v005_fixed_grid_holdout_scored_candidates.csv",
+    "reports/daily_v005/2026-07-02..2026-07-31/v005_daily_scored_candidates_*.csv",
+    "reports/daily_signals/signals_2026-06-25.csv, signals_2026-07-01..2026-07-31.csv",
+    "reports/history_samples/2026-05-06_2026-06-29/history_candidates_2026-05-06_2026-06-29.csv",
+    "reports/history_samples/2026-06-26_2026-06-30/history_candidates_2026-06-26_2026-06-30.csv",
+    "reports/history_samples/2026-07-01_2026-07-03/history_candidates_2026-07-01_2026-07-03.csv",
+    "configs/models/v004a_coefficients_2026-06-26.csv",
+    "configs/policy_v005_v1.json"
+  ],
+  "candidate_rule_summary": {
+    "board_streak_before_break": [
+      2,
+      3
+    ],
+    "break_definition": "连续 2/3 板后第一个非涨停交易日(日线相邻交易日,项目 _is_main_board_limit_up_day 判定)",
+    "days_since_break": [
+      0,
+      1,
+      2
+    ],
+    "signal_date_window": [
+      "2026-05-06",
+      "2026-07-29"
+    ],
+    "signal_date_limit_up_excluded": true,
+    "d1_daily_required": "OHLC>0, 前 20 交易日, 日线起始 <= 2026-04-01",
+    "d1_minute_required": ">=30 bars, 总量>0, 日线/5min 收盘差 <=0.02",
+    "label_required": "d2_open, d3_high, d3_close 齐全, D2/D3 <= 2026-07-31",
+    "hard_filters_used": "无 (不要求 MA 位置/量能/收回 VWAP/recognition/v004a topN/eligible/D2_LOW_ABSORB)"
+  },
+  "label_definition": {
+    "target7_d2open_d3high": "d2open_to_d3high_return >= 0.07",
+    "d2open_to_d3high_return": "d3_high / d2_open - 1 (d3_high = D3 当日 5min 最高价, 项目口径)",
+    "d2open_to_d3close_return": "d3_close / d2_open - 1",
+    "tail_loss_5pct": "d2open_to_d3close_return <= -0.05",
+    "d2_d3_dates": "个股 5min 交易日序列 signal_date 后第 1/2 个交易日"
+  },
+  "output_files": {
+    "v004c_break_repair_dataset.csv": {
+      "rows": 1020,
+      "bytes": 1193009,
+      "sha256": "784d2278d85760f8cb25b1a73a64af20c8d1171a92fe80d031743cd1eeb74c82"
+    },
+    "v004c_candidate_audit.csv": {
+      "rows": 9803,
+      "bytes": 1266593,
+      "sha256": "5e60946590ff38d04ef7af35050bcf70118a5926fa99550a473cb4b096412315"
+    },
+    "v004c_dataset_summary.csv": {
+      "rows": 69,
+      "bytes": 8604,
+      "sha256": "5e8201c3f75dfff565f5ee62dc46d9629b0ac7c91e774290526b06533fadf293"
+    },
+    "v004c_data_quality_report.csv": {
+      "rows": 127,
+      "bytes": 15830,
+      "sha256": "7b6062df641edd6f2c020dff4479f223f8125a5ca4d6555abee1063431adab48"
+    },
+    "v004c_feature_definitions.md": {
+      "rows": null,
+      "bytes": 19444,
+      "sha256": "7db2acb8b818b0b517129deb9c6f69addd168ca34624b638f990425cb99d391f"
+    },
+    "v004c_dataset_manifest.json": {
+      "rows": null,
+      "bytes": 5384,
+      "sha256": "4e915eae1f5a828f1fa4b3eee3a8df850d1ecb088bf9cc30ce59a4926ec35391",
+      "hash_method_note": "self-hash computed with this field replaced by literal \"self-hash-placeholder\" (stable, reproducible)"
+    },
+    "existing_model_inventory.md": {
+      "rows": null,
+      "bytes": 5058,
+      "sha256": "8ef3ef2bf083abf64cc2da79ceb9aadbebd700e5c21055459baeadf45ba856a2"
+    },
+    "v004c_dataset_review.md": {
+      "rows": null,
+      "bytes": 10017,
+      "sha256": "0e07eefa4f39a5467606855d549c63aeba78b5ebab5b79af4add39638fa7b2cb"
+    },
+    "git_status_before.txt": {
+      "rows": null,
+      "bytes": 162,
+      "sha256": "3e6da78d0fa1b3f2ab8a2732ef6eed6a3f4d1c96a84298a36fd501fd0d2705d5"
+    },
+    "git_commit.txt": {
+      "rows": null,
+      "bytes": 41,
+      "sha256": "2d331e55abdd6a10e1523dd052158e3deaff52897339f386fe6892d50239671d"
+    },
+    "git_status_after.txt": {
+      "rows": null,
+      "bytes": 162,
+      "sha256": "3e6da78d0fa1b3f2ab8a2732ef6eed6a3f4d1c96a84298a36fd501fd0d2705d5"
+    },
+    "git_diff_stat.txt": {
+      "rows": null,
+      "bytes": 253,
+      "sha256": "085529b836f7ed737fd1bcd0511e8f0010448049490d30231e182bf7cb29e3c8"
+    },
+    "git_diff_name_only.txt": {
+      "rows": null,
+      "bytes": 60,
+      "sha256": "b4c6e3ae8fa17a718e95c0d983a60c193cf3034688a55d6bc99489c59443f4d6"
+    }
+  }
+}

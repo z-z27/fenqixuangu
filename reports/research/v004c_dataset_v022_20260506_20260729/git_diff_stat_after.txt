@@ -1,0 +1,4 @@
+ README.md                          |   7 ++
+ src/loaders.py                     | 162 ++++++++++++++++++++++++++------
+ tests/test_signal_date_coverage.py | 187 ++++++++++++++++++++++++++++++++++++-
+ 3 files changed, 325 insertions(+), 31 deletions(-)

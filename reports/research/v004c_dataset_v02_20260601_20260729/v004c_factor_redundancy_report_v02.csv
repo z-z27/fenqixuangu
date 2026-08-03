@@ -1,0 +1,19 @@
+﻿feature_a,feature_b,pearson,spearman,semantic_relation,retained_feature,excluded_from_training_feature,reason
+volume_above_d1_close_ratio,amount_above_d1_close_ratio,0.9999380977777558,0.999957101594096,volume_amount_dual,volume_above_d1_close_ratio,amount_above_d1_close_ratio,"同一信息(收盘价上方成交)的成交量/成交额双版本, 保留成交量"
+high_zone_volume_ratio,high_zone_amount_ratio,0.9998211462654749,0.9998865586262541,volume_amount_dual,high_zone_volume_ratio,high_zone_amount_ratio,"高位区成交的 volume/amount 双版本, 保留 volume"
+late_day_sell_volume_ratio,late_day_sell_amount_ratio,0.998980694075941,0.9988969087194877,volume_amount_dual,late_day_sell_volume_ratio,late_day_sell_amount_ratio,"尾盘抛压的 volume/amount 双版本, 保留 volume"
+down_bar_volume_ratio,d1_down_bar_volume_ratio,0.9999999999999998,1.0,identical_formula,down_bar_volume_ratio,d1_down_bar_volume_ratio,"完全相同的公式(Σvol close<open / Σvol), 保留一个"
+break_volume_ratio_vs_board_days,break_amount_ratio_vs_board_days,0.9973359344781354,0.9912305243616861,volume_amount_dual,break_volume_ratio_vs_board_days,break_amount_ratio_vs_board_days,"断板量比的 volume/amount 双版本, 保留 volume"
+d1_close_to_vwap_raw,d1_vwap_to_close_gap,-0.9990252693038272,-1.0,mirror_gap,d1_close_to_vwap_raw,d1_vwap_to_close_gap,"同一 VWAP 偏离的反向表达, 只保留一种方向"
+deprecated_d1_reclaimed_ma5_v01,d1_close_above_ma5,1.0,0.9999999999999999,identical_formula,d1_close_above_ma5,deprecated_d1_reclaimed_ma5_v01,"v0.1 reclaimed 字段与 d1_close_above_ma5 公式完全相同, 旧字段废弃"
+deprecated_d1_reclaimed_ma10_v01,d1_close_above_ma10,0.9999999999999998,0.9999999999999998,identical_formula,d1_close_above_ma10,deprecated_d1_reclaimed_ma10_v01,同上(ma10)
+days_since_break,post_day,1.0,1.0,stage_duplicate,post_day,days_since_break,阶段重复表达: post_day 与 days_since_break 在 post 段完全一致
+days_since_last_limit_up,post_day,1.0,1.0,stage_duplicate,post_day,days_since_last_limit_up,days_since_last_limit_up = post_day + 1 (常数平移)
+repair_attempt_count,post_day,0.9237790636000203,0.9255467638776343,stage_duplicate,post_day,repair_attempt_count,完整事件下 repair_attempt_count = post_day + 1 (常数平移)
+d1_open_to_close_return_raw,d1_low_to_close_recovery,0.7441045534992136,0.7206770494557697,high_correlation_observed,,,"观测相关(非硬删除, 仅记录)"
+break_high_to_close_drawdown,d1_high_to_close_drawdown_raw,0.44722913117027485,0.4314747550734666,same_day_for_d0,,,"days_since_break=0 时断板日即 D1, 两字段数值相同; 其余阶段不同(仅记录)"
+break_close_location,d1_close_location,0.3902830445134082,0.39211616920126774,same_day_for_d0,,,同上
+d1_high_to_close_drawdown_raw,d1_close_to_vwap_raw,-0.8345144212431378,-0.853055389349071,high_correlation_sweep,both,,"训练视图扫描 |spearman|>=0.85; 仅记录, 不自动删除"
+d1_close_location,d1_close_to_vwap_raw,0.8536651092743247,0.9036916990622836,high_correlation_sweep,both,,"训练视图扫描 |spearman|>=0.85; 仅记录, 不自动删除"
+d1_close_location,volume_above_d1_close_ratio,-0.868800040356263,-0.8799207808357439,high_correlation_sweep,both,,"训练视图扫描 |spearman|>=0.85; 仅记录, 不自动删除"
+d1_close_to_vwap_raw,volume_above_d1_close_ratio,-0.8356049020636989,-0.8836171012101308,high_correlation_sweep,both,,"训练视图扫描 |spearman|>=0.85; 仅记录, 不自动删除"

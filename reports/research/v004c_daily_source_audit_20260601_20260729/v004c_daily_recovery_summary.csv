@@ -1,0 +1,7 @@
+﻿root_cause,month,missing_row_count,independent_event_count,independent_code_count,recoverable_from_existing_local_daily,recoverable_from_snapshot,minute_only_available,true_absence_count,manual_review_count
+DATA_EXISTS_IN_FORWARD_OR_HOLDOUT_SNAPSHOT,2026-06,4,4,4,0,4,0,0,0
+DATA_EXISTS_IN_FORWARD_OR_HOLDOUT_SNAPSHOT,2026-07,35,35,35,0,35,0,0,0
+DATA_EXISTS_IN_OTHER_LOCAL_DAILY_SOURCE,2026-06,26,21,21,26,0,0,0,0
+DATA_EXISTS_IN_OTHER_LOCAL_DAILY_SOURCE,2026-07,76,60,60,76,0,0,0,0
+PRIMARY_CACHE_NOT_UPDATED_AFTER_FORWARD,2026-06,2,1,1,2,0,0,0,0
+PRIMARY_CACHE_NOT_UPDATED_AFTER_FORWARD,2026-07,8,5,5,8,0,0,0,0

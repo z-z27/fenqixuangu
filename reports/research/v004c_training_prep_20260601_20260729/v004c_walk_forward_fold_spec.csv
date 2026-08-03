@@ -1,0 +1,17 @@
+﻿fold,model_head,train_signal_date_count,train_row_count,train_event_count,train_positive_count,train_negative_count,valid_signal_date_count,valid_row_count,valid_event_count,valid_positive_count,purge_date_count,purge_dates,event_overlap_train_valid,boundary_note
+1,d0_target,14,100,100,34,66,6,58,58,14,2,"2026-06-22,2026-06-23",0,"standard;positive_sufficiency:train_d0_target_positives=34<40(建议下限), 正式训练时需调整边界或降权该fold评估"
+1,d0_tail,14,100,100,24,76,6,58,58,17,2,"2026-06-22,2026-06-23",0,"standard;positive_sufficiency:train_d0_tail_positives=24<40(建议下限), 正式训练时需调整边界或降权该fold评估"
+1,post_target,14,151,94,56,95,6,93,59,28,2,"2026-06-22,2026-06-23",0,standard
+1,post_tail,14,151,94,42,109,6,93,59,39,2,"2026-06-22,2026-06-23",0,standard
+2,d0_target,22,179,179,59,120,6,26,26,6,2,"2026-07-02,2026-07-03",0,standard
+2,d0_tail,22,179,179,43,136,6,26,26,12,2,"2026-07-02,2026-07-03",0,standard
+2,post_target,22,292,172,100,192,6,50,34,9,2,"2026-07-02,2026-07-03",0,standard
+2,post_tail,22,292,172,98,194,6,50,34,23,2,"2026-07-02,2026-07-03",0,standard
+3,d0_target,30,220,220,68,152,6,24,24,14,2,"2026-07-14,2026-07-15",0,standard
+3,d0_tail,30,220,220,64,156,6,24,24,6,2,"2026-07-14,2026-07-15",0,standard
+3,post_target,30,372,214,115,257,6,39,24,18,2,"2026-07-14,2026-07-15",0,standard
+3,post_tail,30,372,214,133,239,6,39,24,9,2,"2026-07-14,2026-07-15",0,standard
+4,d0_target,38,254,254,86,168,2,13,13,2,2,"2026-07-24,2026-07-27",0,final_window_compressed_by_sample_end
+4,d0_tail,38,254,254,71,183,2,13,13,3,2,"2026-07-24,2026-07-27",0,final_window_compressed_by_sample_end
+4,post_target,38,427,245,139,288,2,16,14,8,2,"2026-07-24,2026-07-27",0,final_window_compressed_by_sample_end
+4,post_tail,38,427,245,149,278,2,16,14,3,2,"2026-07-24,2026-07-27",0,final_window_compressed_by_sample_end

@@ -1,0 +1,10 @@
+﻿signal_date,failure_class,scorable_count,scorable_hit_count,v004a_top15_hit_count,v002_top15_hit_count,v005_pool_hit_count,final_top3_hit_count,failed_top15_models,best_scorable_hit_v004a_rank,best_scorable_hit_v002_rank,scorable_hit_v004a_ranks_top3,scorable_hit_v002_ranks_top3,v004a_top15_hit_ranks_top3,v002_top15_hit_ranks_top3,v005_pool_hit_orders_top3,final_hit_ranks,bottleneck_explanation
+2026-06-26,TOP3_RANKING_FAILURE,205,51,4,7,4,1,,2,2,"[2,5,6]","[2,6,7]","[2,5,6]","[2,6,7]","[2,5,6]",[2],v005 pool has >=3 hits but combo ranking selects fewer than 3
+2026-06-29,TOP3_RANKING_FAILURE,41,16,3,3,3,1,,7,9,"[7,11,13]","[9,12,14]","[7,11,13]","[9,12,14]","[7,11,13]",[2],v005 pool has >=3 hits but combo ranking selects fewer than 3
+2026-06-30,TOP3_RANKING_FAILURE,66,23,3,4,3,2,,2,4,"[2,12,13]","[4,5,14]","[2,12,13]","[4,5,14]","[2,12,13]","[1,2]",v005 pool has >=3 hits but combo ranking selects fewer than 3
+2026-07-01,TOP3_RANKING_FAILURE,69,16,6,6,6,1,,2,1,"[2,4,7]","[1,2,6]","[2,4,7]","[1,2,6]","[2,4,7]",[2],v005 pool has >=3 hits but combo ranking selects fewer than 3
+2026-07-02,TOP3_RANKING_FAILURE,175,39,3,5,3,1,,5,2,"[5,6,15]","[2,4,6]","[5,6,15]","[2,4,6]","[5,6,15]",[1],v005 pool has >=3 hits but combo ranking selects fewer than 3
+2026-07-03,TOP3_RANKING_FAILURE,169,22,3,3,3,1,,3,3,"[3,4,9]","[3,8,9]","[3,4,9]","[3,8,9]","[3,4,9]",[1],v005 pool has >=3 hits but combo ranking selects fewer than 3
+2026-07-06,RECALL_FAILURE,73,2,0,0,0,0,v004a_top15|v002_top15|v005_candidate_pool,42,55,"[42,66]","[55,58]",[],[],[],[],scorable pool itself has fewer than 3 hits
+2026-07-07,RECALL_FAILURE,49,2,0,0,0,0,v004a_top15|v002_top15|v005_candidate_pool,32,30,"[32,46]","[30,42]",[],[],[],[],scorable pool itself has fewer than 3 hits
+2026-07-08,TOP3_RANKING_FAILURE,73,25,4,5,4,1,,3,3,"[3,5,9]","[3,5,7]","[3,5,9]","[3,5,7]","[3,5,9]",[1],v005 pool has >=3 hits but combo ranking selects fewer than 3

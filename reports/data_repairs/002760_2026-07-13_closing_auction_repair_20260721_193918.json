@@ -1,0 +1,36 @@
+{
+  "code": "002760",
+  "trade_date": "2026-07-13",
+  "repair_type": "missing_closing_auction",
+  "reason": "sina_5m omitted 60000-share closing auction",
+  "official_close": 15.99,
+  "official_volume": 3329800,
+  "official_amount_display_yuan": 53286000.0,
+  "minute_volume_before": 3269800,
+  "minute_amount_before": 52326175.0591,
+  "missing_volume": 60000,
+  "missing_amount": 959400.0,
+  "reconstructed_day_amount": 53285575.0591,
+  "before": {
+    "datetime": "2026-07-13 15:00:00",
+    "open": 15.71,
+    "high": 15.74,
+    "low": 15.7,
+    "close": 15.72,
+    "volume": 66300,
+    "amount": 1041958.0,
+    "source": "sina_5m"
+  },
+  "after": {
+    "datetime": "2026-07-13 15:00:00",
+    "open": 15.71,
+    "high": 15.99,
+    "low": 15.7,
+    "close": 15.99,
+    "volume": 126300,
+    "amount": 2001358.0,
+    "source": "sina_5m_closing_auction_repaired"
+  },
+  "cache_path": "data\\cache\\minute_5m\\002760_5min.pkl",
+  "backup_path": "data\\cache\\minute_5m\\002760_5min.before_closing_auction_repair_20260721_193918.pkl"
+}

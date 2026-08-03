@@ -1,0 +1,107 @@
+﻿model_head,factor_name,mathematical_expression,effective_degrees_of_freedom,coverage,univariate_auc,june_direction,july_direction,temporal_direction_consistency,max_abs_correlation,target7_interpretation,tail_interpretation,decision,reason
+d0_target,down_bar_volume_ratio,Σvol(close<open) / Σvol,1,1.0,0.544793283882468,up,up,0.6666666666666666,0.6562938946602934,桶率 0.50 0.33,桶尾 0.50 0.27,ADMIT_PRIMARY,auc=0.545 方向一致率=0.67
+d0_target,board_streak_is_3,board_streak_before_break == 3,1,1.0,0.527255476970847,flat,up,0.6666666666666666,0.1717945814024413,桶率 0.32 0.41,桶尾 0.26 0.34,ADMIT_PRIMARY,"补充: auc=0.527 方向一致率=0.67 (为达到最低 4 因子表达; 证据弱, 需 walk-forward 验证)"
+d0_target,d1_close_to_vwap_raw,d1_close / d1_vwap - 1,1,1.0,0.5193490886090507,down,up,0.6666666666666666,0.8923585164643012,桶率 0.33 0.33,桶尾 0.29 0.25,ADMIT_PRIMARY,"补充: auc=0.519 方向一致率=0.67 (为达到最低 4 因子表达; 证据弱, 需 walk-forward 验证)"
+d0_target,d1_true_reclaim_ma5,d1_low <= d1_ma5 AND d1_close >= d1_ma5,1,1.0,0.5162440342705997,up,up,0.6666666666666666,0.2075981550308445,桶率 0.32 0.47,桶尾 0.28 0.13,ADMIT_PRIMARY,"补充: auc=0.516 方向一致率=0.67 (为达到最低 4 因子表达; 证据弱, 需 walk-forward 验证)"
+d0_target,d1_high_to_close_drawdown_raw,(d1_high - d1_close) / d1_high,1,1.0,0.5152090161577828,up,down,0.3333333333333333,1.0,桶率 0.67 0.33,桶尾 0.33 0.27,REJECT_UNSTABLE,方向一致率 0.33 < 0.67
+d0_target,break_high_to_close_drawdown,(break_high - break_close) / break_high,1,1.0,0.5152090161577828,up,down,0.3333333333333333,1.0,桶率 0.67 0.33,桶尾 0.33 0.27,REJECT_UNSTABLE,方向一致率 0.33 < 0.67
+d0_target,break_touched_limit_up,break_high >= 涨停价 - 0.011,1,1.0,0.5111839457190501,up,down,0.6666666666666666,0.39908747522590055,桶率 0.33 0.36,桶尾 0.25 0.36,ADMIT_ALTERNATIVE,"auc=0.511 中等, 作备用"
+d0_target,ma5_below_minus_2_hinge,"max(-0.02 - d1_close_to_ma5_raw, 0)",1,1.0,0.5,flat,flat,1.0,,桶率 0.33,桶尾 0.27,AUDIT_ONLY,"auc=0.500 低于 0.51, 证据弱"
+d0_target,d1_repair_above_5_flag,1 if d1_open_to_close_return_raw >= 0.05 else 0,1,1.0,0.4976712092461618,down,flat,0.0,0.7598073935537787,桶率 0.33 0.32,桶尾 0.27 0.27,AUDIT_ONLY,"auc=0.498 低于 0.51, 证据弱"
+d0_target,break_opened_from_limit_up,break_open >= 涨停价 - 0.011,1,1.0,0.49738370421482375,up,down,0.3333333333333333,0.3565305326771355,桶率 0.33 0.29,桶尾 0.27 0.43,AUDIT_ONLY,"auc=0.497 低于 0.51, 证据弱"
+d0_target,d1_close_location,(d1_close - d1_low) / (d1_high - d1_low),1,0.9929,0.49161407199625995,down,up,0.6666666666666666,1.0,桶率 0.43 0.32,桶尾 0.26 0.27,AUDIT_ONLY,"auc=0.492 低于 0.51, 证据弱"
+d0_target,break_close_location,(break_close - break_low) / (break_high - break_low),1,0.9929,0.49161407199625995,down,up,0.6666666666666666,1.0,桶率 0.43 0.32,桶尾 0.26 0.27,AUDIT_ONLY,"auc=0.492 低于 0.51, 证据弱"
+d0_target,break_volume_distance_from_one,abs(log(break_volume_ratio_vs_board_days)),1,1.0,0.48663101604278075,down,up,0.6666666666666666,0.9671816149258463,桶率 0.33,桶尾 0.27,AUDIT_ONLY,"auc=0.487 低于 0.51, 证据弱"
+d0_target,d1_repair_above_2_hinge,"max(d1_open_to_close_return_raw - 0.02, 0)",1,1.0,0.47398079466390663,down,up,1.0,0.7720390116708836,桶率 0.35 0.29,桶尾 0.26 0.30,AUDIT_ONLY,"auc=0.474 低于 0.51, 证据弱"
+d0_target,break_volume_ratio_vs_board_days,break_volume / mean(板日volume),1,1.0,0.4692657121499626,down,down,0.6666666666666666,1.0,桶率 0.33,桶尾 0.27,AUDIT_ONLY,"auc=0.469 低于 0.51, 证据弱"
+d0_target,break_volume_log_ratio,"log(max(break_volume_ratio_vs_board_days, 1e-9))",1,1.0,0.4692657121499626,down,down,0.6666666666666666,1.0,桶率 0.35 0.33,桶尾 0.30 0.27,AUDIT_ONLY,"auc=0.469 低于 0.51, 证据弱"
+d0_target,volume_above_d1_close_ratio,Σvol(bar close >= d1_close) / Σvol,1,1.0,0.4657006497613708,down,down,1.0,0.8896955867020375,桶率 0.33,桶尾 0.27,AUDIT_ONLY,"auc=0.466 低于 0.51, 证据弱"
+d0_target,ma5_above_5_hinge,"max(d1_close_to_ma5_raw - 0.05, 0)",1,1.0,0.4615605773101029,down,down,0.6666666666666666,0.9959931972713616,桶率 0.36 0.33,桶尾 0.27 0.27,AUDIT_ONLY,"auc=0.462 低于 0.51, 证据弱"
+d0_target,d1_close_to_ma5_raw,d1_close / d1_ma5 - 1,1,1.0,0.4613880742913001,down,down,0.6666666666666666,1.0,桶率 0.33 0.33,桶尾 0.33 0.27,AUDIT_ONLY,"auc=0.461 低于 0.51, 证据弱"
+d0_target,ma5_gap_clipped,"clip(d1_close_to_ma5_raw, -0.15, 0.20)",1,1.0,0.4613880742913001,down,down,0.6666666666666666,1.0,桶率 0.33 0.33,桶尾 0.33 0.27,AUDIT_ONLY,"auc=0.461 低于 0.51, 证据弱"
+d0_target,late_day_sell_volume_ratio,Σvol(time>=14:00 & close<open) / Σvol,1,1.0,0.4611580702662297,down,flat,0.6666666666666666,0.2230461576940192,桶率 0.46 0.33,桶尾 0.23 0.27,AUDIT_ONLY,"auc=0.461 低于 0.51, 证据弱"
+d0_target,d1_open_to_close_return_raw,d1_close / d1_open - 1,1,1.0,0.45992179863147603,down,flat,0.3333333333333333,0.9999233287040146,桶率 0.38 0.25,桶尾 0.26 0.29,AUDIT_ONLY,"auc=0.460 低于 0.51, 证据弱"
+d0_target,d1_open_to_close_bucket,分桶(-5/-2/0/+2/+5%),5,1.0,0.45989304812834225,down,down,0.3333333333333333,,桶率 0.32 0.37 0.53 0.33 0.25 0.19,桶尾 0.27 0.27 0.19 0.28 0.33 0.27,AUDIT_ONLY,"auc=0.460 低于 0.51, 证据弱"
+d0_target,d1_oc_return_clipped,"clip(d1_open_to_close_return_raw, -0.10, 0.10)",1,1.0,0.45923178655626473,down,flat,0.3333333333333333,0.9999233287040146,桶率 0.38 0.25,桶尾 0.26 0.29,AUDIT_ONLY,"auc=0.459 低于 0.51, 证据弱"
+d0_target,ma5_above_10_hinge,"max(d1_close_to_ma5_raw - 0.10, 0)",1,1.0,0.45506296360186305,down,down,1.0,0.9055240303161582,桶率 0.38 0.28,桶尾 0.25 0.30,AUDIT_ONLY,"auc=0.455 低于 0.51, 证据弱"
+d0_target,d1_close_to_ma5_bucket,分桶(-5/-2/+2/+5/+10%),5,1.0,0.4479040883215456,down,down,1.0,,桶率 0.28 0.41 0.33 0.38,桶尾 0.30 0.18 0.31 0.24,AUDIT_ONLY,"auc=0.448 低于 0.51, 证据弱"
+d0_tail,late_day_sell_volume_ratio,Σvol(time>=14:00 & close<open) / Σvol,1,1.0,0.6163570691434469,up,up,1.0,0.2230461576940192,桶率 0.46 0.33,桶尾 0.23 0.27,ADMIT_PRIMARY,auc=0.616 方向一致率=1.00
+d0_tail,break_volume_distance_from_one,abs(log(break_volume_ratio_vs_board_days)),1,1.0,0.5646284829721362,up,up,1.0,0.9671816149258463,桶率 0.33,桶尾 0.27,ADMIT_PRIMARY,auc=0.565 方向一致率=1.00
+d0_tail,volume_above_d1_close_ratio,Σvol(bar close >= d1_close) / Σvol,1,1.0,0.5562435500515995,up,up,1.0,0.8896955867020375,桶率 0.33,桶尾 0.27,ADMIT_PRIMARY,auc=0.556 方向一致率=1.00
+d0_tail,break_volume_ratio_vs_board_days,break_volume / mean(板日volume),1,1.0,0.547858617131063,up,up,0.6666666666666666,1.0,桶率 0.33,桶尾 0.27,ADMIT_ALTERNATIVE,"与已准入因子 |spearman|=0.97 > 0.85, 高度相关作备用"
+d0_tail,break_volume_log_ratio,"log(max(break_volume_ratio_vs_board_days, 1e-9))",1,1.0,0.547858617131063,up,up,0.6666666666666666,1.0,桶率 0.35 0.33,桶尾 0.30 0.27,ADMIT_ALTERNATIVE,"与已准入因子 |spearman|=0.97 > 0.85, 高度相关作备用"
+d0_tail,break_touched_limit_up,break_high >= 涨停价 - 0.011,1,1.0,0.538312693498452,flat,up,0.6666666666666666,0.39908747522590055,桶率 0.33 0.36,桶尾 0.25 0.36,ADMIT_PRIMARY,auc=0.538 方向一致率=0.67
+d0_tail,d1_high_to_close_drawdown_raw,(d1_high - d1_close) / d1_high,1,1.0,0.5296375128998968,up,down,0.6666666666666666,1.0,桶率 0.67 0.33,桶尾 0.33 0.27,ADMIT_ALTERNATIVE,"auc=0.530 中等, 作备用"
+d0_tail,break_high_to_close_drawdown,(break_high - break_close) / break_high,1,1.0,0.5296375128998968,up,down,0.6666666666666666,1.0,桶率 0.67 0.33,桶尾 0.33 0.27,ADMIT_ALTERNATIVE,"auc=0.530 中等, 作备用"
+d0_tail,d1_close_to_ma5_bucket,分桶(-5/-2/+2/+5/+10%),5,1.0,0.5286055211558307,up,up,0.3333333333333333,,桶率 0.28 0.41 0.33 0.38,桶尾 0.30 0.18 0.31 0.24,REJECT_UNSTABLE,方向一致率 0.33 < 0.67
+d0_tail,board_streak_is_3,board_streak_before_break == 3,1,1.0,0.5276057791537667,up,up,0.6666666666666666,0.1717945814024413,桶率 0.32 0.41,桶尾 0.26 0.34,ADMIT_ALTERNATIVE,"auc=0.528 中等, 作备用"
+d0_tail,d1_close_to_ma5_raw,d1_close / d1_ma5 - 1,1,1.0,0.5223168214654282,down,up,0.3333333333333333,1.0,桶率 0.33 0.33,桶尾 0.33 0.27,REJECT_UNSTABLE,方向一致率 0.33 < 0.67
+d0_tail,ma5_gap_clipped,"clip(d1_close_to_ma5_raw, -0.15, 0.20)",1,1.0,0.5223168214654282,down,up,0.3333333333333333,1.0,桶率 0.33 0.33,桶尾 0.33 0.27,REJECT_UNSTABLE,方向一致率 0.33 < 0.67
+d0_tail,ma5_above_10_hinge,"max(d1_close_to_ma5_raw - 0.10, 0)",1,1.0,0.5199948400412797,down,up,0.3333333333333333,0.9055240303161582,桶率 0.38 0.28,桶尾 0.25 0.30,REJECT_UNSTABLE,方向一致率 0.33 < 0.67
+d0_tail,ma5_above_5_hinge,"max(d1_close_to_ma5_raw - 0.05, 0)",1,1.0,0.5183501031991744,down,up,0.3333333333333333,0.9959931972713616,桶率 0.36 0.33,桶尾 0.27 0.27,REJECT_UNSTABLE,方向一致率 0.33 < 0.67
+d0_tail,d1_repair_above_2_hinge,"max(d1_open_to_close_return_raw - 0.02, 0)",1,1.0,0.5178018575851393,down,up,0.3333333333333333,0.7720390116708836,桶率 0.35 0.29,桶尾 0.26 0.30,REJECT_UNSTABLE,方向一致率 0.33 < 0.67
+d0_tail,break_opened_from_limit_up,break_open >= 涨停价 - 0.011,1,1.0,0.5099329205366357,flat,up,0.6666666666666666,0.3565305326771355,桶率 0.33 0.29,桶尾 0.27 0.43,AUDIT_ONLY,"auc=0.510 低于 0.51, 证据弱"
+d0_tail,d1_open_to_close_bucket,分桶(-5/-2/0/+2/+5%),5,1.0,0.5092879256965944,down,up,0.3333333333333333,,桶率 0.32 0.37 0.53 0.33 0.25 0.19,桶尾 0.27 0.27 0.19 0.28 0.33 0.27,AUDIT_ONLY,"auc=0.509 低于 0.51, 证据弱"
+d0_tail,d1_oc_return_clipped,"clip(d1_open_to_close_return_raw, -0.10, 0.10)",1,1.0,0.5064821981424149,down,up,0.3333333333333333,0.9999233287040146,桶率 0.38 0.25,桶尾 0.26 0.29,AUDIT_ONLY,"auc=0.506 低于 0.51, 证据弱"
+d0_tail,d1_open_to_close_return_raw,d1_close / d1_open - 1,1,1.0,0.5057404540763674,down,up,0.3333333333333333,0.9999233287040146,桶率 0.38 0.25,桶尾 0.26 0.29,AUDIT_ONLY,"auc=0.506 低于 0.51, 证据弱"
+d0_tail,down_bar_volume_ratio,Σvol(close<open) / Σvol,1,1.0,0.5000967492260062,up,down,0.0,0.6562938946602934,桶率 0.50 0.33,桶尾 0.50 0.27,AUDIT_ONLY,"auc=0.500 低于 0.51, 证据弱"
+d0_tail,ma5_below_minus_2_hinge,"max(-0.02 - d1_close_to_ma5_raw, 0)",1,1.0,0.5,flat,flat,1.0,,桶率 0.33,桶尾 0.27,AUDIT_ONLY,"auc=0.500 低于 0.51, 证据弱"
+d0_tail,d1_repair_above_5_flag,1 if d1_open_to_close_return_raw >= 0.05 else 0,1,1.0,0.4996130030959752,down,up,0.3333333333333333,0.7598073935537787,桶率 0.33 0.32,桶尾 0.27 0.27,AUDIT_ONLY,"auc=0.500 低于 0.51, 证据弱"
+d0_tail,d1_true_reclaim_ma5,d1_low <= d1_ma5 AND d1_close >= d1_ma5,1,1.0,0.4812951496388029,down,down,1.0,0.2075981550308445,桶率 0.32 0.47,桶尾 0.28 0.13,AUDIT_ONLY,"auc=0.481 低于 0.51, 证据弱"
+d0_tail,d1_close_location,(d1_close - d1_low) / (d1_high - d1_low),1,0.9929,0.4664039408866995,down,down,0.6666666666666666,1.0,桶率 0.43 0.32,桶尾 0.26 0.27,AUDIT_ONLY,"auc=0.466 低于 0.51, 证据弱"
+d0_tail,break_close_location,(break_close - break_low) / (break_high - break_low),1,0.9929,0.4664039408866995,down,down,0.6666666666666666,1.0,桶率 0.43 0.32,桶尾 0.26 0.27,AUDIT_ONLY,"auc=0.466 低于 0.51, 证据弱"
+d0_tail,d1_close_to_vwap_raw,d1_close / d1_vwap - 1,1,1.0,0.45607585139318885,down,down,1.0,0.8923585164643012,桶率 0.33 0.33,桶尾 0.29 0.25,AUDIT_ONLY,"auc=0.456 低于 0.51, 证据弱"
+post_target,d1_high_to_close_drawdown_raw,(d1_high - d1_close) / d1_high,1,1.0,0.5745998967475477,up,up,1.0,0.8558123490038941,桶率 0.56 0.33,桶尾 0.33 0.34,ADMIT_PRIMARY,auc=0.575 方向一致率=1.00
+post_target,volume_above_d1_close_ratio,Σvol(bar close >= d1_close) / Σvol,1,1.0,0.5733204641871114,up,up,1.0,0.9003788281589533,桶率 0.33,桶尾 0.34,ADMIT_PRIMARY,auc=0.573 方向一致率=1.00
+post_target,down_bar_volume_ratio,Σvol(close<open) / Σvol,1,1.0,0.526609952638549,up,up,1.0,0.7038787325454693,桶率 0.67 0.33,桶尾 0.33 0.34,ADMIT_PRIMARY,"补充: auc=0.527 方向一致率=1.00 (为达到最低 4 因子表达; 证据弱, 需 walk-forward 验证)"
+post_target,ma5_below_minus_2_hinge,"max(-0.02 - d1_close_to_ma5_raw, 0)",1,1.0,0.5260263518215079,flat,up,0.6666666666666666,0.7724516190674066,桶率 0.32 0.37,桶尾 0.34 0.34,ADMIT_PRIMARY,"补充: auc=0.526 方向一致率=0.67 (为达到最低 4 因子表达; 证据弱, 需 walk-forward 验证)"
+post_target,break_volume_distance_from_one,abs(log(break_volume_ratio_vs_board_days)),1,1.0,0.5243877802967386,flat,up,0.6666666666666666,0.9593070351297045,桶率 0.33,桶尾 0.34,ADMIT_ALTERNATIVE,"auc=0.524 中等, 作备用"
+post_target,break_volume_ratio_vs_board_days,break_volume / mean(板日volume),1,1.0,0.5192027114991807,flat,up,0.6666666666666666,1.0,桶率 0.33,桶尾 0.34,ADMIT_ALTERNATIVE,"auc=0.519 中等, 作备用"
+post_target,break_volume_log_ratio,"log(max(break_volume_ratio_vs_board_days, 1e-9))",1,1.0,0.5192027114991807,flat,up,0.6666666666666666,1.0,桶率 0.47 0.32,桶尾 0.25 0.35,ADMIT_ALTERNATIVE,"auc=0.519 中等, 作备用"
+post_target,break_close_location,(break_close - break_low) / (break_high - break_low),1,0.9933,0.5043715472766288,up,down,0.3333333333333333,0.8471394016062408,桶率 0.43 0.32,桶尾 0.32 0.34,AUDIT_ONLY,"auc=0.504 低于 0.51, 证据弱"
+post_target,break_touched_limit_up,break_high >= 涨停价 - 0.011,1,1.0,0.5019752643038315,down,up,0.0,0.324072262080895,桶率 0.33 0.34,桶尾 0.33 0.41,AUDIT_ONLY,"auc=0.502 低于 0.51, 证据弱"
+post_target,board_streak_is_3,board_streak_before_break == 3,1,1.0,0.5019640412111962,up,down,0.3333333333333333,0.23453358654768083,桶率 0.33 0.34,桶尾 0.34 0.36,AUDIT_ONLY,"auc=0.502 低于 0.51, 证据弱"
+post_target,ma5_above_10_hinge,"max(d1_close_to_ma5_raw - 0.10, 0)",1,1.0,0.4983389822899598,up,down,0.3333333333333333,0.6094183645652125,桶率 0.33 0.32,桶尾 0.33 0.47,AUDIT_ONLY,"auc=0.498 低于 0.51, 证据弱"
+post_target,post_day,post_day (仅 post 头),1,1.0,0.4957576709838163,flat,down,0.3333333333333333,0.3738532322962164,桶率 0.33,桶尾 0.34,AUDIT_ONLY,"auc=0.496 低于 0.51, 证据弱"
+post_target,break_high_to_close_drawdown,(break_high - break_close) / break_high,1,1.0,0.49515162398150436,down,up,0.0,0.8471394016062408,桶率 0.40 0.33,桶尾 0.40 0.34,AUDIT_ONLY,"auc=0.495 低于 0.51, 证据弱"
+post_target,break_opened_from_limit_up,break_open >= 涨停价 - 0.011,1,1.0,0.49333348297456847,flat,down,0.6666666666666666,0.324072262080895,桶率 0.34 0.20,桶尾 0.34 0.50,AUDIT_ONLY,"auc=0.493 低于 0.51, 证据弱"
+post_target,d1_true_reclaim_ma5,d1_low <= d1_ma5 AND d1_close >= d1_ma5,1,1.0,0.4837040694933896,down,flat,1.0,0.395302745687998,桶率 0.34 0.31,桶尾 0.35 0.33,AUDIT_ONLY,"auc=0.484 低于 0.51, 证据弱"
+post_target,late_day_sell_volume_ratio,Σvol(time>=14:00 & close<open) / Σvol,1,1.0,0.47920360934659156,up,down,0.6666666666666666,0.29216916678438043,桶率 0.59 0.32,桶尾 0.26 0.35,AUDIT_ONLY,"auc=0.479 低于 0.51, 证据弱"
+post_target,d1_repair_above_5_flag,1 if d1_open_to_close_return_raw >= 0.05 else 0,1,1.0,0.47842921595474847,down,down,0.6666666666666666,0.7255051516044237,桶率 0.34 0.26,桶尾 0.34 0.36,AUDIT_ONLY,"auc=0.478 低于 0.51, 证据弱"
+post_target,ma5_above_5_hinge,"max(d1_close_to_ma5_raw - 0.05, 0)",1,1.0,0.4652533052007811,flat,down,0.6666666666666666,0.7929025954629041,桶率 0.36 0.27,桶尾 0.33 0.38,AUDIT_ONLY,"auc=0.465 低于 0.51, 证据弱"
+post_target,d1_repair_above_2_hinge,"max(d1_open_to_close_return_raw - 0.02, 0)",1,1.0,0.46257098606091895,down,down,1.0,0.8014862988374646,桶率 0.36 0.27,桶尾 0.33 0.36,AUDIT_ONLY,"auc=0.463 低于 0.51, 证据弱"
+post_target,d1_close_to_ma5_bucket,分桶(-5/-2/+2/+5/+10%),5,1.0,0.46053960629391033,flat,down,0.6666666666666666,,桶率 0.32 0.45 0.30 0.32 0.39 0.25,桶尾 0.47 0.27 0.39 0.39 0.22 0.34,AUDIT_ONLY,"auc=0.461 低于 0.51, 证据弱"
+post_target,d1_close_to_ma5_raw,d1_close / d1_ma5 - 1,1,1.0,0.4543781284370721,down,down,0.6666666666666666,0.9999998665405297,桶率 0.38 0.30,桶尾 0.35 0.34,AUDIT_ONLY,"auc=0.454 低于 0.51, 证据弱"
+post_target,ma5_gap_clipped,"clip(d1_close_to_ma5_raw, -0.15, 0.20)",1,1.0,0.4543556822518013,down,down,0.6666666666666666,0.9999998665405297,桶率 0.38 0.30,桶尾 0.35 0.34,AUDIT_ONLY,"auc=0.454 低于 0.51, 证据弱"
+post_target,d1_open_to_close_return_raw,d1_close / d1_open - 1,1,1.0,0.4460281475163296,down,down,1.0,0.9999766436107932,桶率 0.36 0.30,桶尾 0.34 0.35,AUDIT_ONLY,"auc=0.446 低于 0.51, 证据弱"
+post_target,d1_oc_return_clipped,"clip(d1_open_to_close_return_raw, -0.10, 0.10)",1,1.0,0.44597203205315256,down,down,1.0,0.9999766436107932,桶率 0.36 0.30,桶尾 0.34 0.35,AUDIT_ONLY,"auc=0.446 低于 0.51, 证据弱"
+post_target,d1_open_to_close_bucket,分桶(-5/-2/0/+2/+5%),5,1.0,0.4372180197975354,down,down,1.0,,桶率 0.26 0.47 0.32 0.33 0.28 0.35,桶尾 0.36 0.32 0.35 0.34 0.36 0.32,AUDIT_ONLY,"auc=0.437 低于 0.51, 证据弱"
+post_target,d1_close_location,(d1_close - d1_low) / (d1_high - d1_low),1,0.9866,0.4364681295715778,down,down,1.0,0.9245226563381406,桶率 0.55 0.31,桶尾 0.33 0.34,AUDIT_ONLY,"auc=0.436 低于 0.51, 证据弱"
+post_target,d1_close_to_vwap_raw,d1_close / d1_vwap - 1,1,1.0,0.42478283315750487,down,down,1.0,0.9245226563381406,桶率 0.37 0.28,桶尾 0.33 0.36,AUDIT_ONLY,"auc=0.425 低于 0.51, 证据弱"
+post_tail,d1_close_to_vwap_raw,d1_close / d1_vwap - 1,1,1.0,0.5336767475351722,up,down,0.6666666666666666,0.9245226563381406,桶率 0.37 0.28,桶尾 0.33 0.36,ADMIT_PRIMARY,auc=0.534 方向一致率=0.67
+post_tail,break_touched_limit_up,break_high >= 涨停价 - 0.011,1,1.0,0.5281821203057494,up,down,0.6666666666666666,0.324072262080895,桶率 0.33 0.34,桶尾 0.33 0.41,ADMIT_PRIMARY,"补充: auc=0.528 方向一致率=0.67 (为达到最低 4 因子表达; 证据弱, 需 walk-forward 验证)"
+post_tail,ma5_above_5_hinge,"max(d1_close_to_ma5_raw - 0.05, 0)",1,1.0,0.5277390052066024,flat,up,0.6666666666666666,0.7929025954629041,桶率 0.36 0.27,桶尾 0.33 0.38,ADMIT_PRIMARY,"补充: auc=0.528 方向一致率=0.67 (为达到最低 4 因子表达; 证据弱, 需 walk-forward 验证)"
+post_tail,late_day_sell_volume_ratio,Σvol(time>=14:00 & close<open) / Σvol,1,1.0,0.5251578597540711,flat,up,0.6666666666666666,0.29216916678438043,桶率 0.59 0.32,桶尾 0.26 0.35,ADMIT_PRIMARY,"补充: auc=0.525 方向一致率=0.67 (为达到最低 4 因子表达; 证据弱, 需 walk-forward 验证)"
+post_tail,ma5_above_10_hinge,"max(d1_close_to_ma5_raw - 0.10, 0)",1,1.0,0.5238395923341088,flat,up,0.6666666666666666,0.6094183645652125,桶率 0.33 0.32,桶尾 0.33 0.47,ADMIT_ALTERNATIVE,"auc=0.524 中等, 作备用"
+post_tail,break_volume_distance_from_one,abs(log(break_volume_ratio_vs_board_days)),1,1.0,0.5222222222222223,up,up,1.0,0.9593070351297045,桶率 0.33,桶尾 0.34,ADMIT_ALTERNATIVE,"auc=0.522 中等, 作备用"
+post_tail,break_volume_ratio_vs_board_days,break_volume / mean(板日volume),1,1.0,0.518278497839814,up,up,1.0,1.0,桶率 0.33,桶尾 0.34,ADMIT_ALTERNATIVE,"auc=0.518 中等, 作备用"
+post_tail,break_volume_log_ratio,"log(max(break_volume_ratio_vs_board_days, 1e-9))",1,1.0,0.518278497839814,up,up,1.0,1.0,桶率 0.47 0.32,桶尾 0.25 0.35,ADMIT_ALTERNATIVE,"auc=0.518 中等, 作备用"
+post_tail,d1_oc_return_clipped,"clip(d1_open_to_close_return_raw, -0.10, 0.10)",1,1.0,0.5163841807909605,up,down,0.6666666666666666,0.9999766436107932,桶率 0.36 0.30,桶尾 0.34 0.35,ADMIT_ALTERNATIVE,"auc=0.516 中等, 作备用"
+post_tail,d1_open_to_close_return_raw,d1_close / d1_open - 1,1,1.0,0.516295557771131,up,down,0.6666666666666666,0.9999766436107932,桶率 0.36 0.30,桶尾 0.34 0.35,ADMIT_ALTERNATIVE,"auc=0.516 中等, 作备用"
+post_tail,d1_close_location,(d1_close - d1_low) / (d1_high - d1_low),1,0.9866,0.5159873466693976,up,down,0.6666666666666666,0.9245226563381406,桶率 0.55 0.31,桶尾 0.33 0.34,ADMIT_ALTERNATIVE,"与已准入因子 |spearman|=0.92 > 0.85, 高度相关作备用"
+post_tail,d1_repair_above_2_hinge,"max(d1_open_to_close_return_raw - 0.02, 0)",1,1.0,0.5152542372881356,up,up,0.6666666666666666,0.8014862988374646,桶率 0.36 0.27,桶尾 0.33 0.36,ADMIT_ALTERNATIVE,"auc=0.515 中等, 作备用"
+post_tail,d1_open_to_close_bucket,分桶(-5/-2/0/+2/+5%),5,1.0,0.5143569292123629,up,down,0.6666666666666666,,桶率 0.26 0.47 0.32 0.33 0.28 0.35,桶尾 0.36 0.32 0.35 0.34 0.36 0.32,ADMIT_ALTERNATIVE,"auc=0.514 中等, 作备用"
+post_tail,break_high_to_close_drawdown,(break_high - break_close) / break_high,1,1.0,0.5134263875041543,up,down,0.3333333333333333,0.8471394016062408,桶率 0.40 0.33,桶尾 0.40 0.34,REJECT_UNSTABLE,方向一致率 0.33 < 0.67
+post_tail,d1_close_to_ma5_raw,d1_close / d1_ma5 - 1,1,1.0,0.5111332668660684,flat,up,0.3333333333333333,0.9999998665405297,桶率 0.38 0.30,桶尾 0.35 0.34,REJECT_UNSTABLE,方向一致率 0.33 < 0.67
+post_tail,ma5_gap_clipped,"clip(d1_close_to_ma5_raw, -0.15, 0.20)",1,1.0,0.5111332668660684,flat,up,0.3333333333333333,0.9999998665405297,桶率 0.38 0.30,桶尾 0.35 0.34,REJECT_UNSTABLE,方向一致率 0.33 < 0.67
+post_tail,board_streak_is_3,board_streak_before_break == 3,1,1.0,0.5084524205162291,flat,up,0.6666666666666666,0.23453358654768083,桶率 0.33 0.34,桶尾 0.34 0.36,AUDIT_ONLY,"auc=0.508 低于 0.51, 证据弱"
+post_tail,d1_close_to_ma5_bucket,分桶(-5/-2/+2/+5/+10%),5,1.0,0.5080536169269968,down,up,0.3333333333333333,,桶率 0.32 0.45 0.30 0.32 0.39 0.25,桶尾 0.47 0.27 0.39 0.39 0.22 0.34,AUDIT_ONLY,"auc=0.508 低于 0.51, 证据弱"
+post_tail,break_opened_from_limit_up,break_open >= 涨停价 - 0.011,1,1.0,0.5078652930098593,flat,up,0.6666666666666666,0.324072262080895,桶率 0.34 0.20,桶尾 0.34 0.50,AUDIT_ONLY,"auc=0.508 低于 0.51, 证据弱"
+post_tail,down_bar_volume_ratio,Σvol(close<open) / Σvol,1,1.0,0.507566190317935,flat,up,0.3333333333333333,0.7038787325454693,桶率 0.67 0.33,桶尾 0.33 0.34,AUDIT_ONLY,"auc=0.508 低于 0.51, 证据弱"
+post_tail,d1_repair_above_5_flag,1 if d1_open_to_close_return_raw >= 0.05 else 0,1,1.0,0.5059155865736125,flat,up,0.6666666666666666,0.7255051516044237,桶率 0.34 0.26,桶尾 0.34 0.36,AUDIT_ONLY,"auc=0.506 低于 0.51, 证据弱"
+post_tail,ma5_below_minus_2_hinge,"max(-0.02 - d1_close_to_ma5_raw, 0)",1,1.0,0.4983272405007201,down,flat,0.3333333333333333,0.7724516190674066,桶率 0.32 0.37,桶尾 0.34 0.34,AUDIT_ONLY,"auc=0.498 低于 0.51, 证据弱"
+post_tail,d1_true_reclaim_ma5,d1_low <= d1_ma5 AND d1_close >= d1_ma5,1,1.0,0.49330896200288027,up,down,0.6666666666666666,0.395302745687998,桶率 0.34 0.31,桶尾 0.35 0.33,AUDIT_ONLY,"auc=0.493 低于 0.51, 证据弱"
+post_tail,post_day,post_day (仅 post 头),1,1.0,0.49147003434142017,flat,down,0.6666666666666666,0.3738532322962164,桶率 0.33,桶尾 0.34,AUDIT_ONLY,"auc=0.491 低于 0.51, 证据弱"
+post_tail,break_close_location,(break_close - break_low) / (break_high - break_low),1,0.9933,0.48861595114065026,down,up,0.3333333333333333,0.8471394016062408,桶率 0.43 0.32,桶尾 0.32 0.34,AUDIT_ONLY,"auc=0.489 低于 0.51, 证据弱"
+post_tail,d1_high_to_close_drawdown_raw,(d1_high - d1_close) / d1_high,1,1.0,0.4772349617813227,down,up,1.0,0.8558123490038941,桶率 0.56 0.33,桶尾 0.33 0.34,AUDIT_ONLY,"auc=0.477 低于 0.51, 证据弱"
+post_tail,volume_above_d1_close_ratio,Σvol(bar close >= d1_close) / Σvol,1,1.0,0.4717181787969425,down,up,1.0,0.9003788281589533,桶率 0.33,桶尾 0.34,AUDIT_ONLY,"auc=0.472 低于 0.51, 证据弱"

@@ -7,6 +7,13 @@
 从 2026-07-10 起，默认运行策略由版本化清单 `configs/policy_v005_v1.json` 管理。默认冻结 daily 输出标记为 `research_only=true`、`deployment_status=shadow_only`；参数覆盖运行标记为 `deployment_status=custom_research_only`。旧的 `primary_buy_*` 字段只为兼容历史分析保留，语义是“研究观察清单”，不是委托或实盘买入指令。
 
 ---
+python -m src.run_daily_v005 `
+>>   --date 2026-07-31 `
+>>   --lookback-days 5 `
+>>   --days 10 `
+>>   --workers 6 `
+>>   --coefficient-predict-date 2026-06-26 `
+>>   --grid-id 4
 
 ## 运行环境
 
