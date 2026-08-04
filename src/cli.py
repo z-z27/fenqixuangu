@@ -21,6 +21,7 @@ from .logistic_v003 import (
     run_logistic_v003_research,
 )
 from .ranking_backtest import DEFAULT_TARGET_COLUMN, run_ranking_backtest
+from .v004c_d1_dataset import DatasetValidationError, run_v004c_d1_dataset_build
 from .report import write_data_quality_reports, write_signal_reports
 from .research_models import run_factor_analysis
 from .signal_engine import generate_signal
@@ -85,6 +86,8 @@ def main(argv: list[str] | None = None) -> int:
             return train_v004b(args)
         if args.command == "run-daily":
             return run_daily(args)
+        if args.command == "build-v004c-d1-dataset":
+            return build_v004c_d1_dataset_command(args)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -250,6 +253,25 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--force-refresh", action="store_true")
     p.add_argument("--ranking-model", default=str(DEFAULT_DAILY_RANKING_MODEL))
     p.add_argument("--top-n", type=int, default=DEFAULT_DAILY_TOP_N)
+
+    p = sub.add_parser(
+        "build-v004c-d1-dataset",
+        help="v004c 阶段1: 冻结 D1 首次断板训练数据 (一事件一行, 只读, 不训练模型)",
+    )
+    p.add_argument("--input-file", required=True, help="v0.2.2 训练表 CSV 路径")
+    p.add_argument("--input-manifest", default=None, help="输入数据集 manifest JSON 路径")
+    p.add_argument("--output-dir", required=True, help="输出目录")
+    p.add_argument(
+        "--expected-signal-dates",
+        type=int,
+        default=42,
+        help="参考信号日数 (来自 v0.2.2 review, 仅用于冻结门校验, 不参与计算)",
+    )
+    p.add_argument(
+        "--daily-cache-dir",
+        required=True,
+        help="本地未复权日线缓存目录 (data/cache/daily); 交易日邻接验证为冻结硬条件",
+    )
     return parser
 
 
@@ -386,6 +408,69 @@ def run_daily(args) -> int:
     print(f"markdown: {md_path}")
     print(f"quality csv: {quality_csv_path}")
     print(f"quality markdown: {quality_md_path}")
+    return 0
+
+
+def build_v004c_d1_dataset_command(args) -> int:
+    """v004c 阶段1: D1 首次断板训练数据冻结与审计 (只读, 不训练模型)。"""
+    import json
+
+    from pathlib import Path as _Path
+
+    from .v004c_d1_dataset import (
+        DatasetValidationError,
+        collect_git_provenance,
+        run_v004c_d1_dataset_build,
+    )
+
+    expected_stats: dict[str, int] | None = None
+    if args.input_manifest:
+        try:
+            with open(args.input_manifest, encoding="utf-8") as handle:
+                manifest = json.load(handle)
+            km = manifest.get("key_metrics", {})
+            expected_stats = {}
+            for key, mkey in (("input_rows", "main_training_rows"), ("d1_rows", "d0_rows"),
+                              ("post_rows", "post_rows"), ("d0_target7", "d0_target7")):
+                if mkey in km:
+                    expected_stats[key] = int(km[mkey])
+            if args.expected_signal_dates:
+                expected_stats["signal_dates"] = int(args.expected_signal_dates)
+        except Exception as exc:
+            print(f"WARN: 无法从输入 manifest 读取参考统计, 跳过冻结门: {exc}", file=sys.stderr)
+
+    # 运行开始时采集 Git provenance (fail closed)
+    try:
+        git_before = collect_git_provenance(_Path.cwd())
+    except DatasetValidationError as exc:
+        print(f"ERROR: Git provenance 采集失败, 阻止冻结: {exc}", file=sys.stderr)
+        return 1
+    try:
+        result = run_v004c_d1_dataset_build(
+            input_file=args.input_file,
+            input_manifest=args.input_manifest,
+            output_dir=args.output_dir,
+            expected_stats=expected_stats,
+            daily_cache_dir=args.daily_cache_dir,
+            git_provenance_before=git_before,
+            git_provenance_after=None,  # 数据文件写完后由模块自动采集
+        )
+    except DatasetValidationError as exc:
+        print(f"ERROR: v004c D1 数据集冻结被阻止: {exc}", file=sys.stderr)
+        return 1
+    validation = result["manifest"]["validation"]
+    print("v004c D1 dataset build completed (research only, not frozen as a model)")
+    print(f"input rows: {validation.get('input_rows')}")
+    print(f"selected D1 rows: {validation.get('selected_d1_rows')}")
+    print(f"unique event_id: {validation.get('unique_event_id')}")
+    print(f"unique signal dates: {validation.get('unique_signal_dates')}")
+    print(f"target7 positives: {validation.get('target7_positive_count')} "
+          f"({validation.get('target7_rate'):.4f})")
+    adj = validation.get("d2_d3_adjacency", {})
+    print(f"trade-date adjacency verified/mismatch/not_verified: "
+          f"{adj.get('verified_rows')}/{adj.get('mismatch_rows')}/{adj.get('not_verified_rows')}")
+    print(f"frozen: {result['manifest'].get('frozen')}")
+    print(f"output dir: {args.output_dir}")
     return 0
 
 
