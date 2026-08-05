@@ -1,0 +1,345 @@
+{
+  "dataset_version": "v004c-factor-dictionary-0.1",
+  "source_dataset_version": "v004c-d1-dataset-0.1",
+  "source_tag": "v004c-d1-dataset-0.1",
+  "source_data_commit": "a65661f4738b849a06efb4859d4100842871e971",
+  "source_generator_commit": "7f4db91e06513a08de382831d401c5cc4d5ea3c4",
+  "git_branch": "research-sample-analysis",
+  "research_only": true,
+  "deployment_status": "research_only",
+  "timezone": "Asia/Shanghai",
+  "git_root": "F:\\fenqixuangu",
+  "git_head": "aa62b315dd1f792dd7657b190e41c1e992f93112",
+  "git_status_before": "?? data/\n?? reports/diagnostics/code_commit.txt\n?? reports/diagnostics/stage1_sha_before_commit.json\n?? reports/research/v004c_daily_refresh_20260803_224456/backup/\n?? reports/research/v004c_stage2_1_engineering_decision_20260805.md\n?? v004c_stage2_1_factor_dictionary_codex_prompts_20260805.md\n",
+  "git_dirty_before": true,
+  "stage1_input_verification": {
+    "input_rows": 333,
+    "signal_dates": 42,
+    "training_rows": 333,
+    "lineage_rows": 197,
+    "allowed_raw": 79,
+    "input_sha_verification": {
+      "v004c_d1_snapshot_v001.csv": {
+        "role": "snapshot",
+        "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_snapshot_v001.csv",
+        "bytes": 685818,
+        "sha256": "7f37fd58bfa0efa1a8eb12cecb4e1d155f978017624a4e3babbf457d89a643f8",
+        "rows": 333
+      },
+      "v004c_training_d1_v001.csv": {
+        "role": "training",
+        "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_training_d1_v001.csv",
+        "bytes": 539614,
+        "sha256": "cd0108bb80ed4f3bfa1a2573fe89094562ee43578decd28ed1529a849ca1f214",
+        "rows": 333
+      },
+      "v004c_d1_column_lineage.csv": {
+        "role": "lineage",
+        "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_column_lineage.csv",
+        "bytes": 32211,
+        "sha256": "914f0a34a34a2d9e9f5b8a0420e89666c8b8d3a3ba8d28e46a8dd54c1791ba6c",
+        "rows": 197
+      }
+    },
+    "source_ref_anchor": {
+      "v004c_d1_snapshot_v001.csv": {
+        "role": "snapshot",
+        "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_snapshot_v001.csv",
+        "local_sha256": "7f37fd58bfa0efa1a8eb12cecb4e1d155f978017624a4e3babbf457d89a643f8",
+        "source_ref_sha256": "c6eb70f93e8f53380be8c3bfdf6188766cf95e38d546a9883d0fd5cc3bcd8df6",
+        "bytes_equal": true
+      },
+      "v004c_training_d1_v001.csv": {
+        "role": "training",
+        "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_training_d1_v001.csv",
+        "local_sha256": "cd0108bb80ed4f3bfa1a2573fe89094562ee43578decd28ed1529a849ca1f214",
+        "source_ref_sha256": "908402966c259d2bad7a0a04943df4d007a38f236ab2352aa136802b0af51acd",
+        "bytes_equal": true
+      },
+      "v004c_d1_column_lineage.csv": {
+        "role": "lineage",
+        "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_column_lineage.csv",
+        "local_sha256": "914f0a34a34a2d9e9f5b8a0420e89666c8b8d3a3ba8d28e46a8dd54c1791ba6c",
+        "source_ref_sha256": "cd9500124d6881eba5fe1ead91d535b97b18f4de49ff0b6bd489ff46d00ca8e1",
+        "bytes_equal": true
+      },
+      "v004c_d1_data_manifest.json": {
+        "role": "manifest",
+        "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_data_manifest.json",
+        "local_sha256": "ae2a2b48b0b97390e08e81c42cadaa84d5ff76b95e847a80a66e480936ccd618",
+        "source_ref_sha256": "d32e0941838c1568a8a4c7e6e04dd30bd0d98b0f1dfa25cc4896ee164ee6c904",
+        "bytes_equal": true
+      },
+      "stage1_manifest_audit_reference_sha256": "ae2a2b48b0b97390e08e81c42cadaa84d5ff76b95e847a80a66e480936ccd618",
+      "stage1_manifest_audit_reference_verified": true
+    },
+    "stage1_recorded_git_root": "F:\\fenqixuangu",
+    "current_git_root": "F:\\fenqixuangu",
+    "version_chain_ok": true
+  },
+  "source_ref_anchor": {
+    "source_ref": "v004c-d1-dataset-0.1",
+    "source_ref_peeled_commit": "a65661f4738b849a06efb4859d4100842871e971",
+    "source_ref_verified": true,
+    "current_git_root": "F:\\fenqixuangu",
+    "stage1_recorded_git_root": "F:\\fenqixuangu",
+    "stage1_manifest_local_sha256": "ae2a2b48b0b97390e08e81c42cadaa84d5ff76b95e847a80a66e480936ccd618",
+    "stage1_manifest_source_ref_sha256": "d32e0941838c1568a8a4c7e6e04dd30bd0d98b0f1dfa25cc4896ee164ee6c904",
+    "stage1_manifest_audit_reference_sha256": "ae2a2b48b0b97390e08e81c42cadaa84d5ff76b95e847a80a66e480936ccd618",
+    "stage1_manifest_audit_reference_verified": true,
+    "files": {
+      "v004c_d1_snapshot_v001.csv": {
+        "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_snapshot_v001.csv",
+        "local_sha256": "7f37fd58bfa0efa1a8eb12cecb4e1d155f978017624a4e3babbf457d89a643f8",
+        "source_ref_sha256": "c6eb70f93e8f53380be8c3bfdf6188766cf95e38d546a9883d0fd5cc3bcd8df6",
+        "bytes_equal": true
+      },
+      "v004c_training_d1_v001.csv": {
+        "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_training_d1_v001.csv",
+        "local_sha256": "cd0108bb80ed4f3bfa1a2573fe89094562ee43578decd28ed1529a849ca1f214",
+        "source_ref_sha256": "908402966c259d2bad7a0a04943df4d007a38f236ab2352aa136802b0af51acd",
+        "bytes_equal": true
+      },
+      "v004c_d1_column_lineage.csv": {
+        "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_column_lineage.csv",
+        "local_sha256": "914f0a34a34a2d9e9f5b8a0420e89666c8b8d3a3ba8d28e46a8dd54c1791ba6c",
+        "source_ref_sha256": "cd9500124d6881eba5fe1ead91d535b97b18f4de49ff0b6bd489ff46d00ca8e1",
+        "bytes_equal": true
+      },
+      "v004c_d1_data_manifest.json": {
+        "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_data_manifest.json",
+        "local_sha256": "ae2a2b48b0b97390e08e81c42cadaa84d5ff76b95e847a80a66e480936ccd618",
+        "source_ref_sha256": "d32e0941838c1568a8a4c7e6e04dd30bd0d98b0f1dfa25cc4896ee164ee6c904",
+        "bytes_equal": true
+      }
+    }
+  },
+  "gate_stats": {
+    "input_rows": 333,
+    "signal_dates": 42,
+    "lineage_rows": 197,
+    "allowed_raw": 79,
+    "exact_duplicate_groups": 13,
+    "forbidden_unknown_mechanism": 0,
+    "break_turnover_ratio_missing_count": 333,
+    "target_blind_all_true": true,
+    "hard_failure_count": 0
+  },
+  "admission_summary": {
+    "candidates": 79,
+    "by_status": {
+      "EXCLUDE_CONSTANT": 0,
+      "PRIMARY_RAW": 32,
+      "EXCLUDE_DEPRECATED": 2,
+      "EXCLUDE_FORBIDDEN": 13,
+      "EXCLUDE_ALL_MISSING": 1,
+      "SENSITIVITY_RAW": 21,
+      "DERIVE_ONLY": 12,
+      "EXCLUDE_EXACT_DUPLICATE_ALIAS": 11,
+      "AUDIT_ONLY": 105
+    },
+    "primary_raw_count": 32,
+    "sensitivity_raw_count": 21,
+    "derive_only_count": 12
+  },
+  "exact_duplicate_groups": {
+    "expected_count": 13,
+    "found_count": 13,
+    "missing_groups": [],
+    "extra_groups": []
+  },
+  "near_duplicate_pairs": {
+    "row_count": 7,
+    "auto_threshold_count": 5,
+    "predeclared_count": 7,
+    "groups": [
+      "ME01_BREAK_ACTIVITY_RATIO",
+      "ME02_ABOVE_CLOSE_CHIP",
+      "ME03_HIGH_ZONE",
+      "ME04_LATE_SELL",
+      "ME05_VWAP_GAP",
+      "ME06_MA5_POSITION",
+      "ME07_MA10_POSITION"
+    ]
+  },
+  "derived_factors": {
+    "spec_count": 6,
+    "audit_rows": 9,
+    "existing_recompute": {
+      "d1_true_reclaim_ma5": {
+        "formula": "1[d1_low <= d1_ma5 and d1_close >= d1_ma5]",
+        "mismatch_count": 0,
+        "status": "RECOMPUTE_MATCH"
+      },
+      "d1_close_above_ma5": {
+        "formula": "1[d1_close >= d1_ma5]",
+        "mismatch_count": 0,
+        "status": "RECOMPUTE_MATCH"
+      },
+      "d1_close_above_ma10": {
+        "formula": "1[d1_close >= d1_ma10]",
+        "mismatch_count": 0,
+        "status": "RECOMPUTE_MATCH"
+      }
+    }
+  },
+  "dictionary_rows": 197,
+  "allowlist_counts": {
+    "primary": 38,
+    "primary_derived_not_frozen": 6,
+    "sensitivity": 21,
+    "exclusions": 144
+  },
+  "target_blind": {
+    "all_true": true,
+    "sensitive_columns_not_used_for_admission": true,
+    "descriptive_statistics_may_read_sensitive_columns": true,
+    "admission_sensitive_columns": [
+      "audit_minute_d2open_to_d3close_return",
+      "audit_minute_d2open_to_d3high_return",
+      "audit_minute_tail_loss",
+      "audit_minute_target7",
+      "d2_close",
+      "d2_high",
+      "d2_low",
+      "d2_open",
+      "d2_open_daily",
+      "d2_trade_date",
+      "d2open_to_d3close_return",
+      "d2open_to_d3high_return",
+      "d3_close",
+      "d3_close_daily",
+      "d3_high",
+      "d3_high_daily",
+      "d3_low",
+      "d3_trade_date",
+      "daily_d2open_to_d3close_return",
+      "daily_d2open_to_d3high_return",
+      "tail_label_daily_vs_minute_same",
+      "tail_loss_5pct",
+      "tail_loss_daily_5pct",
+      "target7_d2open_d3high",
+      "target7_daily_d2open_d3high",
+      "target_label_daily_vs_minute_same"
+    ],
+    "admission_rule_version": "v004c-stage2-1-admission-rules-1.1",
+    "target_blind_invariance_test_version": "v004c-stage2-1-target-blind-tests-1.1",
+    "target_blind_invariance_tests": [
+      "target7_shuffle",
+      "target7_all_zero",
+      "target7_all_one",
+      "tail_loss_flip",
+      "cross_month_permute"
+    ],
+    "admission_invariance_verified": true
+  },
+  "frozen": true,
+  "output_dir_gate": {
+    "output_dir_was_created": true,
+    "preexisting_entry_count": 0,
+    "unmanaged_output_files": []
+  },
+  "generated_at": "2026-08-05T21:11:14+0800",
+  "git_status_after": "?? data/\n?? reports/diagnostics/code_commit.txt\n?? reports/diagnostics/stage1_sha_before_commit.json\n?? reports/research/v004c_daily_refresh_20260803_224456/backup/\n?? reports/research/v004c_factor_dictionary_v001_20260601_20260729/\n?? reports/research/v004c_stage2_1_engineering_decision_20260805.md\n?? v004c_stage2_1_factor_dictionary_codex_prompts_20260805.md\n",
+  "git_dirty_after": true,
+  "output_files": {
+    "git_head.txt": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/git_head.txt",
+      "rows": null,
+      "bytes": 40,
+      "sha256": "3a2ba48df907ce2a13b68f3713819bad1b34393e254aece751b53f0bf31c87af",
+      "role": "provenance"
+    },
+    "git_status_after.txt": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/git_status_after.txt",
+      "rows": null,
+      "bytes": 370,
+      "sha256": "8a35eda318dd22015d1adabf7d8f79934e57d18c382128bec52b2c5bab9ceb66",
+      "role": "provenance"
+    },
+    "git_status_before.txt": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/git_status_before.txt",
+      "rows": null,
+      "bytes": 301,
+      "sha256": "3453873e99b9eca7e12a9c5b70dfcecdc495f20c07fddf50e0ccff991e7fd36c",
+      "role": "provenance"
+    },
+    "v004c_canonical_feature_map_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_canonical_feature_map_v001.csv",
+      "rows": 197,
+      "bytes": 17722,
+      "sha256": "3bbece0fa64cd673775229bfd68011f5d030c85ebb59d025f5943aab6779adfd",
+      "role": "canonical_map"
+    },
+    "v004c_exact_duplicate_groups_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_exact_duplicate_groups_v001.csv",
+      "rows": 13,
+      "bytes": 1635,
+      "sha256": "bd6ad5daec66af2295ec2e9eca6bb81631f4eed5fd02fca2056918cff84f2f96",
+      "role": "duplicate_groups"
+    },
+    "v004c_factor_dictionary_review.md": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_factor_dictionary_review.md",
+      "rows": null,
+      "bytes": 7129,
+      "sha256": "df367ba20c6f8beeac6f95bc4a268ff1c74c45ea72983774cdf54da447492492",
+      "role": "review"
+    },
+    "v004c_factor_dictionary_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_factor_dictionary_v001.csv",
+      "rows": 197,
+      "bytes": 65376,
+      "sha256": "736ea8f2ddd5b9910e17574bf65a558511db7447b598659567d37b11b38b2c7f",
+      "role": "dictionary"
+    },
+    "v004c_feature_allowlist_primary_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_feature_allowlist_primary_v001.csv",
+      "rows": 38,
+      "bytes": 3830,
+      "sha256": "03e8416bc8428dc2f1fd2c054e66e5a744e270fb27a19bbd9aa79f030241e9c9",
+      "role": "allowlist_primary"
+    },
+    "v004c_feature_allowlist_sensitivity_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_feature_allowlist_sensitivity_v001.csv",
+      "rows": 21,
+      "bytes": 2281,
+      "sha256": "10e41546c409e40fef66471b300a3b69dec09877f321e59c0fd7d9224804ad1b",
+      "role": "allowlist_sensitivity"
+    },
+    "v004c_feature_exclusions_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_feature_exclusions_v001.csv",
+      "rows": 144,
+      "bytes": 14975,
+      "sha256": "5e9b2bd9c540b4cef27e27e22737ac061b0ef3e8a861d8e998ac8624e4877979",
+      "role": "exclusions"
+    },
+    "v004c_near_duplicate_pairs_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_near_duplicate_pairs_v001.csv",
+      "rows": 7,
+      "bytes": 1591,
+      "sha256": "101587dc3fe9d21b69fed45721b44e991cda27aba8fb706b1ff5be6cc91bdf6a",
+      "role": "near_duplicate_pairs"
+    },
+    "v004c_predeclared_derived_factor_audit_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_predeclared_derived_factor_audit_v001.csv",
+      "rows": 9,
+      "bytes": 926,
+      "sha256": "5753818af2810fba8a1214036f7825f7d312f4a03ed477101776b818d3317161",
+      "role": "derived_audit"
+    },
+    "v004c_predeclared_derived_factor_spec_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_predeclared_derived_factor_spec_v001.csv",
+      "rows": 6,
+      "bytes": 1388,
+      "sha256": "d495112272ef15427894aec630b09c805ca6fecccd2d75f3bc416f958e678896",
+      "role": "derived_spec"
+    },
+    "v004c_raw_feature_audit_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_raw_feature_audit_v001.csv",
+      "rows": 79,
+      "bytes": 16949,
+      "sha256": "6e49256b431442e10d3846e8f775ebd23a9b220a34f0b577bdc924e01db8644f",
+      "role": "raw_feature_audit"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+﻿feature_name,row_count,non_null_count,missing_count,finite_count,domain_violation_count,unique_count,min_value,max_value,source_columns_exist,source_columns_allowed,formula_validation_status,formula
+board_streak_is_3,333,333,0,333,0,2,0.0,1.0,True,True,OK,
+ma5_overheat_10,333,333,0,333,0,2,0.0,1.0,True,True,OK,
+overrepair,333,333,0,333,0,72,0.0,0.0780391322841343,True,True,OK,
+break_volume_abnormality,333,333,0,333,0,333,0.001393621415825322,3.4947310447090336,True,True,OK,
+profit_chip_ratio,333,333,0,333,0,283,0.0,0.9821376216580825,True,True,OK,
+profit_pressure,333,333,0,333,0,283,0.0,0.29759486845410066,True,True,OK,
+d1_true_reclaim_ma5,333,333,0,333,0,2,,,True,True,RECOMPUTE_MATCH,1[d1_low <= d1_ma5 and d1_close >= d1_ma5]
+d1_close_above_ma5,333,333,0,333,0,2,,,True,True,RECOMPUTE_MATCH,1[d1_close >= d1_ma5]
+d1_close_above_ma10,333,333,0,333,0,2,,,True,True,RECOMPUTE_MATCH,1[d1_close >= d1_ma10]

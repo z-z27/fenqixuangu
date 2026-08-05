@@ -1,0 +1,7 @@
+?? data/
+?? reports/diagnostics/code_commit.txt
+?? reports/diagnostics/stage1_sha_before_commit.json
+?? reports/research/v004c_daily_refresh_20260803_224456/backup/
+?? reports/research/v004c_factor_dictionary_v001_20260601_20260729/
+?? reports/research/v004c_stage2_1_engineering_decision_20260805.md
+?? v004c_stage2_1_factor_dictionary_codex_prompts_20260805.md

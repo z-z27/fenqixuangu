@@ -1,0 +1,7 @@
+﻿feature_name,formula,source_columns,output_type,available_as_of,domain_rule,missing_policy,preprocess_policy,admission_status,target_blind
+board_streak_is_3,1[board_streak_before_break == 3],board_streak_before_break,binary,D1_CLOSE,"values in {0, 1}",source_missing_is_hard_failure,RAW_BINARY,PREDECLARED_DERIVED,True
+ma5_overheat_10,1[d1_close_to_ma5_raw >= 0.10],d1_close_to_ma5_raw,binary,D1_CLOSE,"values in {0, 1}",source_missing_is_hard_failure,RAW_BINARY,PREDECLARED_DERIVED,True
+overrepair,"max(d1_open_to_close_return_raw - 0.03, 0)",d1_open_to_close_return_raw,continuous,D1_CLOSE,>= 0,derived is null iff source null,FOLD_CLIP_Z,PREDECLARED_DERIVED,True
+break_volume_abnormality,"abs(log(max(break_volume_ratio_vs_board_days, 1e-6)))",break_volume_ratio_vs_board_days,continuous,D1_CLOSE,>= 0,derived is null iff source null,FOLD_CLIP_Z,PREDECLARED_DERIVED,True
+profit_chip_ratio,1 - volume_above_d1_close_ratio,volume_above_d1_close_ratio,continuous,D1_CLOSE,"[0, 1]",derived is null iff source null,FOLD_CLIP_Z,PREDECLARED_DERIVED,True
+profit_pressure,profit_chip_ratio * d1_low_to_close_recovery * log1p(break_volume_ratio_vs_board_days),profit_chip_ratio|d1_low_to_close_recovery|break_volume_ratio_vs_board_days,continuous,D1_CLOSE,finite; no sign constraint (components may be negative),derived is null iff any source null,FOLD_CLIP_Z,PREDECLARED_DERIVED,True

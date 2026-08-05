@@ -1,0 +1,14 @@
+﻿group_id,canonical_source_column,alias_source_column,rows_compared,equal_including_missing,canonical_reason,alias_status
+ED01,d1_open,break_open,333,True,语义规范名 (v0.2.2 定义),EXCLUDE_EXACT_DUPLICATE_ALIAS
+ED02,d1_high,break_high,333,True,语义规范名 (v0.2.2 定义),EXCLUDE_EXACT_DUPLICATE_ALIAS
+ED03,d1_low,break_low,333,True,语义规范名 (v0.2.2 定义),EXCLUDE_EXACT_DUPLICATE_ALIAS
+ED04,d1_close,break_close,333,True,语义规范名 (v0.2.2 定义),EXCLUDE_EXACT_DUPLICATE_ALIAS
+ED05,d1_intraday_range,break_intraday_range,333,True,语义规范名 (v0.2.2 定义),EXCLUDE_EXACT_DUPLICATE_ALIAS
+ED06,d1_high_to_close_drawdown_raw,break_high_to_close_drawdown,333,True,语义规范名 (v0.2.2 定义),EXCLUDE_EXACT_DUPLICATE_ALIAS
+ED07,d1_close_location,break_close_location,333,True,语义规范名 (v0.2.2 定义),EXCLUDE_EXACT_DUPLICATE_ALIAS
+ED08,d1_volume,break_volume,333,True,语义规范名 (v0.2.2 定义),EXCLUDE_EXACT_DUPLICATE_ALIAS
+ED09,d1_amount,break_amount,333,True,语义规范名 (v0.2.2 定义),EXCLUDE_EXACT_DUPLICATE_ALIAS
+ED10,d1_close_above_ma5,deprecated_d1_reclaimed_ma5_v01,333,True,deprecated 字段保持 canonical 且整体 EXCLUDE_DEPRECATED,EXCLUDE_DEPRECATED
+ED11,d1_close_above_ma10,deprecated_d1_reclaimed_ma10_v01,333,True,deprecated 字段保持 canonical 且整体 EXCLUDE_DEPRECATED,EXCLUDE_DEPRECATED
+ED12,down_bar_volume_ratio,d1_down_bar_volume_ratio,333,True,语义规范名 (v0.2.2 定义),EXCLUDE_EXACT_DUPLICATE_ALIAS
+ED13,volume_above_d1_close_ratio,volume_above_break_close_ratio,333,True,语义规范名 (v0.2.2 定义),EXCLUDE_EXACT_DUPLICATE_ALIAS
