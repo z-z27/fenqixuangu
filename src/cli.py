@@ -88,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
             return run_daily(args)
         if args.command == "build-v004c-d1-dataset":
             return build_v004c_d1_dataset_command(args)
+        if args.command == "build-v004c-factor-dictionary":
+            return build_v004c_factor_dictionary_command(args)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -272,6 +274,19 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="本地未复权日线缓存目录 (data/cache/daily); 交易日邻接验证为冻结硬条件",
     )
+
+    p = sub.add_parser(
+        "build-v004c-factor-dictionary",
+        help="v004c 阶段2.1: 因子字典、精确去重、近重复审计与显式准入 "
+             "(TARGET-BLIND, 不训练模型)",
+    )
+    p.add_argument("--stage1-dir", required=True, help="阶段1冻结目录 (v004c_d1_dataset_v001_...)")
+    p.add_argument(
+        "--source-ref",
+        default="v004c-d1-dataset-0.1",
+        help="来源 tag (必须为 v004c-d1-dataset-0.1, 指向阶段1数据提交)",
+    )
+    p.add_argument("--output-dir", required=True, help="输出目录")
     return parser
 
 
@@ -470,6 +485,47 @@ def build_v004c_d1_dataset_command(args) -> int:
     print(f"trade-date adjacency verified/mismatch/not_verified: "
           f"{adj.get('verified_rows')}/{adj.get('mismatch_rows')}/{adj.get('not_verified_rows')}")
     print(f"frozen: {result['manifest'].get('frozen')}")
+    print(f"output dir: {args.output_dir}")
+    return 0
+
+
+def build_v004c_factor_dictionary_command(args) -> int:
+    """v004c 阶段2.1: 因子字典、去重与准入 (TARGET-BLIND, 只读, 不训练模型)。"""
+    from pathlib import Path as _Path
+
+    from .v004c_d1_dataset import DatasetValidationError, collect_git_provenance
+    from .v004c_factor_dictionary import run_v004c_factor_dictionary_build
+
+    try:
+        git_before = collect_git_provenance(_Path.cwd())
+    except DatasetValidationError as exc:
+        print(f"ERROR: Git provenance 采集失败, 阻止冻结: {exc}", file=sys.stderr)
+        return 1
+    try:
+        result = run_v004c_factor_dictionary_build(
+            stage1_dir=args.stage1_dir,
+            source_ref=args.source_ref,
+            output_dir=args.output_dir,
+            git_provenance_before=git_before,
+            git_provenance_after=None,  # 输出文件写完后由模块自动采集
+        )
+    except DatasetValidationError as exc:
+        print(f"ERROR: v004c 阶段2.1 因子字典冻结被阻止: {exc}", file=sys.stderr)
+        return 1
+    manifest = result["manifest"]
+    gate = manifest["gate_stats"]
+    admission = manifest["admission_summary"]
+    print("v004c factor dictionary build completed (research only, not a model)")
+    print(f"dictionary rows: {manifest['dictionary_rows']} "
+          f"(lineage {gate['lineage_rows']}, allowed raw {gate['allowed_raw']})")
+    print(f"signal dates: {gate['signal_dates']} / input rows: {gate['input_rows']}")
+    print(f"exact duplicate groups: {gate['exact_duplicate_groups']}")
+    print(f"PRIMARY_RAW: {admission['primary_raw_count']} / "
+          f"SENSITIVITY_RAW: {admission['sensitivity_raw_count']} / "
+          f"DERIVE_ONLY: {admission['derive_only_count']}")
+    print(f"target-blind: {gate['target_blind_all_true']} / "
+          f"hard failures: {gate['hard_failure_count']}")
+    print(f"frozen: {manifest.get('frozen')}")
     print(f"output dir: {args.output_dir}")
     return 0
 
