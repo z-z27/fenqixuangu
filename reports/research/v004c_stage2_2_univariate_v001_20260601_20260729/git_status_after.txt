@@ -1,0 +1,7 @@
+?? data/
+?? reports/diagnostics/stage22_1_input_sha_before.json
+?? reports/diagnostics/stage22_2_finalize_input_sha_before.json
+?? reports/research/v004c_daily_refresh_20260803_224456/backup/
+?? reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/
+?? v004c_stage2_1_factor_dictionary_codex_prompts_20260805.md
+?? v004c_stage2_2_1_review_20260806/

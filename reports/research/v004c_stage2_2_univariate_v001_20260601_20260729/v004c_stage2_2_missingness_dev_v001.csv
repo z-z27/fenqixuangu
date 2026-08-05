@@ -1,0 +1,9 @@
+﻿feature_name,missing_count,present_count,missing_positive_count,present_positive_count,missing_target_rate,present_target_rate,missing_minus_present_rate
+board_day_amount_rank,31,142,8,51,0.258065,0.359155,-0.10109
+board_day_turnover_rank,31,142,8,51,0.258065,0.359155,-0.10109
+board_day_volume_rank,6,167,3,56,0.5,0.335329,0.164671
+break_upper_shadow_ratio,1,172,0,59,0.0,0.343023,-0.343023
+break_lower_shadow_ratio,1,172,0,59,0.0,0.343023,-0.343023
+break_amount_ratio_vs_board_days,2,171,0,59,0.0,0.345029,-0.345029
+d1_close_location,1,172,0,59,0.0,0.343023,-0.343023
+pool_consecutive_count_last_board,6,167,3,56,0.5,0.335329,0.164671

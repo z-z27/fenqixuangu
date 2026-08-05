@@ -1,0 +1,11 @@
+﻿feature_name,level_value,level_count,level_positive_count,level_target_rate
+d1_close_to_ma5_bucket,above_plus_10pct,78,23,0.2948717948717949
+d1_close_to_ma5_bucket,near_ma5,12,5,0.4166666666666667
+d1_close_to_ma5_bucket,plus_2_to_plus_5pct,19,6,0.3157894736842105
+d1_close_to_ma5_bucket,plus_5_to_plus_10pct,64,25,0.390625
+d1_open_to_close_bucket,above_plus_5pct,23,7,0.30434782608695654
+d1_open_to_close_bucket,below_minus_5pct,41,15,0.36585365853658536
+d1_open_to_close_bucket,minus_2_to_0pct,20,12,0.6
+d1_open_to_close_bucket,minus_5_to_minus_2pct,38,14,0.3684210526315789
+d1_open_to_close_bucket,plus_2_to_plus_5pct,27,6,0.2222222222222222
+d1_open_to_close_bucket,zero_to_plus_2pct,24,5,0.20833333333333334

@@ -1,0 +1,11 @@
+﻿mechanism_group,factor_count,primary_count,sensitivity_count,derived_count,low_coverage_count,high_dominance_count,bootstrap_uncertain_count,date_unstable_count,clip_flip_count,board_disagreement_count,distribution_shift_count
+BOARD_HISTORY,5,5,0,0,0,0,5,0,0,4,0
+D0_CROSS_SECTION,3,0,3,0,0,0,3,0,0,2,0
+D1_CHIP_DISTRIBUTION,4,2,2,0,0,0,4,0,0,0,0
+D1_LATE_DAY_PRESSURE,2,1,1,0,0,0,2,0,0,0,0
+D1_MA_POSITION,15,9,6,0,0,5,11,3,0,7,4
+D1_PRICE_ACTION,15,10,5,0,0,1,14,0,0,4,0
+D1_VOLUME_ACTIVITY,4,3,1,0,0,0,4,0,0,0,0
+D1_VWAP_POSITION,2,1,1,0,0,0,2,0,0,0,0
+POOL_MEMBERSHIP,3,1,2,0,0,2,2,1,0,0,0
+PREDECLARED_DERIVED,6,6,0,6,0,0,6,1,0,1,0

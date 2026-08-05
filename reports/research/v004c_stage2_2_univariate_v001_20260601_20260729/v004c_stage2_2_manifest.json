@@ -1,0 +1,437 @@
+{
+  "stage2_2_version": "v004c-stage2-2-univariate-0.1",
+  "source_stage1_version": "v004c-d1-dataset-0.1",
+  "source_stage2_1_version": "v004c-factor-dictionary-0.1",
+  "source_stage2_1_ref": "v004c-factor-dictionary-0.1",
+  "source_stage2_1_commit": "11f455dc9a6643a67250321cce68868be904cf06",
+  "source_stage2_1_code_commit": "aa62b315dd1f792dd7657b190e41c1e992f93112",
+  "source_stage1_commit": "a65661f4738b849a06efb4859d4100842871e971",
+  "source_stage1_generator_commit": "7f4db91e06513a08de382831d401c5cc4d5ea3c4",
+  "development_date_range": [
+    "2026-06-01",
+    "2026-06-30"
+  ],
+  "development_rows": 173,
+  "development_target_positive": 59,
+  "locked_date_range": [
+    "2026-07-01",
+    "2026-07-29"
+  ],
+  "locked_rows": 160,
+  "locked_target_access": false,
+  "primary_raw_count": 32,
+  "predeclared_derived_count": 6,
+  "primary_analysis_count": 38,
+  "sensitivity_count": 21,
+  "total_analyzed_features": 59,
+  "analysis_type_counts": {
+    "CONTINUOUS": 36,
+    "ORDINAL": 8,
+    "RANK": 3,
+    "BINARY": 10,
+    "BUCKET": 2
+  },
+  "bootstrap_replicates": 1000,
+  "bootstrap_seed": 20260805,
+  "bootstrap_min_valid": 800,
+  "bootstrap_settings": {
+    "bootstrap_unit": "signal_date_cluster",
+    "clusters_per_replicate": 21,
+    "sampling_with_replacement": true,
+    "replicate_count": 1000,
+    "seed": 20260805,
+    "shared_draw_matrix_across_features": true
+  },
+  "board_subgroup_support_rule": "feature complete-case non_null>=20 and positive>=5 and negative>=5",
+  "board_support_uses_feature_complete_case": true,
+  "board_near_zero_threshold": 0.01,
+  "bucket_effect_directional": false,
+  "bucket_zero_reference_applicable": false,
+  "flag_thresholds": {
+    "low_coverage_dev_ratio": 0.8,
+    "high_dominance_rate": 0.95,
+    "low_binary_support_minority": 10,
+    "date_sign_unstable_consistency": 0.7,
+    "single_date_influential_min_delta": 0.05,
+    "distribution_shift_smd": 0.5,
+    "distribution_shift_ks": 0.25,
+    "distribution_shift_tvd": 0.2,
+    "missingness_rate_difference": 0.05
+  },
+  "model_training_performed": false,
+  "feature_selection_performed": false,
+  "holdout_label_analysis_performed": false,
+  "input_files": {
+    "v004c_d1_snapshot_v001.csv": {
+      "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_snapshot_v001.csv",
+      "bytes": 685818,
+      "sha256": "7f37fd58bfa0efa1a8eb12cecb4e1d155f978017624a4e3babbf457d89a643f8",
+      "source_manifest": "stage1"
+    },
+    "v004c_training_d1_v001.csv": {
+      "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_training_d1_v001.csv",
+      "bytes": 539614,
+      "sha256": "cd0108bb80ed4f3bfa1a2573fe89094562ee43578decd28ed1529a849ca1f214",
+      "source_manifest": "stage1"
+    },
+    "v004c_d1_column_lineage.csv": {
+      "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_column_lineage.csv",
+      "bytes": 32211,
+      "sha256": "914f0a34a34a2d9e9f5b8a0420e89666c8b8d3a3ba8d28e46a8dd54c1791ba6c",
+      "source_manifest": "stage1"
+    },
+    "v004c_factor_dictionary_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_factor_dictionary_v001.csv",
+      "bytes": 65376,
+      "sha256": "736ea8f2ddd5b9910e17574bf65a558511db7447b598659567d37b11b38b2c7f",
+      "source_manifest": "stage2_1"
+    },
+    "v004c_feature_allowlist_primary_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_feature_allowlist_primary_v001.csv",
+      "bytes": 3830,
+      "sha256": "03e8416bc8428dc2f1fd2c054e66e5a744e270fb27a19bbd9aa79f030241e9c9",
+      "source_manifest": "stage2_1"
+    },
+    "v004c_feature_allowlist_sensitivity_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_feature_allowlist_sensitivity_v001.csv",
+      "bytes": 2281,
+      "sha256": "10e41546c409e40fef66471b300a3b69dec09877f321e59c0fd7d9224804ad1b",
+      "source_manifest": "stage2_1"
+    },
+    "v004c_predeclared_derived_factor_spec_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_predeclared_derived_factor_spec_v001.csv",
+      "bytes": 1388,
+      "sha256": "d495112272ef15427894aec630b09c805ca6fecccd2d75f3bc416f958e678896",
+      "source_manifest": "stage2_1"
+    },
+    "v004c_predeclared_derived_factor_audit_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_predeclared_derived_factor_audit_v001.csv",
+      "bytes": 926,
+      "sha256": "5753818af2810fba8a1214036f7825f7d312f4a03ed477101776b818d3317161",
+      "source_manifest": "stage2_1"
+    },
+    "v004c_near_duplicate_pairs_v001.csv": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_near_duplicate_pairs_v001.csv",
+      "bytes": 1591,
+      "sha256": "101587dc3fe9d21b69fed45721b44e991cda27aba8fb706b1ff5be6cc91bdf6a",
+      "source_manifest": "stage2_1"
+    },
+    "v004c_factor_dictionary_manifest.json": {
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_factor_dictionary_manifest.json",
+      "bytes": 14757,
+      "sha256": "d2d453e341b88d0fb455b372054c8a6f73c1077138b8f31a372dcb5faa1ab068",
+      "source_manifest": "stage2_1"
+    },
+    "v004c_d1_data_manifest.json": {
+      "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_data_manifest.json",
+      "bytes": 132610,
+      "sha256": "ae2a2b48b0b97390e08e81c42cadaa84d5ff76b95e847a80a66e480936ccd618",
+      "source_manifest": "stage1"
+    }
+  },
+  "input_verification": {
+    "input_rows": 333,
+    "columns": 197,
+    "signal_dates": 42,
+    "lineage_rows": 197,
+    "dev_rows": 173,
+    "dev_target_positive": 59,
+    "locked_rows": 160,
+    "primary_allowlist": 38,
+    "primary_source": 32,
+    "predeclared_derived": 6,
+    "sensitivity": 21,
+    "total_features": 59,
+    "input_sha_all_verified": true,
+    "stage1_manifest_audit_reference_verified": true
+  },
+  "derived_factors": {
+    "spec_count": 6,
+    "recompute_matches_stage2_1_audit": true,
+    "existing_recompute": {
+      "d1_true_reclaim_ma5": {
+        "formula": "1[d1_low <= d1_ma5 and d1_close >= d1_ma5]",
+        "mismatch_count": 0,
+        "status": "RECOMPUTE_MATCH"
+      },
+      "d1_close_above_ma5": {
+        "formula": "1[d1_close >= d1_ma5]",
+        "mismatch_count": 0,
+        "status": "RECOMPUTE_MATCH"
+      },
+      "d1_close_above_ma10": {
+        "formula": "1[d1_close >= d1_ma10]",
+        "mismatch_count": 0,
+        "status": "RECOMPUTE_MATCH"
+      }
+    }
+  },
+  "timezone": "Asia/Shanghai",
+  "research_only": true,
+  "deployment_status": "research_only",
+  "git_root": "F:\\fenqixuangu",
+  "git_branch": "research-sample-analysis",
+  "git_head": "ee0306fc4a5f3dadd3f0a780721754a014c58c58",
+  "git_status_before": "?? data/\n?? reports/diagnostics/stage22_1_input_sha_before.json\n?? reports/diagnostics/stage22_2_finalize_input_sha_before.json\n?? reports/research/v004c_daily_refresh_20260803_224456/backup/\n?? v004c_stage2_1_factor_dictionary_codex_prompts_20260805.md\n?? v004c_stage2_2_1_review_20260806/\n",
+  "git_dirty_before": true,
+  "frozen": false,
+  "audit_complete": true,
+  "supported_environment": {
+    "os": "Windows 11",
+    "python": "3.13.2",
+    "core_autocrlf": "true",
+    "git_version": "git version 2.49.0.windows.1"
+  },
+  "flag_counts": {
+    "BOARD_DIRECTION_DISAGREEMENT": 18,
+    "BOARD_SUPPORT_INSUFFICIENT": 0,
+    "BOOTSTRAP_CI_CROSSES_ZERO": 53,
+    "BOOTSTRAP_LOW_VALID_REPLICATES": 4,
+    "CLIP_DIRECTION_FLIP": 0,
+    "DATE_SIGN_UNSTABLE": 5,
+    "DISTRIBUTION_SHIFT": 4,
+    "HIGH_DOMINANCE": 8,
+    "LOW_BINARY_SUPPORT": 7,
+    "LOW_COVERAGE": 0,
+    "MISSINGNESS_RATE_DIFFERENCE": 2,
+    "MUTUAL_EXCLUSION_ALTERNATIVE": 7,
+    "QUANTILE_COLLAPSE": 10,
+    "SENSITIVITY_ONLY": 21,
+    "SINGLE_DATE_INFLUENTIAL": 4
+  },
+  "mechanism_group_counts": {
+    "BOARD_HISTORY": 5,
+    "D0_CROSS_SECTION": 3,
+    "D1_CHIP_DISTRIBUTION": 4,
+    "D1_LATE_DAY_PRESSURE": 2,
+    "D1_MA_POSITION": 15,
+    "D1_PRICE_ACTION": 15,
+    "D1_VOLUME_ACTIVITY": 4,
+    "D1_VWAP_POSITION": 2,
+    "POOL_MEMBERSHIP": 3,
+    "PREDECLARED_DERIVED": 6
+  },
+  "bootstrap_stats": {
+    "bootstrap_valid_min": 624,
+    "bootstrap_valid_mean": 974.34,
+    "bootstrap_valid_below_800_count": 4,
+    "bootstrap_valid_full_1000_count": 52
+  },
+  "lodo_stats": {
+    "date_count": 21,
+    "valid_features": 55
+  },
+  "board_subgroup_summary": {
+    "board_support_uses_feature_complete_case": true,
+    "board_near_zero_threshold": 0.01,
+    "verified_board_2": 59,
+    "verified_board_3": 59,
+    "near_zero_disagreement_count": 3,
+    "board_direction_evaluable_count": 42,
+    "board_direction_agreement_count": 24,
+    "board_direction_disagreement_count": 18,
+    "board_direction_not_evaluable_count": 17
+  },
+  "bootstrap_invalid_reason_totals": {
+    "invalid_single_target_class": 0,
+    "invalid_single_feature_level": 1514,
+    "invalid_insufficient_non_null": 0,
+    "invalid_metric_undefined": 0
+  },
+  "distribution_shift_summary": {
+    "shift_count": 4
+  },
+  "missingness_summary": {
+    "june_missing_feature_count": 8
+  },
+  "holdout_lock_audit": {
+    "all_pass": true,
+    "check_count": 20,
+    "pass_count": 20,
+    "checks": [
+      {
+        "check_name": "锁定切片行数160",
+        "status": "PASS"
+      },
+      {
+        "check_name": "锁定结果列已屏蔽",
+        "status": "PASS"
+      },
+      {
+        "check_name": "七月标签未传入关联函数",
+        "status": "PASS"
+      },
+      {
+        "check_name": "七月标签打乱输出不变",
+        "status": "PASS"
+      },
+      {
+        "check_name": "七月标签全0输出不变",
+        "status": "PASS"
+      },
+      {
+        "check_name": "七月标签全1输出不变",
+        "status": "PASS"
+      },
+      {
+        "check_name": "七月尾亏修改输出不变",
+        "status": "PASS"
+      },
+      {
+        "check_name": "六月标签修改改变关联输出",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "review无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "manifest无七月标签指标",
+        "status": "PASS"
+      }
+    ]
+  },
+  "generated_at": "2026-08-06T02:41:59+0800",
+  "git_status_after": "?? data/\n?? reports/diagnostics/stage22_1_input_sha_before.json\n?? reports/diagnostics/stage22_2_finalize_input_sha_before.json\n?? reports/research/v004c_daily_refresh_20260803_224456/backup/\n?? reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/\n?? v004c_stage2_1_factor_dictionary_codex_prompts_20260805.md\n?? v004c_stage2_2_1_review_20260806/\n",
+  "git_dirty_after": true,
+  "output_files": {
+    "git_head.txt": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/git_head.txt",
+      "rows": null,
+      "bytes": 40,
+      "sha256": "a1465b191f9670a82462c53b863b3f9a283135214be8c4b4e3aa755a37eb561c",
+      "role": "provenance"
+    },
+    "git_status_after.txt": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/git_status_after.txt",
+      "rows": null,
+      "bytes": 368,
+      "sha256": "e3e66aaf31cd31e26c479ee95cff58792fa123de906ecbefcb9e33fba28fb30b",
+      "role": "provenance"
+    },
+    "git_status_before.txt": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/git_status_before.txt",
+      "rows": null,
+      "bytes": 297,
+      "sha256": "1f4b5e0ceb98a5333486e019856aa4cd15eceed982b747ac4a85c7053944d13e",
+      "role": "provenance"
+    },
+    "v004c_stage2_2_board_subgroup_dev_v001.csv": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_board_subgroup_dev_v001.csv",
+      "rows": 118,
+      "bytes": 18916,
+      "sha256": "0b3781945563474301aab24f80b54177b1e79abe4c7e6ceb91c48321425e0d07",
+      "role": "board_subgroup"
+    },
+    "v004c_stage2_2_cluster_bootstrap_dev_v001.csv": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_cluster_bootstrap_dev_v001.csv",
+      "rows": 59,
+      "bytes": 11250,
+      "sha256": "70d773a97669ffa7fed613d0f7e2611bac13b96ef9dd967df06636b64caf495e",
+      "role": "cluster_bootstrap"
+    },
+    "v004c_stage2_2_distribution_shift_unlabeled_v001.csv": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_distribution_shift_unlabeled_v001.csv",
+      "rows": 59,
+      "bytes": 9766,
+      "sha256": "bb11ac260fdc5a96d206e490c9724f98736a367fd562922f2789ed7d9cbbaf61",
+      "role": "distribution_shift"
+    },
+    "v004c_stage2_2_feature_structure_v001.csv": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_feature_structure_v001.csv",
+      "rows": 59,
+      "bytes": 16865,
+      "sha256": "39732f261e22548f5a2abda703b307d8ef3d2d8ba694b59f123a1a0962bbe46e",
+      "role": "feature_structure"
+    },
+    "v004c_stage2_2_holdout_lock_audit_v001.csv": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_holdout_lock_audit_v001.csv",
+      "rows": 20,
+      "bytes": 2173,
+      "sha256": "1bc0ffd4a40b8ebb4e9886553a12257adb2f36449d9709f1cb99220e563d8bb5",
+      "role": "holdout_lock_audit"
+    },
+    "v004c_stage2_2_level_bin_tables_dev_v001.csv": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_level_bin_tables_dev_v001.csv",
+      "rows": 10,
+      "bytes": 725,
+      "sha256": "7516a01cdac4ba36c187ba929ba8ea281c1f7cef6073299227c89582401cd6be",
+      "role": "level_bin_tables"
+    },
+    "v004c_stage2_2_lodo_date_stability_v001.csv": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_lodo_date_stability_v001.csv",
+      "rows": 1239,
+      "bytes": 163344,
+      "sha256": "d89ef7a8eef3fdbf00ebb1f59f089c9eb4859bccae3f797e6e02cc13a8c73556",
+      "role": "lodo_date_stability"
+    },
+    "v004c_stage2_2_mechanism_summary_v001.csv": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_mechanism_summary_v001.csv",
+      "rows": 10,
+      "bytes": 642,
+      "sha256": "0595822b9621f092893e940a5756273da84557e2bc8f3ef53de131c5ae1aeb07",
+      "role": "mechanism_summary"
+    },
+    "v004c_stage2_2_missingness_dev_v001.csv": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_missingness_dev_v001.csv",
+      "rows": 8,
+      "bytes": 649,
+      "sha256": "c47c4196505047f2d16ef19154f694437d493821a65bfb347579d6a10f9c76f9",
+      "role": "missingness"
+    },
+    "v004c_stage2_2_review.md": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_review.md",
+      "rows": null,
+      "bytes": 4926,
+      "sha256": "75a38d8e19e5d38078a3cd071fdbf843d5a140f959abb74db216970ee3afcb3f",
+      "role": "review"
+    },
+    "v004c_stage2_2_univariate_summary_dev_v001.csv": {
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_univariate_summary_dev_v001.csv",
+      "rows": 59,
+      "bytes": 40842,
+      "sha256": "38707d7933c3f772ce3c8beed153069e869a0a9196e3338c1c9e76add3bc50f5",
+      "role": "univariate_summary"
+    }
+  }
+}
