@@ -90,6 +90,8 @@ def main(argv: list[str] | None = None) -> int:
             return build_v004c_d1_dataset_command(args)
         if args.command == "build-v004c-factor-dictionary":
             return build_v004c_factor_dictionary_command(args)
+        if args.command == "analyze-v004c-stage2-2":
+            return analyze_v004c_stage2_2_command(args)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -285,6 +287,21 @@ def build_parser() -> argparse.ArgumentParser:
         "--source-ref",
         default="v004c-d1-dataset-0.1",
         help="来源 tag (必须为 v004c-d1-dataset-0.1, 指向阶段1数据提交)",
+    )
+    p.add_argument("--output-dir", required=True, help="输出目录")
+
+    p = sub.add_parser(
+        "analyze-v004c-stage2-2",
+        help="v004c 阶段2.2: 单因子结构、六月开发集方向与日期稳定性审计 "
+             "(七月标签锁定, 不训练模型)",
+    )
+    p.add_argument("--stage1-dir", required=True, help="阶段1冻结目录 (v004c_d1_dataset_v001_...)")
+    p.add_argument("--stage2-1-dir", required=True,
+                   help="阶段2.1冻结目录 (v004c_factor_dictionary_v001_...)")
+    p.add_argument(
+        "--stage2-1-ref",
+        default="v004c-factor-dictionary-0.1",
+        help="阶段2.1来源 tag (必须为 v004c-factor-dictionary-0.1)",
     )
     p.add_argument("--output-dir", required=True, help="输出目录")
     return parser
@@ -526,6 +543,54 @@ def build_v004c_factor_dictionary_command(args) -> int:
     print(f"target-blind: {gate['target_blind_all_true']} / "
           f"hard failures: {gate['hard_failure_count']}")
     print(f"frozen: {manifest.get('frozen')}")
+    print(f"output dir: {args.output_dir}")
+    return 0
+
+
+def analyze_v004c_stage2_2_command(args) -> int:
+    """v004c 阶段2.2: 单因子结构与六月开发集稳定性审计 (七月标签锁定)。"""
+    from pathlib import Path as _Path
+
+    from .v004c_d1_dataset import DatasetValidationError, collect_git_provenance
+    from .v004c_univariate_stability import run_v004c_stage2_2_analysis
+
+    try:
+        git_before = collect_git_provenance(_Path.cwd())
+    except DatasetValidationError as exc:
+        print(f"ERROR: Git provenance 采集失败, 阻止冻结: {exc}", file=sys.stderr)
+        return 1
+    try:
+        result = run_v004c_stage2_2_analysis(
+            stage1_dir=args.stage1_dir,
+            stage2_1_dir=args.stage2_1_dir,
+            stage2_1_ref=args.stage2_1_ref,
+            output_dir=args.output_dir,
+            git_provenance_before=git_before,
+            git_provenance_after=None,
+        )
+    except DatasetValidationError as exc:
+        print(f"ERROR: v004c 阶段2.2 分析被阻止: {exc}", file=sys.stderr)
+        return 1
+    manifest = result["manifest"]
+    iv = manifest["input_verification"]
+    audit = manifest.get("holdout_lock_audit", {})
+    print("v004c stage2.2 univariate stability analysis completed "
+          "(research only, not a model)")
+    print(f"features: {manifest['total_analyzed_features']} "
+          f"(primary {manifest['primary_analysis_count']} / "
+          f"sensitivity {manifest['sensitivity_count']})")
+    print(f"dev {iv['dev_rows']} rows / {iv['dev_target_positive']} positives "
+          f"({manifest['development_date_range'][0]}.."
+          f"{manifest['development_date_range'][1]})")
+    print(f"locked {iv['locked_rows']} rows, locked_target_access="
+          f"{manifest['locked_target_access']}")
+    print(f"bootstrap: {manifest['bootstrap_replicates']} reps seed "
+          f"{manifest['bootstrap_seed']}, low-valid "
+          f"{manifest['bootstrap_stats']['bootstrap_valid_below_800_count']}")
+    print(f"holdout lock audit: {audit.get('pass_count')}/"
+          f"{audit.get('check_count')} PASS "
+          f"(all_pass={audit.get('all_pass')})")
+    print(f"audit complete: {manifest.get('audit_complete')}")
     print(f"output dir: {args.output_dir}")
     return 0
 
