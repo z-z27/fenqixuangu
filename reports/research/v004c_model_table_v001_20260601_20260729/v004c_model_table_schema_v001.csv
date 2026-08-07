@@ -1,0 +1,98 @@
+﻿column_name,role,source,available_as_of,mechanism,preprocess_policy,model_universe,formula_or_definition,forbidden_reason
+event_id,IDENTIFIER,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,-,NO_MODEL_INPUT,NONE,code + '_' + break_date (冻结 v0.2.2 来源),-
+code,IDENTIFIER,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,-,NO_MODEL_INPUT,NONE,6 位股票代码,-
+signal_date,IDENTIFIER,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,-,NO_MODEL_INPUT,NONE,D1 信号日 (正式切分主键; walk-forward 统一按此切分),-
+board_streak_before_break,IDENTIFIER,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,-,NO_MODEL_INPUT,NONE,"断板前连板数 {2,3}; board_streak_is_3 由它派生",-
+break_open_return,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D0_TO_D1_TRANSITION,FOLD_CLIP_Z,PRIMARY,break_open / break_prev_close - 1 (prev_close=末板日收盘=D0 close),-
+break_high_return,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D0_TO_D1_TRANSITION,FOLD_CLIP_Z,PRIMARY,break_high / break_prev_close - 1,-
+break_close_return,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D0_TO_D1_TRANSITION,FOLD_CLIP_Z,PRIMARY,break_close / break_prev_close - 1,-
+break_touched_limit_up,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D0_TO_D1_TRANSITION,RAW_BINARY,PRIMARY,break_high >= 涨停价 - 0.011 (涨停价=前收×1.10 四舍五入到分),-
+volume_above_d1_close_ratio,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_CHIP_DISTRIBUTION,FOLD_CLIP_Z,PRIMARY,Σvolume(bar close >= d1_close) / Σvolume,-
+late_day_sell_volume_ratio,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_LATE_DAY_PRESSURE,FOLD_CLIP_Z,PRIMARY,Σvolume(time>=14:00 且 close<open) / Σvolume,-
+d1_close_to_ma5_raw,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA5_STATE,FOLD_CLIP_Z,PRIMARY,d1_close / d1_ma5 - 1,-
+d1_high_to_close_drawdown_raw,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_PRICE_ACTION,FOLD_CLIP_Z,PRIMARY,(d1_high - d1_close) / d1_high,-
+d1_low_to_close_recovery,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_PRICE_ACTION,FOLD_CLIP_Z,PRIMARY,(d1_close - d1_low) / d1_low (5min 日内低点),-
+d1_open_to_close_return_raw,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_PRICE_ACTION,FOLD_CLIP_Z,PRIMARY,d1_close / d1_open - 1 (5min 首/末 bar),-
+break_volume_ratio_vs_board_days,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_VOLUME_ACTIVITY,FOLD_CLIP_Z,PRIMARY,break_volume / mean(断板前 streak 个板日 volume),-
+d1_close_to_vwap_raw,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_VWAP_POSITION,FOLD_CLIP_Z,PRIMARY,d1_close / d1_vwap - 1,-
+break_day_in_pool,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,BOARD_OR_EVENT_STATE,RAW_BINARY,PRIMARY,D1 断板日是否出现在涨停池 (正常为 False),-
+high_zone_volume_ratio,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_CHIP_DISTRIBUTION,FOLD_CLIP_Z,PRIMARY,Σvolume(typical >= d1_low+0.7×(d1_high−d1_low)) / Σvolume,-
+d1_close_to_ma10_raw,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA10_MA20_STATE,FOLD_CLIP_Z,PRIMARY,d1_close / d1_ma10 - 1,-
+d1_close_to_ma20,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA10_MA20_STATE,FOLD_CLIP_Z,PRIMARY,d1_close / d1_ma20 - 1,-
+d1_ma10_slope,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA10_MA20_STATE,FOLD_CLIP_Z,PRIMARY,ma10(D1) / ma10(D1 前一日) - 1,-
+d1_low_to_ma5_raw,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA5_STATE,FOLD_CLIP_Z,PRIMARY,d1_low / d1_ma5 - 1,-
+d1_ma5_slope,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA5_STATE,FOLD_CLIP_Z,PRIMARY,ma5(D1) / ma5(D1 前一日) - 1,-
+d1_true_reclaim_ma5,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA5_STATE,RAW_BINARY,PRIMARY,d1_low <= d1_ma5 AND d1_close >= d1_ma5,-
+d1_afternoon_return,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_PRICE_ACTION,FOLD_CLIP_Z,PRIMARY,d1_close / 13:00 前最后一根 bar 的 close - 1,-
+d1_intraday_range,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_PRICE_ACTION,FOLD_CLIP_Z,PRIMARY,(d1_high - d1_low) / prev_close,-
+d1_last_hour_return,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_PRICE_ACTION,FOLD_CLIP_Z,PRIMARY,d1_close / 14:00 bar 的 close - 1,-
+d1_up_bar_volume_ratio,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_VOLUME_ACTIVITY,FOLD_CLIP_Z,PRIMARY,Σvolume(close>open) / Σvolume,-
+down_bar_volume_ratio,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_VOLUME_ACTIVITY,FOLD_CLIP_Z,PRIMARY,Σvolume(close<open) / Σvolume,-
+board_streak_is_3,FEATURE,"v004c_predeclared_derived_factor_spec_v001.csv 预声明派生, 由冻结源字段计算",D1_CLOSE,BOARD_OR_EVENT_STATE,RAW_BINARY,PRIMARY,1[board_streak_before_break == 3],-
+recent_7d_cumulative_return,FEATURE,data/cache/daily 日线缓存离线计算 (7 行相邻日线窗口),D1_CLOSE,RECENT_7D_PATH,"FOLD_CLIP_Z (临时约定, 训练阶段 fold 内决定)",PRIMARY,"close(D1) / close(T-6) - 1, T-6 = D1 前第 6 个交易日 (窗口 7 行)",-
+recent_7d_max_drawdown,FEATURE,data/cache/daily 日线缓存离线计算 (7 行相邻日线窗口),D1_CLOSE,RECENT_7D_PATH,"FOLD_CLIP_Z (临时约定, 训练阶段 fold 内决定)",PRIMARY,"max_{t∈[T-5..D1]} max(0, (prior_peak_t - low_t) / prior_peak_t); prior_peak_t = max(high_s), s < t (严格较早交易日, 不使用同日 high/low 顺序)",-
+recent_7d_close_position,FEATURE,data/cache/daily 日线缓存离线计算 (7 行相邻日线窗口),D1_CLOSE,RECENT_7D_PATH,"FOLD_CLIP_Z (临时约定, 训练阶段 fold 内决定)",PRIMARY,(close(D1) - 7d_low) / (7d_high - 7d_low); 7d_high==7d_low 置空,-
+board_day_amount_rank,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D0_CLOSE,D0_CROSS_SECTION,CROSS_SECTION_RANK_SENSITIVITY,SENSITIVITY,末板日该股 amount 在当日涨停池成员中的降序名次 (1=最高),-
+board_day_turnover_rank,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D0_CLOSE,D0_CROSS_SECTION,CROSS_SECTION_RANK_SENSITIVITY,SENSITIVITY,末板日该股 turnover_rate 在当日涨停池成员中的降序名次,-
+board_day_volume_rank,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D0_CLOSE,D0_CROSS_SECTION,CROSS_SECTION_RANK_SENSITIVITY,SENSITIVITY,末板日该股 volume 在当日涨停池成员中的降序名次,-
+break_upper_shadow_ratio,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_PRICE_ACTION,FOLD_CLIP_Z,SENSITIVITY,"(high - max(open, close)) / (high - low)",-
+break_lower_shadow_ratio,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_PRICE_ACTION,FOLD_CLIP_Z,SENSITIVITY,"(min(open, close) - low) / (high - low)",-
+break_amount_ratio_vs_board_days,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_VOLUME_ACTIVITY,FOLD_CLIP_Z,SENSITIVITY,break_amount / mean(板日 amount),-
+break_opened_from_limit_up,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D0_TO_D1_TRANSITION,RAW_BINARY,SENSITIVITY,break_open >= 涨停价 - 0.011,-
+consecutive_days_below_ma5,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA5_STATE,RAW_ORDINAL,SENSITIVITY,从 signal_date(含)向前数 close < ma5 的连续天数,-
+consecutive_days_below_ma10,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA10_MA20_STATE,RAW_ORDINAL,SENSITIVITY,从 signal_date(含)向前数 close < ma10 的连续天数,-
+d1_close_location,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_PRICE_ACTION,FOLD_CLIP_Z,SENSITIVITY,(d1_close - d1_low) / (d1_high - d1_low),-
+amount_above_d1_close_ratio,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_CHIP_DISTRIBUTION,FOLD_CLIP_Z,SENSITIVITY,copied unchanged from source v0.2.2 column amount_above_d1_close_ratio,-
+high_zone_amount_ratio,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_CHIP_DISTRIBUTION,FOLD_CLIP_Z,SENSITIVITY,copied unchanged from source v0.2.2 column high_zone_amount_ratio,-
+late_day_sell_amount_ratio,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_LATE_DAY_PRESSURE,FOLD_CLIP_Z,SENSITIVITY,copied unchanged from source v0.2.2 column late_day_sell_amount_ratio,-
+last_board_day_in_pool,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D0_CLOSE,BOARD_OR_EVENT_STATE,RAW_BINARY,SENSITIVITY,末板日是否在涨停池,-
+pool_consecutive_count_last_board,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D0_CLOSE,BOARD_OR_EVENT_STATE,RAW_ORDINAL,SENSITIVITY,池口径 consecutive_limit_up_count (交叉核对用),-
+d1_close_above_ma5,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA5_STATE,RAW_BINARY,SENSITIVITY,d1_close >= d1_ma5,-
+d1_close_above_ma10,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA10_MA20_STATE,RAW_BINARY,SENSITIVITY,d1_close >= d1_ma10,-
+d1_true_reclaim_ma10,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA10_MA20_STATE,RAW_BINARY,SENSITIVITY,d1_low <= d1_ma10 AND d1_close >= d1_ma10,-
+d1_close_to_ma5_bucket,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA5_STATE,BUCKET_SENSITIVITY_ONLY,SENSITIVITY,copied unchanged from source v0.2.2 column d1_close_to_ma5_bucket,-
+d1_open_to_close_bucket,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_PRICE_ACTION,BUCKET_SENSITIVITY_ONLY,SENSITIVITY,copied unchanged from source v0.2.2 column d1_open_to_close_bucket,-
+d1_high_to_ma5_raw,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA5_STATE,FOLD_CLIP_Z,SENSITIVITY,d1_high / d1_ma5 - 1,-
+d1_low_to_ma10_raw,FEATURE,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,D1_MA10_MA20_STATE,FOLD_CLIP_Z,SENSITIVITY,d1_low / d1_ma10 - 1,-
+ma5_overheat_10,FEATURE,"v004c_predeclared_derived_factor_spec_v001.csv 预声明派生, 由冻结源字段计算",D1_CLOSE,D1_MA5_STATE,RAW_BINARY,SENSITIVITY,1[d1_close_to_ma5_raw >= 0.10],-
+overrepair,FEATURE,"v004c_predeclared_derived_factor_spec_v001.csv 预声明派生, 由冻结源字段计算",D1_CLOSE,D1_PRICE_ACTION,FOLD_CLIP_Z,SENSITIVITY,"max(d1_open_to_close_return_raw - 0.03, 0)",-
+break_volume_abnormality,FEATURE,"v004c_predeclared_derived_factor_spec_v001.csv 预声明派生, 由冻结源字段计算",D1_CLOSE,D1_VOLUME_ACTIVITY,FOLD_CLIP_Z,SENSITIVITY,"abs(log(max(break_volume_ratio_vs_board_days, 1e-6)))",-
+profit_pressure,FEATURE,"v004c_predeclared_derived_factor_spec_v001.csv 预声明派生, 由冻结源字段计算",D1_CLOSE,D1_PRICE_ACTION,FOLD_CLIP_Z,SENSITIVITY,profit_chip_ratio * d1_low_to_close_recovery * log1p(break_volume_ratio_vs_board_days),-
+target7_daily_d2open_d3high,LABEL,v004c_training_d1_v001.csv (Stage 1 冻结),"D3_CLOSE (LABEL, 预测时点 D1 收盘后不可得)",LABEL,NO_MODEL_INPUT,NONE,1[D3 high / D2 open - 1 >= 0.07] (冻结定义),"LABEL 只属于 LABEL 角色, 绝不允许出现在 FEATURE_COLUMNS"
+break_date,AUDIT_ONLY,v004c_training_d1_v001.csv (Stage 1 冻结),D1_CLOSE,-,NO_MODEL_INPUT,NONE,D1 日期 (legacy identifier; 与 signal_date 逐行一致),-
+daily_label_quality_ok,AUDIT_ONLY,v004c_training_d1_v001.csv (Stage 1 冻结),"POST_D3 (AUDIT_ONLY, 预测时点不可得)",-,NO_MODEL_INPUT,NONE,日线标签质量标志 (AUDIT_ONLY),-
+target_training_eligible,AUDIT_ONLY,v004c_training_d1_v001.csv (Stage 1 冻结),"POST_D3 (AUDIT_ONLY, 预测时点不可得)",-,NO_MODEL_INPUT,NONE,训练资格标志 (AUDIT_ONLY),-
+sample_role_v022,AUDIT_ONLY,v004c_training_d1_v001.csv (Stage 1 冻结),"POST_D3 (AUDIT_ONLY, 预测时点不可得)",-,NO_MODEL_INPUT,NONE,v0.2.2 样本角色 (AUDIT_ONLY),-
+d1_factor_quality_ok,AUDIT_ONLY,v004c_training_d1_v001.csv (Stage 1 冻结),"POST_D3 (AUDIT_ONLY, 预测时点不可得)",-,NO_MODEL_INPUT,NONE,D1 因子质量标志 (AUDIT_ONLY),-
+max_board_streak_20d,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,BOARD_OR_EVENT_STATE,RAW_ORDINAL,NONE,20 日窗口内最长连续涨停天数,"EXISTING_REUSE/CONTEXT_ONLY: 20 日最大连板 (含本轮), 与 board_streak_before_break 强相关; CONTEXT_ONLY"
+recent_limit_up_count_10d,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,BOARD_OR_EVENT_STATE,RAW_ORDINAL,NONE,信号日(含)往前 10 个交易日中日线涨停天数,"EXISTING_REUSE/CONTEXT_ONLY: 属于已有事件背景信息, 可保留用于上下文和后续敏感性比较, 但不是 V001 M2 的默认主模型输入; REUSE_AS_CONTEXT"
+recent_limit_up_count_20d,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,BOARD_OR_EVENT_STATE,RAW_ORDINAL,NONE,信号日(含)往前 20 个交易日中日线涨停天数,"EXISTING_REUSE/CONTEXT_ONLY: 20 日事件统计超出核心 7 日窗口; 不得自动进入主模型, REUSE_AS_CONTEXT"
+recent_pool_appearance_count_10d,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,BOARD_OR_EVENT_STATE,RAW_ORDINAL,NONE,同一 10 日窗口内该股出现在涨停池的天数,EXISTING_REUSE/CONTEXT_ONLY: 池出现频率 10 日; 覆盖偏倚 (2026-05-06 前无池数据); CONTEXT_ONLY
+recent_pool_appearance_count_20d,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,BOARD_OR_EVENT_STATE,RAW_ORDINAL,NONE,同一 20 日窗口内该股出现在涨停池的天数,"EXISTING_REUSE/CONTEXT_ONLY: 池出现频率 20 日; 同上, CONTEXT_ONLY"
+d1_to_d0_amount_ratio,FEATURE,PROPOSED (data/cache/daily),D1_CLOSE,D0_TO_D1_TRANSITION,nan,NONE,"(提案, 未实现) d1_amount / d0_amount","NOT_NEEDED/NO_MODEL_INPUT: volume 版的金额替代表达, 按原则不与其同入模型"
+d1_to_d0_volume_ratio,FEATURE,PROPOSED (data/cache/daily),D1_CLOSE,D0_TO_D1_TRANSITION,nan,NONE,"(提案, 未实现) d1_volume / d0_volume",NOT_NEEDED/NO_MODEL_INPUT: break_volume_ratio_vs_board_days 已覆盖 D1 相对本轮连板量能; 纯 D1/D0 版更噪声
+profit_chip_ratio,FEATURE,v004c-factor-dictionary-0.1 (预声明派生),D1_CLOSE,D1_CHIP_DISTRIBUTION,FOLD_CLIP_Z,NONE,1 - volume_above_d1_close_ratio,REDUNDANT/NO_MODEL_INPUT: 1 - volume_above_d1_close_ratio: ME02 canonical 的精确互补
+volume_above_break_close_ratio,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_CHIP_DISTRIBUTION,NO_DIRECT_MODEL_INPUT,NONE,copied unchanged from source v0.2.2 column volume_above_break_close_ratio,REDUNDANT/NO_MODEL_INPUT: ED13: 与 volume_above_d1_close_ratio 精确重复 (break_close==d1_close)
+d1_ma20_slope,FEATURE,PROPOSED (data/cache/daily),D1_CLOSE,D1_MA10_MA20_STATE,nan,NONE,ma20(D1) / ma20(D1 前一日) - 1; ma20 = close 20 日滚动均值 (min_periods=20),"DEFER_NOT_REQUIRED_FOR_V001/SENSITIVITY_ONLY: MA20 slope 概念上合理, 但 MA10/MA20 技术背景已有充分表达 (close_to_ma10/low_to_ma10/close_to_ma20/ma10_slope 等); 为控制 V001 特征数量和避免增加相近趋势表达, 本阶段不把它作为必补字段, 后续可作为敏感性候选重新评估; 脚本保留确定性计算能力"
+ma5_ma10_spread,FEATURE,PROPOSED (data/cache/daily),D1_CLOSE,D1_MA10_MA20_STATE,nan,NONE,"(提案, 未实现) MA5/MA10 - 1 = (1+b)/(1+a) - 1, a = d1_close_to_ma5_raw, b = d1_close_to_ma10_raw","NOT_NEEDED/NO_MODEL_INPUT: 可由已有 MA5/MA10 距离字段精确确定: a=d1_close_to_ma5_raw, b=d1_close_to_ma10_raw, MA5/MA10 - 1 = (1+b)/(1+a) - 1; 未形成新的独立机制, 因此 V001 不新增字段"
+deprecated_d1_reclaimed_ma10_v01,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_MA10_MA20_STATE,NO_DIRECT_MODEL_INPUT,NONE,copied unchanged from source v0.2.2 column deprecated_d1_reclaimed_ma10_v01,"REDUNDANT/NO_MODEL_INPUT: ED11: 与 d1_close_above_ma10 精确重复, 命名废弃"
+deprecated_d1_reclaimed_ma5_v01,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_MA5_STATE,NO_DIRECT_MODEL_INPUT,NONE,copied unchanged from source v0.2.2 column deprecated_d1_reclaimed_ma5_v01,"REDUNDANT/NO_MODEL_INPUT: ED10: 与 d1_close_above_ma5 精确重复, 命名废弃"
+break_close,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_PRICE_ACTION,NO_DIRECT_MODEL_INPUT,NONE,copied unchanged from source v0.2.2 column break_close,REDUNDANT/NO_MODEL_INPUT: ED04: 与 d1_close 精确重复
+break_close_location,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_PRICE_ACTION,NO_DIRECT_MODEL_INPUT,NONE,(close - low) / (high - low),REDUNDANT/NO_MODEL_INPUT: ED07: 与 d1_close_location 精确重复
+break_high,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_PRICE_ACTION,NO_DIRECT_MODEL_INPUT,NONE,copied unchanged from source v0.2.2 column break_high,REDUNDANT/NO_MODEL_INPUT: ED02: 与 d1_high 精确重复
+break_high_to_close_drawdown,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_PRICE_ACTION,NO_DIRECT_MODEL_INPUT,NONE,(high - close) / high,REDUNDANT/NO_MODEL_INPUT: ED06: 与 d1_high_to_close_drawdown_raw 精确重复
+break_intraday_range,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_PRICE_ACTION,NO_DIRECT_MODEL_INPUT,NONE,(high - low) / prev_close,REDUNDANT/NO_MODEL_INPUT: ED05: 与 d1_intraday_range 精确重复
+break_low,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_PRICE_ACTION,NO_DIRECT_MODEL_INPUT,NONE,copied unchanged from source v0.2.2 column break_low,REDUNDANT/NO_MODEL_INPUT: ED03: 与 d1_low 精确重复
+break_open,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_PRICE_ACTION,NO_DIRECT_MODEL_INPUT,NONE,copied unchanged from source v0.2.2 column break_open,REDUNDANT/NO_MODEL_INPUT: ED01: 与 d1_open 精确重复 (333/333 相等)
+break_turnover_ratio,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_VOLUME_ACTIVITY,NO_DIRECT_MODEL_INPUT,NONE,copied unchanged from source v0.2.2 column break_turnover_ratio,"NOT_NEEDED/NO_MODEL_INPUT: 100% 缺失 (日线缓存无 turnover_rate), 字段不可用"
+break_amount,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_VOLUME_ACTIVITY,NO_DIRECT_MODEL_INPUT,NONE,copied unchanged from source v0.2.2 column break_amount,REDUNDANT/NO_MODEL_INPUT: ED09: 与 d1_amount 精确重复
+break_volume,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_VOLUME_ACTIVITY,NO_DIRECT_MODEL_INPUT,NONE,copied unchanged from source v0.2.2 column break_volume,REDUNDANT/NO_MODEL_INPUT: ED08: 与 d1_volume 精确重复
+d1_down_bar_volume_ratio,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_VOLUME_ACTIVITY,NO_DIRECT_MODEL_INPUT,NONE,copied unchanged from source v0.2.2 column d1_down_bar_volume_ratio,REDUNDANT/NO_MODEL_INPUT: ED12: 与 down_bar_volume_ratio 精确重复 (333/333 相等)
+d1_vwap_to_close_gap,FEATURE,v004c-d1-dataset-0.1 (v004c-features-0.3),D1_CLOSE,D1_VWAP_POSITION,FOLD_CLIP_Z,NONE,(d1_vwap - d1_close) / d1_close (正=卖压),"REDUNDANT/NO_MODEL_INPUT: NP05: (vwap-close)/close 与 close_to_vwap 反向表达 (spearman -1.0), 模型只留一种"
+d2_open_daily,FEATURE,v004c-d1-dataset-0.1,D3_CLOSE,FORBIDDEN,nan,NONE,nan,"FORBIDDEN/NO_MODEL_INPUT: D2 开盘, 未来信息"
+d3_high_daily,FEATURE,v004c-d1-dataset-0.1,D3_CLOSE,FORBIDDEN,nan,NONE,nan,"FORBIDDEN/NO_MODEL_INPUT: D3 最高, 未来信息"
+recognition_score,FEATURE,v004c-d1-dataset-0.1,D1_CLOSE,FORBIDDEN,nan,NONE,nan,"FORBIDDEN/NO_MODEL_INPUT: 旧模型/辨识度输出, 禁止作为 v004c 输入"
+v002_rank,FEATURE,v004c-d1-dataset-0.1,D1_CLOSE,FORBIDDEN,nan,NONE,nan,"FORBIDDEN/NO_MODEL_INPUT: 旧模型输出, 禁止作为 v004c 输入"
+v004a_probability,FEATURE,v004c-d1-dataset-0.1,D1_CLOSE,FORBIDDEN,nan,NONE,nan,"FORBIDDEN/NO_MODEL_INPUT: 旧模型输出, 禁止作为 v004c 输入"
+board_stage_volume_price_decomposition,FEATURE,PROPOSED (data/cache/daily),D1_CLOSE,RECENT_7D_PATH,nan,NONE,"(提案, 未实现) 第一/二/三板与 D1 逐阶段量价结构","DEFER_NOT_REQUIRED_FOR_V001/NO_MODEL_INPUT: 第一/二/三板逐阶段量价重建复杂, 数据质量不稳定; V001 不需要"
+recent_7d_limit_up_count,FEATURE,PROPOSED (data/cache/daily),D1_CLOSE,RECENT_7D_PATH,nan,NONE,"(提案, 未实现) 7 日窗口内涨停天数","DEFER_NOT_REQUIRED_FOR_V001/CONTEXT_ONLY: 最近 7 日涨停次数可能包含当前连板之前的独立涨停事件, 并不严格等价于 board_streak_before_break; V001 已使用 board/event state + 7 日价格路径, 为控制模型复杂度暂不新增该事件计数字段"

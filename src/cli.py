@@ -92,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
             return build_v004c_factor_dictionary_command(args)
         if args.command == "analyze-v004c-stage2-2":
             return analyze_v004c_stage2_2_command(args)
+        if args.command == "build-v004c-model-table":
+            return build_v004c_model_table_command(args)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -304,8 +306,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="阶段2.1来源 tag (必须为 v004c-factor-dictionary-0.1)",
     )
     p.add_argument("--output-dir", required=True, help="输出目录")
-    return parser
 
+    p = sub.add_parser(
+        "build-v004c-model-table",
+        help="v004c 模型表: 构建统一建模输入表 (只读, 不训练模型)",
+    )
+    p.add_argument(
+        "--stage1-dir",
+        default="reports/research/v004c_d1_dataset_v001_20260601_20260729",
+        help="阶段1冻结目录 (v004c_d1_dataset_v001_...)",
+    )
+    p.add_argument(
+        "--dictionary-dir",
+        default="reports/research/v004c_factor_dictionary_v001_20260601_20260729",
+        help="阶段2.1冻结目录 (v004c_factor_dictionary_v001_...)",
+    )
+    p.add_argument("--cache-dir", default="data/cache/daily", help="未复权日线缓存目录")
+    p.add_argument(
+        "--output-dir",
+        default="reports/research/v004c_model_table_v001_20260601_20260729",
+        help="输出目录 (已存在则 FAIL, 不覆盖)",
+    )
+    return parser
 
 def collect_limitups(args) -> int:
     service = MarketDataService()
@@ -592,6 +614,46 @@ def analyze_v004c_stage2_2_command(args) -> int:
           f"(all_pass={audit.get('all_pass')})")
     print(f"audit complete: {manifest.get('audit_complete')}")
     print(f"output dir: {args.output_dir}")
+    return 0
+
+
+def build_v004c_model_table_command(args) -> int:
+    """v004c 模型表: 统一建模输入表构建 (只读, 不训练模型)。"""
+    from pathlib import Path as _Path
+
+    from .v004c_model_table import (
+        ModelTableError,
+        V004CModelTableConfig,
+        build_v004c_model_table,
+    )
+
+    config = V004CModelTableConfig(
+        stage1_dir=_Path(args.stage1_dir),
+        dictionary_dir=_Path(args.dictionary_dir),
+        cache_dir=_Path(args.cache_dir),
+        output_dir=_Path(args.output_dir),
+    )
+    try:
+        checks = build_v004c_model_table(config)
+    except ModelTableError as exc:
+        print(f"ERROR: v004c 模型表构建被阻止: {exc}", file=sys.stderr)
+        return 1
+    print("v004c model table build completed (research only, not a model)")
+    print(f"rows: {checks['rows']} / signal dates: {checks['signal_dates']} "
+          f"/ unique event_id: {checks['unique_event_id']}")
+    print(f"columns: {checks['columns']} = identifier {checks['identifier_count']} "
+          f"+ feature {checks['feature_count']} (primary {checks['primary_count']} "
+          f"/ sensitivity {checks['sensitivity_count']}) + label {checks['label_count']} "
+          f"+ audit {checks['audit_count']}")
+    for field in ("recent_7d_cumulative_return", "recent_7d_max_drawdown",
+                  "recent_7d_close_position"):
+        print(f"{field}: 333/333 coverage, min {checks[f'{field}_min']:.6f} "
+              f"/ median {checks[f'{field}_median']:.6f} / max {checks[f'{field}_max']:.6f}")
+    print(f"target7: {checks['target_positive']} positives / "
+          f"{checks['target_negative']} negatives (binary {checks['target_binary']})")
+    print(f"leakage scan: PASS / primary missing: {checks['primary_missing']} "
+          f"/ primary inf: {checks['primary_inf']}")
+    print(f"output dir: {checks['output_dir']}")
     return 0
 
 
