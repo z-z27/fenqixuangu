@@ -1,0 +1,546 @@
+{
+  "audit_complete": true,
+  "automatic_feature_selection": false,
+  "automatic_target_driven_selection": false,
+  "boundary_counts": {
+    "not_selected": 47,
+    "rows": 59,
+    "selected_fixed": 12
+  },
+  "candidate_comparison": {
+    "eligibility_first": true,
+    "fixed_model_priority": [
+      "M1",
+      "M2",
+      "M3"
+    ],
+    "mode": "global_sequential_tolerance_filter",
+    "oos_brier_tolerance": 0.002,
+    "oos_log_loss_tolerance": 0.005
+  },
+  "candidate_selection_mode": "human_fixed_after_june_development_review",
+  "candidate_specs_frozen_before_july_label_access": true,
+  "catalog_counts": {
+    "model_count": 4,
+    "substantive_model_count": 3
+  },
+  "deployment_status": "research_only",
+  "development_date_range": [
+    "2026-06-01",
+    "2026-06-30"
+  ],
+  "direction_is_constraint": false,
+  "evidence_counts": {
+    "rows": 12,
+    "unique_features": 12
+  },
+  "frozen": false,
+  "generated_at": "2026-08-07T11:19:32+0800",
+  "git_branch": "research-sample-analysis",
+  "git_dirty_after": true,
+  "git_dirty_before": true,
+  "git_head": "274019f4cbae900c0548ddd82bb6fa5fcd5d3000",
+  "git_root": "F:\\fenqixuangu",
+  "git_status_after": "?? data/\n?? reports/diagnostics/audit_baseline_v004c_232/\n?? reports/diagnostics/audit_v004c_232/\n?? reports/diagnostics/stage22_1_input_sha_before.json\n?? reports/diagnostics/stage22_2_finalize_input_sha_before.json\n?? reports/diagnostics/stage23_1_input_sha_before.json\n?? reports/diagnostics/stage23_2_input_sha_before.json\n?? reports/diagnostics/v004c_stage2_3_2_targeted_independent_audit_20260806.md\n?? reports/research/v004c_daily_refresh_20260803_224456/backup/\n?? reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/\n?? v004c_stage2_1_factor_dictionary_codex_prompts_20260805.md\n?? v004c_stage2_3_1_review_20260806.sha256.txt\n",
+  "git_status_before": "?? data/\n?? reports/diagnostics/audit_baseline_v004c_232/\n?? reports/diagnostics/audit_v004c_232/\n?? reports/diagnostics/stage22_1_input_sha_before.json\n?? reports/diagnostics/stage22_2_finalize_input_sha_before.json\n?? reports/diagnostics/stage23_1_input_sha_before.json\n?? reports/diagnostics/stage23_2_input_sha_before.json\n?? reports/diagnostics/v004c_stage2_3_2_targeted_independent_audit_20260806.md\n?? reports/research/v004c_daily_refresh_20260803_224456/backup/\n?? v004c_stage2_1_factor_dictionary_codex_prompts_20260805.md\n?? v004c_stage2_3_1_review_20260806.sha256.txt\n",
+  "holdout_label_access": false,
+  "holdout_lock_audit": {
+    "all_pass": true,
+    "check_count": 39,
+    "checks": [
+      {
+        "check_name": "未读取training D1表",
+        "status": "PASS"
+      },
+      {
+        "check_name": "未读取existing model audit",
+        "status": "PASS"
+      },
+      {
+        "check_name": "实际输入文件与允许清单精确相等",
+        "status": "PASS"
+      },
+      {
+        "check_name": "实际输入文件与禁止清单交集为空",
+        "status": "PASS"
+      },
+      {
+        "check_name": "snapshot标签列未访问",
+        "status": "PASS"
+      },
+      {
+        "check_name": "七月标签列未访问",
+        "status": "PASS"
+      },
+      {
+        "check_name": "运行时Target列访问=False",
+        "status": "PASS"
+      },
+      {
+        "check_name": "七月标签访问=False",
+        "status": "PASS"
+      },
+      {
+        "check_name": "自动Target驱动选择=False",
+        "status": "PASS"
+      },
+      {
+        "check_name": "六月证据用于人工设计已声明",
+        "status": "PASS"
+      },
+      {
+        "check_name": "规格在七月揭示前冻结=True",
+        "status": "PASS"
+      },
+      {
+        "check_name": "模型成员六月开发审查后人工固定",
+        "status": "PASS"
+      },
+      {
+        "check_name": "模型目录不依赖证据值",
+        "status": "PASS"
+      },
+      {
+        "check_name": "特征规格不依赖证据值",
+        "status": "PASS"
+      },
+      {
+        "check_name": "预处理规格不依赖证据值",
+        "status": "PASS"
+      },
+      {
+        "check_name": "候选JSON不依赖证据值",
+        "status": "PASS"
+      },
+      {
+        "check_name": "协议JSON不依赖证据值",
+        "status": "PASS"
+      },
+      {
+        "check_name": "未调用模型拟合接口",
+        "status": "PASS"
+      },
+      {
+        "check_name": "未生成预测",
+        "status": "PASS"
+      },
+      {
+        "check_name": "无自动特征选择",
+        "status": "PASS"
+      },
+      {
+        "check_name": "无超参数搜索",
+        "status": "PASS"
+      },
+      {
+        "check_name": "无阈值搜索",
+        "status": "PASS"
+      },
+      {
+        "check_name": "no_ml_library_import",
+        "status": "PASS"
+      },
+      {
+        "check_name": "no_logistic_instantiation",
+        "status": "PASS"
+      },
+      {
+        "check_name": "未运行Walk-forward",
+        "status": "PASS"
+      },
+      {
+        "check_name": "模型数恰好4",
+        "status": "PASS"
+      },
+      {
+        "check_name": "实质模型数恰好3",
+        "status": "PASS"
+      },
+      {
+        "check_name": "M1/M2/M3各5个特征",
+        "status": "PASS"
+      },
+      {
+        "check_name": "59行候选边界完整",
+        "status": "PASS"
+      },
+      {
+        "check_name": "12个唯一入选特征完整",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "CSV列无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "review无七月标签指标",
+        "status": "PASS"
+      },
+      {
+        "check_name": "六月开发证据参与人工设计已披露",
+        "status": "PASS"
+      },
+      {
+        "check_name": "design disclosure无七月标签指标",
+        "status": "PASS"
+      }
+    ],
+    "pass_count": 39
+  },
+  "hyperparameter_search": false,
+  "input_files": {
+    "v004c_canonical_feature_map_v001.csv": {
+      "bytes": 17722,
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_canonical_feature_map_v001.csv",
+      "role": "input",
+      "sha256": "3bbece0fa64cd673775229bfd68011f5d030c85ebb59d025f5943aab6779adfd",
+      "stage": "stage2_1",
+      "verified": true
+    },
+    "v004c_d1_column_lineage.csv": {
+      "bytes": 32211,
+      "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_column_lineage.csv",
+      "role": "lineage",
+      "sha256": "914f0a34a34a2d9e9f5b8a0420e89666c8b8d3a3ba8d28e46a8dd54c1791ba6c",
+      "stage": "stage1",
+      "verified": true
+    },
+    "v004c_d1_data_manifest.json": {
+      "bytes": 132610,
+      "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_data_manifest.json",
+      "role": "manifest",
+      "sha256": "ae2a2b48b0b97390e08e81c42cadaa84d5ff76b95e847a80a66e480936ccd618",
+      "stage": "stage1",
+      "verified": true
+    },
+    "v004c_d1_snapshot_v001.csv": {
+      "bytes": 685818,
+      "path": "reports/research/v004c_d1_dataset_v001_20260601_20260729/v004c_d1_snapshot_v001.csv",
+      "role": "snapshot",
+      "sha256": "7f37fd58bfa0efa1a8eb12cecb4e1d155f978017624a4e3babbf457d89a643f8",
+      "stage": "stage1",
+      "verified": true
+    },
+    "v004c_exact_duplicate_groups_v001.csv": {
+      "bytes": 1635,
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_exact_duplicate_groups_v001.csv",
+      "role": "input",
+      "sha256": "bd6ad5daec66af2295ec2e9eca6bb81631f4eed5fd02fca2056918cff84f2f96",
+      "stage": "stage2_1",
+      "verified": true
+    },
+    "v004c_factor_dictionary_manifest.json": {
+      "bytes": 14757,
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_factor_dictionary_manifest.json",
+      "role": "manifest",
+      "sha256": "d2d453e341b88d0fb455b372054c8a6f73c1077138b8f31a372dcb5faa1ab068",
+      "stage": "stage2_1",
+      "verified": true
+    },
+    "v004c_factor_dictionary_v001.csv": {
+      "bytes": 65376,
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_factor_dictionary_v001.csv",
+      "role": "input",
+      "sha256": "736ea8f2ddd5b9910e17574bf65a558511db7447b598659567d37b11b38b2c7f",
+      "stage": "stage2_1",
+      "verified": true
+    },
+    "v004c_feature_allowlist_primary_v001.csv": {
+      "bytes": 3830,
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_feature_allowlist_primary_v001.csv",
+      "role": "input",
+      "sha256": "03e8416bc8428dc2f1fd2c054e66e5a744e270fb27a19bbd9aa79f030241e9c9",
+      "stage": "stage2_1",
+      "verified": true
+    },
+    "v004c_feature_allowlist_sensitivity_v001.csv": {
+      "bytes": 2281,
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_feature_allowlist_sensitivity_v001.csv",
+      "role": "input",
+      "sha256": "10e41546c409e40fef66471b300a3b69dec09877f321e59c0fd7d9224804ad1b",
+      "stage": "stage2_1",
+      "verified": true
+    },
+    "v004c_near_duplicate_pairs_v001.csv": {
+      "bytes": 1591,
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_near_duplicate_pairs_v001.csv",
+      "role": "input",
+      "sha256": "101587dc3fe9d21b69fed45721b44e991cda27aba8fb706b1ff5be6cc91bdf6a",
+      "stage": "stage2_1",
+      "verified": true
+    },
+    "v004c_predeclared_derived_factor_audit_v001.csv": {
+      "bytes": 926,
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_predeclared_derived_factor_audit_v001.csv",
+      "role": "input",
+      "sha256": "5753818af2810fba8a1214036f7825f7d312f4a03ed477101776b818d3317161",
+      "stage": "stage2_1",
+      "verified": true
+    },
+    "v004c_predeclared_derived_factor_spec_v001.csv": {
+      "bytes": 1388,
+      "path": "reports/research/v004c_factor_dictionary_v001_20260601_20260729/v004c_predeclared_derived_factor_spec_v001.csv",
+      "role": "input",
+      "sha256": "d495112272ef15427894aec630b09c805ca6fecccd2d75f3bc416f958e678896",
+      "stage": "stage2_1",
+      "verified": true
+    },
+    "v004c_stage2_2_board_subgroup_dev_v001.csv": {
+      "bytes": 18916,
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_board_subgroup_dev_v001.csv",
+      "role": "input",
+      "sha256": "0b3781945563474301aab24f80b54177b1e79abe4c7e6ceb91c48321425e0d07",
+      "stage": "stage2_2",
+      "verified": true
+    },
+    "v004c_stage2_2_cluster_bootstrap_dev_v001.csv": {
+      "bytes": 11250,
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_cluster_bootstrap_dev_v001.csv",
+      "role": "input",
+      "sha256": "70d773a97669ffa7fed613d0f7e2611bac13b96ef9dd967df06636b64caf495e",
+      "stage": "stage2_2",
+      "verified": true
+    },
+    "v004c_stage2_2_distribution_shift_unlabeled_v001.csv": {
+      "bytes": 9766,
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_distribution_shift_unlabeled_v001.csv",
+      "role": "input",
+      "sha256": "bb11ac260fdc5a96d206e490c9724f98736a367fd562922f2789ed7d9cbbaf61",
+      "stage": "stage2_2",
+      "verified": true
+    },
+    "v004c_stage2_2_feature_structure_v001.csv": {
+      "bytes": 16865,
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_feature_structure_v001.csv",
+      "role": "input",
+      "sha256": "39732f261e22548f5a2abda703b307d8ef3d2d8ba694b59f123a1a0962bbe46e",
+      "stage": "stage2_2",
+      "verified": true
+    },
+    "v004c_stage2_2_manifest.json": {
+      "bytes": 16744,
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_manifest.json",
+      "role": "manifest",
+      "sha256": "cf6554154d471a68877decdb2e8b84a8aa068dbfd2fdefc03b47758738f4b6c3",
+      "stage": "stage2_2",
+      "verified": true
+    },
+    "v004c_stage2_2_review.md": {
+      "bytes": 4926,
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_review.md",
+      "role": "input",
+      "sha256": "75a38d8e19e5d38078a3cd071fdbf843d5a140f959abb74db216970ee3afcb3f",
+      "stage": "stage2_2",
+      "verified": true
+    },
+    "v004c_stage2_2_univariate_summary_dev_v001.csv": {
+      "bytes": 40842,
+      "path": "reports/research/v004c_stage2_2_univariate_v001_20260601_20260729/v004c_stage2_2_univariate_summary_dev_v001.csv",
+      "role": "input",
+      "sha256": "38707d7933c3f772ce3c8beed153069e869a0a9196e3338c1c9e76add3bc50f5",
+      "stage": "stage2_2",
+      "verified": true
+    }
+  },
+  "input_files_unchanged_during_run": true,
+  "input_verification": {
+    "actual_loaded_input_file_count": 19,
+    "actual_matches_allowed_inputs": true,
+    "dev_rows": 173,
+    "expected_allowed_input_file_count": 19,
+    "input_file_count": 19,
+    "input_rows": 333,
+    "input_sha_all_verified": true,
+    "lineage_rows": 197,
+    "locked_rows": 160,
+    "signal_dates": 42,
+    "stage1_files_unchanged": true,
+    "stage1_manifest_audit_reference_verified": true,
+    "stage2_1_files_unchanged": true,
+    "stage2_2_files_unchanged": true
+  },
+  "interaction_search": false,
+  "june_development_evidence_used_for_manual_design": true,
+  "locked_date_range": [
+    "2026-07-01",
+    "2026-07-29"
+  ],
+  "model_count": 4,
+  "model_feature_counts": {
+    "M0": 0,
+    "M1": 5,
+    "M2": 5,
+    "M3": 5
+  },
+  "model_training_performed": false,
+  "output_dir_gate": {
+    "was_empty": true
+  },
+  "output_files": {
+    "git_head.txt": {
+      "bytes": 40,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/git_head.txt",
+      "role": "provenance",
+      "rows": null,
+      "sha256": "828e5012ab1a393dddcdce83d9b650c8d3c14f2b0810044724f39665e37c0ed7"
+    },
+    "git_status_after.txt": {
+      "bytes": 666,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/git_status_after.txt",
+      "role": "provenance",
+      "rows": null,
+      "sha256": "372660727cdd6ef999118fac6db5bcd3efd20ecf5ef0b7d593167030e5337e3d"
+    },
+    "git_status_before.txt": {
+      "bytes": 590,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/git_status_before.txt",
+      "role": "provenance",
+      "rows": null,
+      "sha256": "152129f1342744a6a781677237a7f2db2db71bdd9a303ca63448a84d9114a80b"
+    },
+    "v004c_stage2_3_candidate_boundary_v001.csv": {
+      "bytes": 10550,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/v004c_stage2_3_candidate_boundary_v001.csv",
+      "role": "candidate_boundary",
+      "rows": 59,
+      "sha256": "a35d457d35680a148bf6604b4fa98d20278cebac0ebae7e17349ee01bd315fe2"
+    },
+    "v004c_stage2_3_candidate_redundancy_audit_v001.csv": {
+      "bytes": 5188,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/v004c_stage2_3_candidate_redundancy_audit_v001.csv",
+      "role": "candidate_redundancy_audit",
+      "rows": 30,
+      "sha256": "66948028fe4d7127dfd8c296ae9946942a9c1307db13b88ce62e8c8d6c5b8387"
+    },
+    "v004c_stage2_3_candidate_specs_v001.json": {
+      "bytes": 11671,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/v004c_stage2_3_candidate_specs_v001.json",
+      "role": "candidate_specs",
+      "rows": null,
+      "sha256": "a4ded5917d75788175e28e06eb03e7c9c677383ecbd881001e8873101580d8a0"
+    },
+    "v004c_stage2_3_design_disclosure_v001.json": {
+      "bytes": 2520,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/v004c_stage2_3_design_disclosure_v001.json",
+      "role": "design_disclosure",
+      "rows": null,
+      "sha256": "73d009b356cf7a6c5057c3c969999ac5b2e568cbbb187ec1d6e9d438607d9dda"
+    },
+    "v004c_stage2_3_evaluation_protocol_v001.json": {
+      "bytes": 9749,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/v004c_stage2_3_evaluation_protocol_v001.json",
+      "role": "evaluation_protocol",
+      "rows": null,
+      "sha256": "587d68e9d67749e67cc4675f232c8bc9c533fc67f181d1c37fa1a25b97ba8aec"
+    },
+    "v004c_stage2_3_holdout_lock_audit_v001.csv": {
+      "bytes": 3574,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/v004c_stage2_3_holdout_lock_audit_v001.csv",
+      "role": "holdout_lock_audit",
+      "rows": 39,
+      "sha256": "40d851bc7a412ea2e3449c67aa262a09b25926d5be051a65a4e6cb73011a4f58"
+    },
+    "v004c_stage2_3_model_catalog_v001.csv": {
+      "bytes": 1928,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/v004c_stage2_3_model_catalog_v001.csv",
+      "role": "model_catalog",
+      "rows": 4,
+      "sha256": "416db676d0523650535afc624dfe3330617d1c28497d5080d02c9b0b8a8c1ad2"
+    },
+    "v004c_stage2_3_model_feature_spec_v001.csv": {
+      "bytes": 3587,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/v004c_stage2_3_model_feature_spec_v001.csv",
+      "role": "model_feature_spec",
+      "rows": 15,
+      "sha256": "9443f93af55397a4279737dd2820452a604f61eae930b21a7b21940c56fd726d"
+    },
+    "v004c_stage2_3_preprocessing_spec_v001.csv": {
+      "bytes": 4892,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/v004c_stage2_3_preprocessing_spec_v001.csv",
+      "role": "preprocessing_spec",
+      "rows": 19,
+      "sha256": "9c5eaa9fcd38875d25782af33a97b36e9c8b90dac2c3b26e77eedea03c48a353"
+    },
+    "v004c_stage2_3_review.md": {
+      "bytes": 15835,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/v004c_stage2_3_review.md",
+      "role": "review",
+      "rows": null,
+      "sha256": "64eb1b862f9e408019c592d6a8624536c4c82347d14ee934f1e8219eecdc965d"
+    },
+    "v004c_stage2_3_selected_feature_evidence_v001.csv": {
+      "bytes": 4683,
+      "path": "reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/v004c_stage2_3_selected_feature_evidence_v001.csv",
+      "role": "selected_feature_evidence",
+      "rows": 12,
+      "sha256": "7f0d142c2ed872b8654b8aee3d52fc7aefd0cf20e05e37169b80594d078dfe1e"
+    }
+  },
+  "prediction_generated": false,
+  "redundancy_counts": {
+    "flags": {
+      "ABS_RHO_LT_0_70": 30
+    },
+    "rows": 30
+  },
+  "research_only": true,
+  "runtime_candidate_membership_uses_target_columns": false,
+  "runtime_membership_invariant_to_evidence_field_mutation": true,
+  "runtime_membership_invariant_to_target_column_mutation": true,
+  "selected_unique_feature_count": 12,
+  "source_stage1_commit": "a65661f4738b849a06efb4859d4100842871e971",
+  "source_stage1_version": "v004c-d1-dataset-0.1",
+  "source_stage2_1_commit": "11f455dc9a6643a67250321cce68868be904cf06",
+  "source_stage2_1_version": "v004c-factor-dictionary-0.1",
+  "source_stage2_2_code_commit": "ee0306fc4a5f3dadd3f0a780721754a014c58c58",
+  "source_stage2_2_commit": "fba302ffc58deb7b15812e4dd2ada113ae1f3a34",
+  "source_stage2_2_ref": "v004c-stage2-2-univariate-0.1",
+  "source_stage2_2_version": "v004c-stage2-2-univariate-0.1",
+  "stage2_3_version": "v004c-stage2-3-candidate-specs-0.1",
+  "substantive_model_count": 3,
+  "supported_environment": {
+    "core_autocrlf": "true",
+    "git_version": "git version 2.49.0.windows.1",
+    "os": "Windows 11",
+    "python": "3.13.2"
+  },
+  "threshold_search": false,
+  "timezone": "Asia/Shanghai",
+  "vwap_reparameterization": {
+    "dev": {
+      "exact_negative_equivalence": false,
+      "max_abs_sum": 0.008057137084739804,
+      "pair_non_null": 173,
+      "pearson_rho": -0.9991696599734359,
+      "spearman_rho": -1.0
+    },
+    "locked": {
+      "exact_negative_equivalence": false,
+      "max_abs_sum": 0.0066904950411876,
+      "pair_non_null": 160,
+      "pearson_rho": -0.9993953570493527,
+      "spearman_rho": -1.0
+    },
+    "relationship_type": "NOT_EXACT_NEGATIVE"
+  }
+}

@@ -1,0 +1,255 @@
+{
+  "candidate_selection_mode": "human_fixed_after_june_development_review",
+  "direction_is_constraint": false,
+  "model_count": 4,
+  "models": [
+    {
+      "design_purpose": "截距基准: 后续拟合时预测概率 = 训练窗口 Target7 正样本率; 不使用任何特征, 作为七月一次性评价与 Walk-forward 的对比下界。",
+      "feature_count": 0,
+      "features": [],
+      "model_family": "intercept_prevalence_baseline",
+      "model_id": "M0",
+      "model_name": "INTERCEPT_BASELINE",
+      "penalty": "none",
+      "role": "BASELINE"
+    },
+    {
+      "design_purpose": "primary 跨机制核心模型: 5 个不同机制组的 primary 表达; 无缺失处理需求; 不使用稀疏二元字段; 不使用日期不稳定或单日主导字段; 作为主要紧凑候选。",
+      "feature_count": 5,
+      "features": [
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "+",
+          "feature_name": "break_open_return",
+          "mechanism_group": "D1_PRICE_ACTION",
+          "mutual_exclusion_group_id": "",
+          "position": 1,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "断板日开盘相对前收收益, 修复动能的方向性 primary 表达。",
+          "underlying_mechanism": "D1_PRICE_ACTION"
+        },
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "+",
+          "feature_name": "down_bar_volume_ratio",
+          "mechanism_group": "D1_VOLUME_ACTIVITY",
+          "mutual_exclusion_group_id": "",
+          "position": 2,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "阴线量占比, 出货/承接结构的方向性 primary 表达。",
+          "underlying_mechanism": "D1_VOLUME_ACTIVITY"
+        },
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "-",
+          "feature_name": "high_zone_volume_ratio",
+          "mechanism_group": "D1_CHIP_DISTRIBUTION",
+          "mutual_exclusion_group_id": "ME03_HIGH_ZONE",
+          "position": 3,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "高位区成交量占比, 套牢筹码堆积的 primary 表达。",
+          "underlying_mechanism": "D1_CHIP_DISTRIBUTION"
+        },
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "-",
+          "feature_name": "late_day_sell_volume_ratio",
+          "mechanism_group": "D1_LATE_DAY_PRESSURE",
+          "mutual_exclusion_group_id": "ME04_LATE_SELL",
+          "position": 4,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "尾盘卖出成交量占比, 尾盘抛压的 primary 表达。",
+          "underlying_mechanism": "D1_LATE_DAY_PRESSURE"
+        },
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "-",
+          "feature_name": "d1_close_to_vwap_raw",
+          "mechanism_group": "D1_VWAP_POSITION",
+          "mutual_exclusion_group_id": "ME05_VWAP_GAP",
+          "position": 5,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "收盘相对当日 VWAP 的位置, 全天持仓成本的 primary 表达。",
+          "underlying_mechanism": "D1_VWAP_POSITION"
+        }
+      ],
+      "model_family": "binary_logistic_regression",
+      "model_id": "M1",
+      "model_name": "PRIMARY_MECHANISM_CORE",
+      "penalty": "L2",
+      "role": "PRIMARY_CANDIDATE"
+    },
+    {
+      "design_purpose": "表达替代敏感性模型: 保持与 M1 相同的主要机制结构, 保留 break_open_return 与 down_bar_volume_ratio, 替换 high_zone_volume_ratio→high_zone_amount_ratio、late_day_sell_volume_ratio→late_day_sell_amount_ratio、d1_close_to_vwap_raw→d1_vwap_to_close_gap; 用于判断信号是否来自机制本身, 而不是只来自 volume/amount 或正向/反向表达。M1 与 M2 的互斥表达不得放进同一模型。",
+      "feature_count": 5,
+      "features": [
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "+",
+          "feature_name": "break_open_return",
+          "mechanism_group": "D1_PRICE_ACTION",
+          "mutual_exclusion_group_id": "",
+          "position": 1,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "与 M1 相同, 保持主要机制结构不变。",
+          "underlying_mechanism": "D1_PRICE_ACTION"
+        },
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "+",
+          "feature_name": "down_bar_volume_ratio",
+          "mechanism_group": "D1_VOLUME_ACTIVITY",
+          "mutual_exclusion_group_id": "",
+          "position": 2,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "与 M1 相同, 保持主要机制结构不变。",
+          "underlying_mechanism": "D1_VOLUME_ACTIVITY"
+        },
+        {
+          "allowlist_tier": "SENSITIVITY",
+          "direction_is_constraint": false,
+          "expected_direction": "-",
+          "feature_name": "high_zone_amount_ratio",
+          "mechanism_group": "D1_CHIP_DISTRIBUTION",
+          "mutual_exclusion_group_id": "ME03_HIGH_ZONE",
+          "position": 3,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "M1 high_zone_volume_ratio 的金额替代 (互斥组 ME03_HIGH_ZONE)。",
+          "underlying_mechanism": "D1_CHIP_DISTRIBUTION"
+        },
+        {
+          "allowlist_tier": "SENSITIVITY",
+          "direction_is_constraint": false,
+          "expected_direction": "-",
+          "feature_name": "late_day_sell_amount_ratio",
+          "mechanism_group": "D1_LATE_DAY_PRESSURE",
+          "mutual_exclusion_group_id": "ME04_LATE_SELL",
+          "position": 4,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "M1 late_day_sell_volume_ratio 的金额替代 (互斥组 ME04_LATE_SELL)。",
+          "underlying_mechanism": "D1_LATE_DAY_PRESSURE"
+        },
+        {
+          "allowlist_tier": "SENSITIVITY",
+          "direction_is_constraint": false,
+          "expected_direction": "+",
+          "feature_name": "d1_vwap_to_close_gap",
+          "mechanism_group": "D1_VWAP_POSITION",
+          "mutual_exclusion_group_id": "ME05_VWAP_GAP",
+          "position": 5,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "M1 d1_close_to_vwap_raw 的反向表达式替代 (互斥组 ME05_VWAP_GAP)。",
+          "underlying_mechanism": "D1_VWAP_POSITION"
+        }
+      ],
+      "model_family": "binary_logistic_regression",
+      "model_id": "M2",
+      "model_name": "SENSITIVITY_EXPRESSION_ALTERNATIVES",
+      "penalty": "L2",
+      "role": "SENSITIVITY_CANDIDATE"
+    },
+    {
+      "design_purpose": "预声明派生机制模型: 检验阶段2.1 预声明派生表达是否能形成 结构更明确的跨机制组合; 不是根据阶段2.2 表现自动挑选派生因子。",
+      "feature_count": 5,
+      "features": [
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "-",
+          "feature_name": "overrepair",
+          "mechanism_group": "PREDECLARED_DERIVED",
+          "mutual_exclusion_group_id": "",
+          "position": 1,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "单日修复动能超过 3% 的截断部分 (派生自 d1_open_to_close_return_raw), 过度修复后回落风险。",
+          "underlying_mechanism": "D1_PRICE_ACTION"
+        },
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "-",
+          "feature_name": "ma5_overheat_10",
+          "mechanism_group": "PREDECLARED_DERIVED",
+          "mutual_exclusion_group_id": "",
+          "position": 2,
+          "preprocess_policy": "RAW_BINARY",
+          "selection_rationale": "收盘偏离 MA5 达 +10% 的过热二元项 (派生自 d1_close_to_ma5_raw), RAW_BINARY 处理。",
+          "underlying_mechanism": "D1_MA_POSITION"
+        },
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "-",
+          "feature_name": "break_volume_abnormality",
+          "mechanism_group": "PREDECLARED_DERIVED",
+          "mutual_exclusion_group_id": "",
+          "position": 3,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "断板日相对连板均量偏离的绝对对数幅度 (派生自 break_volume_ratio_vs_board_days), 双向异常。",
+          "underlying_mechanism": "D1_VOLUME_ACTIVITY"
+        },
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "+",
+          "feature_name": "profit_chip_ratio",
+          "mechanism_group": "PREDECLARED_DERIVED",
+          "mutual_exclusion_group_id": "",
+          "position": 4,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "收盘价上方成交占比的补数 (派生自 volume_above_d1_close_ratio), 下方获利盘占比。",
+          "underlying_mechanism": "D1_CHIP_DISTRIBUTION"
+        },
+        {
+          "allowlist_tier": "PRIMARY",
+          "direction_is_constraint": false,
+          "expected_direction": "-",
+          "feature_name": "late_day_sell_volume_ratio",
+          "mechanism_group": "D1_LATE_DAY_PRESSURE",
+          "mutual_exclusion_group_id": "ME04_LATE_SELL",
+          "position": 5,
+          "preprocess_policy": "FOLD_CLIP_Z",
+          "selection_rationale": "尾盘卖出成交量占比, 与 M1 相同的尾盘抛压表达。",
+          "underlying_mechanism": "D1_LATE_DAY_PRESSURE"
+        }
+      ],
+      "model_family": "binary_logistic_regression",
+      "model_id": "M3",
+      "model_name": "PREDECLARED_DERIVED_MECHANISMS",
+      "penalty": "L2",
+      "role": "DERIVED_SENSITIVITY_CANDIDATE"
+    }
+  ],
+  "notes": [
+    "M1/M2/M3 由研究人员在阅读六月阶段2.2 单因子结构与稳定性证据后人工确定; 候选规格在七月标签揭示前冻结 (candidate_specs_frozen_before_july_label_access=true)",
+    "阶段2.3 运行时未读取 Target 列, 未执行自动特征搜索 (runtime_candidate_membership_uses_target_columns=false)",
+    "M1 与 M2 的互斥表达不得放进同一模型 (各自互斥组每模型最多一次)",
+    "M3 不包含派生因子的直接源变量",
+    "expected_direction 仅用于后续诊断, 不是系数约束 (direction_is_constraint=false)",
+    "本 JSON 不包含任何系数/截距/预测概率/模型表现/七月结果"
+  ],
+  "selected_unique_feature_count": 12,
+  "stage2_3_version": "v004c-stage2-3-candidate-specs-0.1",
+  "substantive_model_count": 3,
+  "unique_selected_features": [
+    "break_open_return",
+    "down_bar_volume_ratio",
+    "high_zone_volume_ratio",
+    "late_day_sell_volume_ratio",
+    "d1_close_to_vwap_raw",
+    "high_zone_amount_ratio",
+    "late_day_sell_amount_ratio",
+    "d1_vwap_to_close_gap",
+    "overrepair",
+    "ma5_overheat_10",
+    "break_volume_abnormality",
+    "profit_chip_ratio"
+  ]
+}

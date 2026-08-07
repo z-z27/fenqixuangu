@@ -1,0 +1,12 @@
+?? data/
+?? reports/diagnostics/audit_baseline_v004c_232/
+?? reports/diagnostics/audit_v004c_232/
+?? reports/diagnostics/stage22_1_input_sha_before.json
+?? reports/diagnostics/stage22_2_finalize_input_sha_before.json
+?? reports/diagnostics/stage23_1_input_sha_before.json
+?? reports/diagnostics/stage23_2_input_sha_before.json
+?? reports/diagnostics/v004c_stage2_3_2_targeted_independent_audit_20260806.md
+?? reports/research/v004c_daily_refresh_20260803_224456/backup/
+?? reports/research/v004c_stage2_3_candidate_specs_v001_20260601_20260729/
+?? v004c_stage2_1_factor_dictionary_codex_prompts_20260805.md
+?? v004c_stage2_3_1_review_20260806.sha256.txt
