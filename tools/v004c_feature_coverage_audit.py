@@ -6,17 +6,24 @@
 用途:
 1. 从 v004c 正式资产 (阶段1/2.1/2.2) 读取 59 个准入因子 + 197 列字典,
    逐字段归类到 coverage mechanism 并给出覆盖状态与机制候选角色;
-2. 从 data/cache/daily 计算 4 个候选 NEW_REQUIRED 字段在 D1 时点的
-   可用性与缺失率 (验证 "可以用现有日线缓存稳定计算" 这一准入条件);
+2. 从 data/cache/daily 计算 4 个候选字段在 D1 时点的可用性与缺失率
+   (3 个 NEW_REQUIRED + d1_ma20_slope 仅作 DEFER 覆盖验证;
+   验证 "可以用现有日线缓存稳定计算" 这一准入条件);
 3. 输出 reports/research/v004c_feature_coverage_v001.csv。
+
+Target-blind 输入: 训练表通过 usecols 仅读取 event_id/code/break_date,
+没有将任何标签、D2/D3 或旧模型字段读入内存。
 
 候选字段严格公式 (全部只依赖 <= D1 的日线, 与冻结数据集同源同口径):
 - recent_7d_cumulative_return = close(D1) / close(D1 前第 6 个交易日) - 1
-- recent_7d_max_drawdown      = max_{t in [T-6..D1]} (peak_high_t - low_t) / peak_high_t,
-                                peak_high_t = max(high over window up to t)
+- recent_7d_max_drawdown      = max_{t in [T-5..D1]} max(0, (prior_peak_t - low_t) / prior_peak_t),
+                                prior_peak_t = max(high_s), s < t
+                                (只使用严格较早交易日的 high, 不使用同日 high 计算当日 low 的回撤;
+                                不使用分钟线; T-6 无 prior peak 不计算)
 - recent_7d_close_position    = (close(D1) - 7d_low) / (7d_high - 7d_low);
                                 7d_high == 7d_low 时置空 (不产生 inf, 同 d1_close_location 政策)
 - d1_ma20_slope               = ma20(D1) / ma20(D1 前一日) - 1, ma20 = close 20 日滚动均值
+                                (本阶段判定 DEFER_NOT_REQUIRED_FOR_V001; 脚本仅保留确定性计算能力)
 """
 from __future__ import annotations
 
@@ -30,6 +37,9 @@ DICT_DIR = REPO / "reports/research/v004c_factor_dictionary_v001_20260601_202607
 STAGE1_DIR = REPO / "reports/research/v004c_d1_dataset_v001_20260601_20260729"
 OUT_CSV = REPO / "reports/research/v004c_feature_coverage_v001.csv"
 CACHE_DIR = REPO / "data/cache/daily"
+
+# 训练表最小读取列: 本工具只读身份/日期列, 绝不读取 Target/tail/D2/D3/旧模型字段
+COVERAGE_INPUT_COLUMNS = ["event_id", "code", "break_date"]
 
 # coverage mechanism (建模视角, 本次新增) 与 coverage_status / recommended_role
 COVERAGE_MECHANISM = {
@@ -159,8 +169,8 @@ AUDIT = {
                          "DERIVE_ONLY 绝对尺度锚点 (D0 收盘), 只允许派生为收益/距离后使用"),
     "board_streak_is_3": ("EXISTING_REUSE", "M1_BASELINE_CANDIDATE",
                           "二板/三板事件状态二元项, 预声明派生, D1_CLOSE 可得"),
-    "recent_limit_up_count_10d": ("EXISTING_REUSE", "M2_PRIMARY_CANDIDATE",
-                                  "10 日事件统计, 与核心 7 日窗口最接近的事件频率表达; REUSE_AS_CONTEXT"),
+    "recent_limit_up_count_10d": ("EXISTING_REUSE", "CONTEXT_ONLY",
+                                  "属于已有事件背景信息, 可保留用于上下文和后续敏感性比较, 但不是 V001 M2 的默认主模型输入; REUSE_AS_CONTEXT"),
     "recent_limit_up_count_20d": ("EXISTING_REUSE", "CONTEXT_ONLY",
                                   "20 日事件统计超出核心 7 日窗口; 不得自动进入主模型, REUSE_AS_CONTEXT"),
     "recent_pool_appearance_count_10d": ("EXISTING_REUSE", "CONTEXT_ONLY",
@@ -302,17 +312,17 @@ AUDIT = {
                                "7 日窗口内自峰值到后续低点的最大回撤; 严格时序公式, 仅用 <=D1 数据"),
     "recent_7d_close_position": ("NEW_REQUIRED", "M2_PRIMARY_CANDIDATE",
                                  "(close - 7d_low)/(7d_high - 7d_low); 7d_high==7d_low 置空"),
-    "d1_ma20_slope": ("NEW_REQUIRED", "M2_PRIMARY_CANDIDATE",
-                      "ma20 1 日变化率: MA20 趋势方向, 冻结数据不可导出 (需 ma20(D0)), 需日线缓存计算"),
+    "d1_ma20_slope": ("DEFER_NOT_REQUIRED_FOR_V001", "SENSITIVITY_ONLY",
+                      "MA20 slope 概念上合理, 但 MA10/MA20 技术背景已有充分表达 (close_to_ma10/low_to_ma10/close_to_ma20/ma10_slope 等); 为控制 V001 特征数量和避免增加相近趋势表达, 本阶段不把它作为必补字段, 后续可作为敏感性候选重新评估; 脚本保留确定性计算能力"),
     # --- NOT_NEEDED / DEFER ---
-    "recent_7d_limit_up_count": ("NOT_NEEDED", "NO_MODEL_INPUT",
-                                 "7 日涨停次数 ≈ board_streak_before_break (本轮 2/3 板在窗口内), 重复表达"),
+    "recent_7d_limit_up_count": ("DEFER_NOT_REQUIRED_FOR_V001", "CONTEXT_ONLY",
+                                 "最近 7 日涨停次数可能包含当前连板之前的独立涨停事件, 并不严格等价于 board_streak_before_break; V001 已使用 board/event state + 7 日价格路径, 为控制模型复杂度暂不新增该事件计数字段"),
     "d1_to_d0_volume_ratio": ("NOT_NEEDED", "NO_MODEL_INPUT",
                               "break_volume_ratio_vs_board_days 已覆盖 D1 相对本轮连板量能; 纯 D1/D0 版更噪声"),
     "d1_to_d0_amount_ratio": ("NOT_NEEDED", "NO_MODEL_INPUT",
                               "volume 版的金额替代表达, 按原则不与其同入模型"),
     "ma5_ma10_spread": ("NOT_NEEDED", "NO_MODEL_INPUT",
-                        "可由冻结数据导出: d1_close_to_ma5_raw - d1_close_to_ma10_raw 为价距差的单调函数"),
+                        "可由已有 MA5/MA10 距离字段精确确定: a=d1_close_to_ma5_raw, b=d1_close_to_ma10_raw, MA5/MA10 - 1 = (1+b)/(1+a) - 1; 未形成新的独立机制, 因此 V001 不新增字段"),
     "board_stage_volume_price_decomposition": ("DEFER_NOT_REQUIRED_FOR_V001", "NO_MODEL_INPUT",
                                                "第一/二/三板逐阶段量价重建复杂, 数据质量不稳定; V001 不需要"),
     # --- FORBIDDEN ---
@@ -395,18 +405,57 @@ FORMULA_OVERRIDE = {
     "last_board_day_in_pool": "末板日是否在涨停池",
     "pool_consecutive_count_last_board": "池口径 consecutive_limit_up_count (交叉核对用)",
     "recent_7d_cumulative_return": "close(D1) / close(T-6) - 1, T-6 = D1 前第 6 个交易日 (窗口 7 行)",
-    "recent_7d_max_drawdown": "max_{t∈[T-6..D1]} (peak_high_t - low_t) / peak_high_t; peak_high_t = max(high_{T-6..t})",
+    "recent_7d_max_drawdown": "max_{t∈[T-5..D1]} max(0, (prior_peak_t - low_t) / prior_peak_t); prior_peak_t = max(high_s), s < t (严格较早交易日, 不使用同日 high/low 顺序)",
     "recent_7d_close_position": "(close(D1) - 7d_low) / (7d_high - 7d_low); 7d_high==7d_low 置空",
     "d1_ma20_slope": "ma20(D1) / ma20(D1 前一日) - 1; ma20 = close 20 日滚动均值 (min_periods=20)",
     "recent_7d_limit_up_count": "(提案, 未实现) 7 日窗口内涨停天数",
     "d1_to_d0_volume_ratio": "(提案, 未实现) d1_volume / d0_volume",
     "d1_to_d0_amount_ratio": "(提案, 未实现) d1_amount / d0_amount",
-    "ma5_ma10_spread": "(提案, 未实现) ma5/ma10 - 1; 可由 d1_close_to_ma5_raw - d1_close_to_ma10_raw 导出",
+    "ma5_ma10_spread": "(提案, 未实现) MA5/MA10 - 1 = (1+b)/(1+a) - 1, a = d1_close_to_ma5_raw, b = d1_close_to_ma10_raw",
     "board_stage_volume_price_decomposition": "(提案, 未实现) 第一/二/三板与 D1 逐阶段量价结构",
 }
 
 PROPOSED_FIELDS = ["recent_7d_cumulative_return", "recent_7d_max_drawdown",
                    "recent_7d_close_position", "d1_ma20_slope"]
+
+
+def strict_7d_max_drawdown(highs: np.ndarray, lows: np.ndarray) -> float | None:
+    """严格日级最大回撤: prior_peak_t = max(high_s), s < t。
+
+    只允许使用严格早于 t 的历史交易日 high 作为 prior peak;
+    当前日 high 不用于当前日 low 的回撤 (日线 OHLC 无法确定同日先后顺序);
+    当前日 high 只成为后续交易日的 prior peak。
+    所有后续 low 高于 prior peak 时回撤为 0.0; prior peak 必须有限且 > 0。
+    """
+    if len(highs) < 2:
+        return None
+    prior_peak = highs[0]
+    drawdowns: list[float] = []
+    for t in range(1, len(highs)):
+        low_t = lows[t]
+        if np.isfinite(prior_peak) and prior_peak > 0 and np.isfinite(low_t):
+            drawdowns.append(max(0.0, (prior_peak - low_t) / prior_peak))
+        high_t = highs[t]
+        if np.isfinite(high_t):
+            prior_peak = max(prior_peak, high_t)
+    return max(drawdowns) if drawdowns else None
+
+
+def _self_check_max_drawdown() -> None:
+    """严格日级最大回撤的确定性 self-check (Case A/B/C)。"""
+    # Case A: 同日 high/low 不允许虚构顺序.
+    # day1 high=10 low=9; day2 high=15 low=8 -> day2 low=8 只相对 day1 prior peak=10 -> 20%,
+    # 不得使用 day2 high=15 得到 46.67%.
+    a = strict_7d_max_drawdown(np.array([10.0, 15.0]), np.array([9.0, 8.0]))
+    assert a is not None and abs(a - 0.20) < 1e-12, f"Case A failed: {a}"
+    # Case B: 先高后未来低. day1 high=10; day2 high=15; day3 low=9 ->
+    # day3 相对 day2 已形成的 prior peak=15 -> 40%.
+    b = strict_7d_max_drawdown(np.array([10.0, 15.0, 15.0]), np.array([np.nan, np.nan, 9.0]))
+    assert b is not None and abs(b - 0.40) < 1e-12, f"Case B failed: {b}"
+    # Case C: 一路上涨, 所有后续 low 高于 prior peak -> max_drawdown = 0.
+    c = strict_7d_max_drawdown(np.array([10.0, 11.0, 12.0]), np.array([9.5, 10.5, 11.5]))
+    assert c is not None and abs(c - 0.0) < 1e-12, f"Case C failed: {c}"
+    print("strict max drawdown self-check: Case A/B/C OK")
 
 
 def compute_proposed_features(training: pd.DataFrame, cache_dir: Path) -> pd.DataFrame:
@@ -442,16 +491,12 @@ def compute_proposed_features(training: pd.DataFrame, cache_dir: Path) -> pd.Dat
                     cum = frame.loc[i, "close"] / base - 1
             if i >= 6:
                 win = frame.loc[i - 6:i]
-                peak = 0.0
-                valid_peak = True
-                dd_vals = []
-                for _, r in win.iterrows():
-                    if pd.notna(r["high"]):
-                        peak = max(peak, r["high"])
-                    if peak > 0 and pd.notna(r["low"]):
-                        dd_vals.append((peak - r["low"]) / peak)
-                if dd_vals:
-                    dd = max(dd_vals)
+                dd = strict_7d_max_drawdown(
+                    pd.to_numeric(win["high"], errors="coerce").to_numpy(),
+                    pd.to_numeric(win["low"], errors="coerce").to_numpy(),
+                )
+                if dd is None:
+                    dd = np.nan
                 hi7 = win["high"].max()
                 lo7 = win["low"].min()
                 if pd.notna(hi7) and pd.notna(lo7) and hi7 > lo7 and pd.notna(frame.loc[i, "close"]):
@@ -467,10 +512,18 @@ def compute_proposed_features(training: pd.DataFrame, cache_dir: Path) -> pd.Dat
 
 
 def main() -> None:
+    _self_check_max_drawdown()
     dict_df = pd.read_csv(DICT_DIR / "v004c_factor_dictionary_v001.csv")
     primary = pd.read_csv(DICT_DIR / "v004c_feature_allowlist_primary_v001.csv")
     sensitivity = pd.read_csv(DICT_DIR / "v004c_feature_allowlist_sensitivity_v001.csv")
-    training = pd.read_csv(STAGE1_DIR / "v004c_training_d1_v001.csv", dtype={"code": str})
+    # Target-blind 输入: 训练表只读最小身份/日期列, 不读入 Target/tail/D2/D3/旧模型字段
+    training = pd.read_csv(
+        STAGE1_DIR / "v004c_training_d1_v001.csv",
+        dtype={"code": str},
+        usecols=COVERAGE_INPUT_COLUMNS,
+    )
+    assert set(training.columns) == set(COVERAGE_INPUT_COLUMNS), (
+        f"训练表读取列异常: {sorted(training.columns)}")
 
     # 1) 现有准入因子: 字典中 stage1_allowed=True 的 51 个源字段
     allowed = dict_df[dict_df["stage1_allowed_for_feature_analysis"] == True].copy()  # noqa: E712
@@ -555,11 +608,12 @@ def main() -> None:
     out.to_csv(OUT_CSV, index=False, encoding="utf-8-sig")
     print(f"rows={len(out)} -> {OUT_CSV.name}")
 
-    # 提案字段统计 (供 review 引用)
+    # 提案字段统计 (供 review 引用; d1_ma20_slope 为 DEFER, 仅保留覆盖验证能力)
     for name in PROPOSED_FIELDS:
         s = proposed[name]
         ok = s.notna()
-        print(f"{name}: n={int(ok.sum())}/{len(s)} missing={int((~ok).sum())} "
+        label = "DEFER_NOT_REQUIRED_FOR_V001" if name == "d1_ma20_slope" else "NEW_REQUIRED"
+        print(f"{name} [{label}]: n={int(ok.sum())}/{len(s)} missing={int((~ok).sum())} "
               f"rate={s.isna().mean():.4f} min={s.min():.6f} max={s.max():.6f} "
               f"median={s.median():.6f}")
     print("cache coverage reasons:", proposed["reason"].value_counts().to_dict())

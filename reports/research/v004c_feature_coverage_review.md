@@ -7,12 +7,17 @@
 - 配套 CSV: `v004c_feature_coverage_v001.csv` (100 行)
 - 复现脚本: `tools/v004c_feature_coverage_audit.py` (research utility only, 不进入 src/, 非正式运行入口)
 - 字段公式核对依据: `v004c_feature_definitions.md` (v004c-features-0.1) / `v004c_feature_definitions_v02.md` (v004c-features-0.2) / `v004c_factor_dictionary_v001.csv`
+- 修正版本: 2026-08-07 — 严格日级最大回撤时序定义 (prior peak 只用严格较早交易日)、
+  Target-blind usecols 最小读取、角色收敛为 3 个 NEW_REQUIRED
+  (提交 `research(v004c): correct feature coverage definitions`)
 
 ## 声明
 
 本审查未训练任何模型, 未运行 Logistic Regression, 未生成预测,
 未使用七月 Target7 / AUC / 命中率 / Top3 做任何决定;
 只读取了七月特征值、缺失率与无标签分布 (用于"字段是否稳定生成/是否漂移"判断)。
+覆盖工具通过 usecols 仅读取训练表 event_id/code/break_date,
+没有将任何标签、D2/D3 或旧模型字段读入内存。
 本阶段未冻结任何 M1/M2 成员, 未开始新的 Stage 2.3 冻结体系。
 
 ---
@@ -27,8 +32,9 @@
 3. **不应该进入新模型的字段**: 全部 label / outcome_audit / existing_model_audit 字段
    (含 v004a / v002 / recognition_score), 全部绝对尺度 DERIVE_ONLY 原始价量字段,
    以及本表标记 REDUNDANT / FORBIDDEN / NO_MODEL_INPUT 的 39 行。
-4. **MA5 / MA10 / MA20 技术状态**: 充分存在 (水平 + 斜率 + 二元 + 收回事件),
-   但 **MA20 slope 缺失**、MA5/MA10 spread 可由冻结数据导出 (见第五节 B)。
+4. **MA5 / MA10 / MA20 技术状态**: 充分存在 (水平 + 斜率 + 二元 + 收回事件);
+   MA10/MA20 已有足够 V001 技术状态表达, d1_ma20_slope 延后为 sensitivity;
+   MA5/MA10 spread 可由冻结字段精确派生 (见第四节 B)。
 5. **D0→D1 变化**: 已存在且公式已核实 — `break_open_return / break_high_return /
    break_close_return` 的基准均为 `break_prev_close = 末板日收盘 = D0 close`,
    确为 D0→D1 transition (不是 D1 当日收益)。量能变化经
@@ -36,8 +42,9 @@
 6. **最近 7 个交易日短期事件路径目前缺少**: 3 个机制 — 7 日累计涨幅、
    7 日最大回撤、7 日收盘在 7 日区间内的位置。现有字段全部锚定
    D1 当日 / D0 close / MA / 10·20 日计数, 无任何字段锚定整条路径。
-7. **是否真的需要新增特征**: 需要, 但只需要 4 个 (全部满足第十二节 13 条准入)。
-8. **最少应新增字段**: 4 个 (3 个 7 日路径 + 1 个 MA20 斜率), 不超过 6 个。
+7. **是否真的需要新增特征**: 需要, 但只需要 3 个 (全部满足第六节 E 的 13 条准入)。
+8. **最少应新增字段**: 3 个 (7 日路径三机制: 累计延伸度 / 严格时序回撤 / 区间位置),
+   不超过 6 个。
 9. **M1 D1-structure baseline 支撑字段**: 已充分存在, 5 个槽位全部有 preferred 候选
    (见第六节 F)。
 10. **M2 integrated model 槽位**: 8 个槽位定义见第六节 F, 全部 NOT_FROZEN。
@@ -71,12 +78,14 @@
 |---|---|---|
 | board_streak_before_break (经派生 board_streak_is_3) | 二板/三板事件状态 | M1_BASELINE_CANDIDATE |
 | break_day_in_pool | D1 断板日池状态 | M2_PRIMARY_CANDIDATE |
-| recent_limit_up_count_10d | 10 日涨停次数 | M2_PRIMARY_CANDIDATE |
+| recent_limit_up_count_10d | 10 日涨停次数 | CONTEXT_ONLY |
 | recent_limit_up_count_20d / recent_pool_appearance_count_10d·20d / max_board_streak_20d | 20 日事件统计 | CONTEXT_ONLY (REUSE_AS_CONTEXT, 不自动进入主模型) |
 | last_board_day_in_pool / pool_consecutive_count_last_board | D0 池交叉核对 | SENSITIVITY_ONLY |
 
-核心事件窗口是最近 7 个交易日; 20 日事件统计 (recent_limit_up_count_20d 等) 判定为
-**REUSE_AS_CONTEXT**: 可在 M2 作上下文槽位候选, 不得因"已存在"自动成为主模型输入。
+核心事件窗口是最近 7 个交易日; 10/20 日事件统计 (recent_limit_up_count_10d/20d,
+recent_pool_appearance_count_10d/20d, max_board_streak_20d) 全部判定为 **CONTEXT_ONLY /
+REUSE_AS_CONTEXT**: 属于已有事件背景信息, 可保留用于上下文和后续敏感性比较,
+但不是 V001 M2 的默认主模型输入, 不得因"已存在"自动成为主模型输入。
 
 ### 2. D0 横截面 (D0_CROSS_SECTION) — 部分覆盖
 
@@ -139,15 +148,18 @@ MUTUALLY_EXCLUSIVE_EXPRESSION (ME01/ME02/ME03/ME04), 正式模型不得同时放
 - d1_true_reclaim_ma5 (下探收回, 6% 正例)
 - d1_close_above_ma5 (ME06 canonical 二元项, 99% 恒 True) / consecutive_days_below_ma5 (ME06 替代, NP04 近单调)
 
-### 10. MA10 / MA20 (D1_MA10_MA20_STATE) — 部分覆盖
+### 10. MA10 / MA20 (D1_MA10_MA20_STATE) — 充分覆盖
 
 - 已有: d1_close_to_ma10_raw / d1_low_to_ma10_raw / d1_close_to_ma20 (水平),
   d1_ma10_slope (趋势), d1_close_above_ma10 (ME07 canonical), d1_true_reclaim_ma10 (2.2%),
-  consecutive_days_below_ma10 (ME07 替代)
-- 缺失: **MA20 slope** (d1_ma10_slope 存在, MA20 趋势方向不存在) → NEW_REQUIRED
-- MA5/MA10 spread: 不新增字段 — 可由冻结数据导出
-  (d1_close_to_ma5_raw − d1_close_to_ma10_raw 是价距差的单调函数; d1_ma5/d1_ma10
-  原始锚点也在冻结表中可作为模型表阶段的派生来源)
+  consecutive_days_below_ma10 (ME07 替代) — MA10/MA20 技术状态已有足够 V001 表达
+- d1_ma20_slope: 概念上合理, 但 MA10/MA20 技术背景已有充分表达;
+  为控制 V001 特征数量和避免增加相近趋势表达, 本阶段不把它作为必补字段,
+  判定 **DEFER_NOT_REQUIRED_FOR_V001 / SENSITIVITY_ONLY** (后续可作为敏感性候选重新评估;
+  脚本保留其确定性计算能力)
+- MA5/MA10 spread: 不新增字段 — 可由已有 MA5/MA10 距离字段精确确定:
+  设 a = d1_close_to_ma5_raw, b = d1_close_to_ma10_raw, 则 MA5/MA10 − 1 = (1+b)/(1+a) − 1
+  (不是简单做差; d1_ma5/d1_ma10 原始锚点也在冻结表中可作为模型表阶段的派生来源)
 - 稳定性提示: Stage 2.2 无标签分布漂移 (六月→七月) 标记了
   d1_close_to_ma10_raw / d1_low_to_ma10_raw / d1_close_to_ma20 / d1_ma10_slope —
   记为建模前注意事项, 不构成字段删除理由, 也不用于字段选择。
@@ -171,8 +183,12 @@ MUTUALLY_EXCLUSIVE_EXPRESSION (ME01/ME02/ME03/ME04), 正式模型不得同时放
 3. **高度重复的 MA 字段**: 同一 MA 的 close/low/high 三锚点 (机制相同);
    above 二元项 (99% 恒 True); reclaim 二元项与 low 锚点近重复; consecutive_below 与
    above 近单调 (NP03/NP04)。紧凑模型每组只留一个代表性表达。
-4. **需要新增的 MA 字段**: 仅 `d1_ma20_slope` (MA20 趋势方向; 冻结数据无法导出,
-   因为 ma20(D0) 不在冻结表中)。MA5/MA10 spread 不新增 (可导出)。
+4. **需要新增的 MA 字段**: 无。`d1_ma20_slope` 概念上合理 (MA20 趋势方向;
+   冻结数据无法直接导出, 因为 ma20(D0) 不在冻结表中), 但 MA10/MA20 技术背景
+   已有充分表达, 判定 DEFER_NOT_REQUIRED_FOR_V001 / SENSITIVITY_ONLY,
+   本阶段不作为 V001 必补字段。MA5/MA10 spread 不新增
+   (可由 a=d1_close_to_ma5_raw, b=d1_close_to_ma10_raw 精确确定:
+   MA5/MA10 − 1 = (1+b)/(1+a) − 1)。
 
 ---
 
@@ -183,13 +199,15 @@ MUTUALLY_EXCLUSIVE_EXPRESSION (ME01/ME02/ME03/ME04), 正式模型不得同时放
 | 机制 | 为什么现有字段不能表达 | 需要哪些原始数据 | 严格公式 (全部 ≤ D1) | D1 可用性 | 建议 |
 |---|---|---|---|---|---|
 | 7 日累计涨幅 (路径延伸度) | board_streak 只有 {2,3} 两个离散值; break_close_return 只锚 D0 close; 10/20 日字段是计数不是收益 | data/cache/daily OHLCV (逐股相邻交易日) | close(D1) / close(T−6) − 1, T−6 = D1 前第 6 个交易日 | 是 | **NEW_REQUIRED** |
-| 7 日最大回撤 (路径质量) | d1_high_to_close_drawdown_raw / break_high_to_close_drawdown 均为 D1 当日日内回撤, 不含多日路径 | 同上 | max_{t∈[T−6..D1]} (peak_high_t − low_t) / peak_high_t, peak_high_t = max(high_{T−6..t}) | 是 | **NEW_REQUIRED** |
+| 7 日最大回撤 (路径质量) | d1_high_to_close_drawdown_raw / break_high_to_close_drawdown 均为 D1 当日日内回撤, 不含多日路径 | 同上 | max_{t∈[T−5..D1]} max(0, (prior_peak_t − low_t) / prior_peak_t); prior_peak_t = max(high_s), s < t (严格较早交易日的 high, 避免利用日线无法确定的同日 high/low 先后顺序) | 是 | **NEW_REQUIRED** |
 | 7 日区间收盘位置 | d1_close_location 是 D1 日内位置; break_close_return 锚 D0 close; 两者都不锚 7 日区间 | 同上 | (close(D1) − 7d_low) / (7d_high − 7d_low); 7d_high == 7d_low 置空 (不产生 inf, 同 d1_close_location 政策) | 是 | **NEW_REQUIRED** |
 
 ### C2. 明确 NOT_NEEDED / DEFER 的候选机制
 
-- **7 日涨停次数** (候选: recent_7d_limit_up_count): NOT_NEEDED — 二/三板事件中
-  7 日窗口内涨停天数 ≈ board_streak_before_break (+ 至多 1 个窗口内早前板), 与事件状态重复。
+- **7 日涨停次数** (候选: recent_7d_limit_up_count): DEFER_NOT_REQUIRED_FOR_V001 —
+  最近 7 日涨停次数可能包含当前连板之前的独立涨停事件 (先涨停→中断→再形成当前二板→D1 断板),
+  因此并不严格等价于 board_streak_before_break; V001 已使用 board/event state + 7 日价格路径,
+  为控制模型复杂度暂不新增该事件计数字段 (本阶段不实现该字段)。
 - **D1/D0 成交量变化** (候选: d1_to_d0_volume_ratio): NOT_NEEDED —
   break_volume_ratio_vs_board_days 已表达"D1 相对本轮连板 (含 D0) 的量能",
   纯 D1/D0 比值更噪声 (D0 可能为一字板小量)。
@@ -208,7 +226,7 @@ MUTUALLY_EXCLUSIVE_EXPRESSION (ME01/ME02/ME03/ME04), 正式模型不得同时放
 
 ---
 
-## 六、E. 最终新增字段建议 (4 个, ≤ 6)
+## 六、E. 最终新增字段建议 (3 个, ≤ 6)
 
 全部满足 13 条准入: 现有 59 准入字段无等价表达 / 对应明确缺失机制 / D1 收盘可知 /
 只依赖 D1 及更早 / 现有日线缓存稳定计算 (实测 333/333, 0 缺失) / 无新数据源 /
@@ -218,18 +236,20 @@ MUTUALLY_EXCLUSIVE_EXPRESSION (ME01/ME02/ME03/ME04), 正式模型不得同时放
 | priority | feature_name | mechanism | why_needed | source_data | formula |
 |---|---|---|---|---|---|
 | 1 | recent_7d_cumulative_return | RECENT_7D_PATH | 现有字段无多日累计延伸度表达; 二/三板类内区分度缺失 | data/cache/daily | close(D1)/close(T−6) − 1 |
-| 2 | recent_7d_max_drawdown | RECENT_7D_PATH | 现有字段只有 D1 日内回撤; 路径内洗盘/分歧强度缺失 | data/cache/daily | max_t (peak_high_t − low_t)/peak_high_t, 窗口 [T−6..D1] |
+| 2 | recent_7d_max_drawdown | RECENT_7D_PATH | 现有字段只有 D1 日内回撤; 路径内洗盘/分歧强度缺失 | data/cache/daily | max_{t∈[T−5..D1]} max(0, (prior_peak_t − low_t)/prior_peak_t), prior_peak_t = max(high_s), s < t |
 | 3 | recent_7d_close_position | RECENT_7D_PATH | D1 收盘相对整条路径区间的位置缺失 | data/cache/daily | (close − 7d_low)/(7d_high − 7d_low), 退化置空 |
-| 4 | d1_ma20_slope | D1_MA10_MA20_STATE | MA20 趋势方向缺失; 冻结数据不可导出 (需 ma20(D0)) | data/cache/daily | ma20(D1)/ma20(前一日) − 1 |
 
-实测统计 (333 事件, D1 时点重算):
+实测统计 (333 事件, D1 时点重算; 脚本对最大回撤内置 Case A/B/C 确定性 self-check):
 
 | 字段 | 覆盖 | 缺失率 | min | median | max |
 |---|---|---|---|---|---|
 | recent_7d_cumulative_return | 333/333 | 0.0% | −0.207 | 0.190 | 0.639 |
-| recent_7d_max_drawdown | 333/333 | 0.0% | 0.064 | 0.124 | 0.404 |
+| recent_7d_max_drawdown (严格日级定义) | 333/333 | 0.0% | 0.025 | 0.101 | 0.404 |
 | recent_7d_close_position | 333/333 | 0.0% | 0.357 | 0.779 | 1.000 |
-| d1_ma20_slope | 333/333 | 0.0% | −0.031 | 0.008 | 0.054 |
+
+补充 (DEFER, 仅覆盖验证): d1_ma20_slope 仍由脚本确定性计算 (333/333, 0.0% 缺失,
+min −0.031 / median 0.008 / max 0.054), 但正式结论为 DEFER_NOT_REQUIRED_FOR_V001 /
+SENSITIVITY_ONLY, 不作为 V001 必补字段。
 
 (本样本无 7d_high==7d_low 退化行, 但 NaN 政策已按规范编码, 防止静默 inf。)
 
@@ -262,7 +282,7 @@ MUTUALLY_EXCLUSIVE_EXPRESSION (ME01/ME02/ME03/ME04), 正式模型不得同时放
 | volume/chip structure | volume_above_d1_close_ratio | high_zone_volume_ratio / late_day_sell_volume_ratio | NOT_FROZEN |
 | VWAP | d1_close_to_vwap_raw | — | NOT_FROZEN |
 | MA5 | d1_close_to_ma5_raw | d1_ma5_slope / d1_true_reclaim_ma5 | NOT_FROZEN |
-| MA10/MA20 context | d1_close_to_ma10_raw / d1_close_to_ma20 | d1_ma20_slope (new) | NOT_FROZEN |
+| MA10/MA20 context | d1_close_to_ma10_raw / d1_close_to_ma20 | d1_low_to_ma10_raw / d1_ma10_slope (d1_ma20_slope 延后为 sensitivity) | NOT_FROZEN |
 
 M1 与 M2 的槽位与候选全部标记 **NOT_FROZEN**, 由下一阶段 (build compact v004c model table)
 在模型表构建时决策。
@@ -302,7 +322,8 @@ M1 与 M2 的槽位与候选全部标记 **NOT_FROZEN**, 由下一阶段 (build 
 1. Stage 2.2 无标签分布漂移标记: d1_close_to_ma10_raw, d1_low_to_ma10_raw,
    d1_close_to_ma20, d1_ma10_slope (六月→七月)。建模时按 train-fold-only 预处理
    与日期稳定性惯例处理, 不构成字段删除理由。
-2. 20 日事件统计字段 (recent_limit_up_count_20d 等) 标记 CONTEXT_ONLY /
-   REUSE_AS_CONTEXT, 是否进入 M2 由模型表阶段决定, 本阶段不冻结。
+2. 10/20 日事件统计字段 (recent_limit_up_count_10d/20d, recent_pool_appearance_count_10d/20d,
+   max_board_streak_20d) 标记 CONTEXT_ONLY / REUSE_AS_CONTEXT, 是否进入 M2 由模型表阶段决定,
+   本阶段不冻结。
 3. 新字段最近 7 日窗口使用个股日线相邻交易日序列 (与冻结数据集同口径);
    停牌日自然不在序列中, 无需额外处理。
