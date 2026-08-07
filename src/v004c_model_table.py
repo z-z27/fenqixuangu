@@ -192,6 +192,7 @@ LINEAGE_CSV_NAME = "v004c_d1_column_lineage.csv"
 COVERAGE_CSV_NAME = "v004c_feature_coverage_v001.csv"
 ALLOWLIST_PRIMARY_NAME = "v004c_feature_allowlist_primary_v001.csv"
 ALLOWLIST_SENSITIVITY_NAME = "v004c_feature_allowlist_sensitivity_v001.csv"
+EXCLUSIONS_NAME = "v004c_feature_exclusions_v001.csv"
 DERIVED_SPEC_NAME = "v004c_predeclared_derived_factor_spec_v001.csv"
 TABLE_CSV_NAME = "v004c_model_table_v001.csv"
 SCHEMA_CSV_NAME = "v004c_model_table_schema_v001.csv"
@@ -366,28 +367,91 @@ def _check_available_as_of(name: str, row: pd.Series) -> None:
         raise ModelTableError(f"{name} 可用时点晚于 D1_CLOSE: {available}")
 
 
+def _check_new_required_exception(name: str, row: pd.Series) -> None:
+    """3 个 recent-7d 字段的授权例外: 不要求存在于旧 Stage 2.1 allowlist。
+
+    授权来源是 feature coverage: NEW_REQUIRED / M2_PRIMARY_CANDIDATE /
+    D1_CLOSE / RECENT_7D_PATH。
+    """
+    if row["coverage_status"] != "NEW_REQUIRED":
+        raise ModelTableError(f"{name} 应为 NEW_REQUIRED: {row['coverage_status']}")
+    if row["recommended_role"] != "M2_PRIMARY_CANDIDATE":
+        raise ModelTableError(f"{name} recommended_role 应为 M2_PRIMARY_CANDIDATE")
+    if str(row["available_as_of"]) != "D1_CLOSE":
+        raise ModelTableError(f"{name} 可用时点应为 D1_CLOSE: {row['available_as_of']}")
+    if str(row["coverage_mechanism"]) != "RECENT_7D_PATH":
+        raise ModelTableError(f"{name} 机制应为 RECENT_7D_PATH: {row['coverage_mechanism']}")
+
+
+def _check_stage21_membership(
+    name: str,
+    tier: str,
+    allow_names: set[str],
+    exclusion_status: dict[str, str],
+) -> None:
+    """字段必须来自 Stage 2.1 允许集合, 且不得来自 Stage 2.1 exclusion。"""
+    if name not in allow_names:
+        raise ModelTableError(f"{name} 不在 Stage 2.1 {tier} allowlist 中")
+    if name in exclusion_status:
+        raise ModelTableError(f"{name} 来自 Stage 2.1 exclusion: {exclusion_status[name]}")
+
+
+def _check_preprocess_and_me(name: str, allow_map: pd.DataFrame, coverage_row: pd.Series) -> None:
+    """preprocess_policy 与 mutual_exclusion_group 必须与 Stage 2.1 定义一致。"""
+    allow_row = allow_map.loc[name]
+    pp_allow = str(allow_row["preprocess_policy"])
+    pp_coverage = str(coverage_row["preprocess_policy"])
+    if pp_allow != pp_coverage:
+        raise ModelTableError(
+            f"{name} preprocess_policy 不一致 (Stage2.1={pp_allow}, coverage={pp_coverage})")
+    me_allow = str(allow_row["mutual_exclusion_group_id"])
+    me_coverage = str(coverage_row["mutual_exclusion_group"])
+    na_allow = me_allow in ("nan", "")
+    na_coverage = me_coverage in ("nan", "")
+    if na_allow != na_coverage or (not na_allow and me_allow != me_coverage):
+        raise ModelTableError(
+            f"{name} mutual_exclusion_group 不一致 (Stage2.1={me_allow}, coverage={me_coverage})")
+
+
 def verify_feature_contract(
     coverage: pd.DataFrame,
     allowlist_primary: pd.DataFrame,
+    allowlist_sensitivity: pd.DataFrame,
+    exclusions: pd.DataFrame,
     training_columns: set[str],
 ) -> None:
-    """校验模块内 feature contract 与冻结资产一致 (fail closed)。"""
+    """校验模块内 feature contract 与冻结资产交叉一致 (fail closed)。
+
+    规则: Stage 2.1 allowlist 决定字段历史合法性与原始结构 (成员/排除/
+    preprocess/mutual exclusion); feature coverage 决定当前 V001 模型表
+    角色。两者交叉验证, 旧 allowlist 不得覆盖最新 coverage 角色。
+    """
     coverage_names = set(coverage["feature_name"])
+    primary_allow = {str(n) for n in allowlist_primary["feature_name"]}
+    sensitivity_allow = {str(n) for n in allowlist_sensitivity["feature_name"]}
+    primary_map = allowlist_primary.set_index("feature_name")
+    sensitivity_map = allowlist_sensitivity.set_index("feature_name")
+    exclusion_status = {
+        str(source): str(status)
+        for source, status in zip(exclusions["source_column"], exclusions["admission_status"])
+    }
+
     for name in PRIMARY_FEATURE_COLUMNS:
         if name not in coverage_names:
             raise ModelTableError(f"PRIMARY feature 不在覆盖表中: {name}")
         row = _coverage_row(coverage, name)
         if name in RECENT_7D_FIELDS:
-            if row["coverage_status"] != "NEW_REQUIRED":
-                raise ModelTableError(f"{name} 应为 NEW_REQUIRED: {row['coverage_status']}")
-            if row["recommended_role"] != "M2_PRIMARY_CANDIDATE":
-                raise ModelTableError(f"{name} recommended_role 应为 M2_PRIMARY_CANDIDATE")
+            _check_new_required_exception(name, row)
         else:
+            _check_stage21_membership(name, "PRIMARY", primary_allow, exclusion_status)
+            _check_preprocess_and_me(name, primary_map, row)
             if row["coverage_status"] != "EXISTING_REUSE":
                 raise ModelTableError(f"{name} 应为 EXISTING_REUSE: {row['coverage_status']}")
             if row["recommended_role"] not in ("M1_BASELINE_CANDIDATE", "M2_PRIMARY_CANDIDATE"):
-                raise ModelTableError(f"{name} 不应出现在 PRIMARY universe: {row['recommended_role']}")
+                raise ModelTableError(
+                    f"{name} 不再是合法模型候选角色: {row['recommended_role']}")
         _check_available_as_of(name, row)
+
     for name in SENSITIVITY_FEATURE_COLUMNS:
         if name not in coverage_names:
             raise ModelTableError(f"SENSITIVITY feature 不在覆盖表中: {name}")
@@ -397,6 +461,13 @@ def verify_feature_contract(
         if row["recommended_role"] != "SENSITIVITY_ONLY":
             raise ModelTableError(f"{name} 必须 SENSITIVITY_ONLY: {row['recommended_role']}")
         _check_available_as_of(name, row)
+        if name in sensitivity_allow:
+            _check_preprocess_and_me(name, sensitivity_map, row)
+        elif name in primary_allow:
+            # 合法敏感性表达: Stage 2.1 primary 准入 + coverage 明确 SENSITIVITY_ONLY
+            _check_preprocess_and_me(name, primary_map, row)
+        else:
+            raise ModelTableError(f"{name} 不在 Stage 2.1 allowlist (primary/sensitivity) 中")
 
     # 排除项不得混入 feature universe
     excluded = (
@@ -548,6 +619,14 @@ def _validate_written_outputs(tmp_dir: Path, expected_checks: dict) -> None:
         except DatasetValidationError as exc:
             raise ModelTableError(f"原子输出读回 Target 非严格二元: {exc}") from exc
 
+    # schema 与 table 不得漂移: 行数一致且 column_name 一一对应
+    schema = pd.read_csv(tmp_dir / SCHEMA_CSV_NAME, encoding="utf-8-sig")
+    if len(schema) != len(table.columns):
+        raise ModelTableError(
+            f"原子输出 schema 行数 {len(schema)} != table 列数 {len(table.columns)}")
+    if list(schema["column_name"]) != list(table.columns):
+        raise ModelTableError("原子输出 schema 列名与 table 列不一致 (顺序或成员)")
+
 
 # ---------------------------------------------------------------------------
 # 正式构建
@@ -572,6 +651,9 @@ def build_v004c_model_table(config: V004CModelTableConfig) -> dict:
     training_path = stage1_dir / TRAINING_CSV_NAME
     coverage = pd.read_csv(coverage_csv, encoding="utf-8-sig")
     allowlist_primary = pd.read_csv(dictionary_dir / ALLOWLIST_PRIMARY_NAME, encoding="utf-8-sig")
+    allowlist_sensitivity = pd.read_csv(dictionary_dir / ALLOWLIST_SENSITIVITY_NAME,
+                                        encoding="utf-8-sig")
+    exclusions = pd.read_csv(dictionary_dir / EXCLUSIONS_NAME, encoding="utf-8-sig")
 
     # 1. 最小读取训练表 (identifiers + 已有 feature + label + audit; 不读其它列)
     existing_features = [c for c in FEATURE_COLUMNS
@@ -579,10 +661,16 @@ def build_v004c_model_table(config: V004CModelTableConfig) -> dict:
     usecols = (list(IDENTIFIER_COLUMNS) + existing_features
                + list(LABEL_COLUMNS) + list(AUDIT_COLUMNS))
     training = pd.read_csv(training_path, dtype={"code": str}, usecols=usecols)
-    assert set(training.columns) == set(usecols), "训练表列集与声明不一致"
+    missing_columns = sorted(set(usecols) - set(training.columns))
+    unexpected_columns = sorted(set(training.columns) - set(usecols))
+    if missing_columns or unexpected_columns:
+        raise ModelTableError(
+            f"训练表列集与声明不一致 (missing={missing_columns}, "
+            f"unexpected={unexpected_columns})")
 
-    # 2. feature contract 校验 (来源固定; 不用 Target)
-    verify_feature_contract(coverage, allowlist_primary, set(training.columns))
+    # 2. feature contract 校验 (Stage 2.1 allowlist + coverage 交叉验证; 不用 Target)
+    verify_feature_contract(coverage, allowlist_primary, allowlist_sensitivity,
+                            exclusions, set(training.columns))
     scan_for_leakage(FEATURE_COLUMNS)
 
     # 3. 派生字段 (按冻结公式)
@@ -628,10 +716,12 @@ def build_v004c_model_table(config: V004CModelTableConfig) -> dict:
     checks["target_binary"] = bool(target.isin([True, False]).all())
     checks["output_dir"] = str(output_dir)
 
-    # 7. schema 与 review 内容
+    # 7. schema 与 review 内容 (schema 只描述 model table 实际列)
     schema_rows = _build_schema_rows(table, coverage, training_path)
-    review_md = _build_review_md(config, table, coverage, checks,
-                                 schema_rows, training_path)
+    if list(schema_rows["column_name"]) != list(table.columns):
+        raise ModelTableError(
+            "schema column_name 必须与 model table 列一一对应且顺序一致")
+    review_md = _build_review_md(config, table, coverage, checks, training_path)
     files: dict[str, str] = {
         TABLE_CSV_NAME: table.to_csv(index=False, encoding="utf-8-sig"),
         SCHEMA_CSV_NAME: schema_rows.to_csv(index=False, encoding="utf-8-sig"),
@@ -716,26 +806,9 @@ def _build_schema_rows(table: pd.DataFrame, coverage: pd.DataFrame,
                 "formula_or_definition": _audit_definition(column),
                 "forbidden_reason": "-",
             })
-    # 明确排除的字段 (coverage 结论, model_universe=NONE, 含原因)
-    for _, row in coverage.iterrows():
-        name = row["feature_name"]
-        if name in table.columns:
-            continue  # target7 作为 LABEL 已覆盖
-        status = str(row["coverage_status"])
-        role = str(row["recommended_role"])
-        if status in ("REDUNDANT", "FORBIDDEN", "NOT_NEEDED",
-                      "DEFER_NOT_REQUIRED_FOR_V001") or role == "CONTEXT_ONLY":
-            rows.append({
-                "column_name": name,
-                "role": "FEATURE",
-                "source": str(row["source"]),
-                "available_as_of": str(row["available_as_of"]),
-                "mechanism": str(row["coverage_mechanism"]),
-                "preprocess_policy": str(row["preprocess_policy"]),
-                "model_universe": "NONE",
-                "formula_or_definition": str(row["formula_or_definition"]),
-                "forbidden_reason": f"{status}/{role}: {str(row['reason'])}",
-            })
+    # 注意: schema 只描述 model table 实际输出列; 被排除的候选字段与排除
+    # 原因由 feature coverage 资产 (v004c_feature_coverage_v001.csv) 负责,
+    # 不在此重复维护第二套排除清单。
     return pd.DataFrame(rows, columns=[
         "column_name", "role", "source", "available_as_of", "mechanism",
         "preprocess_policy", "model_universe", "formula_or_definition", "forbidden_reason"])
@@ -777,8 +850,7 @@ def _audit_definition(column: str) -> str:
 
 
 def _build_review_md(config: V004CModelTableConfig, table: pd.DataFrame,
-                     coverage: pd.DataFrame, checks: dict,
-                     schema_rows: pd.DataFrame, training_path: Path) -> str:
+                     coverage: pd.DataFrame, checks: dict, training_path: Path) -> str:
     stage1_dir = Path(config.stage1_dir)
     dictionary_dir = Path(config.dictionary_dir)
     coverage_csv = Path(config.coverage_csv) if config.coverage_csv else (
@@ -788,7 +860,8 @@ def _build_review_md(config: V004CModelTableConfig, table: pd.DataFrame,
     lines.append("")
     lines.append(f"- 阶段: 正式多变量模型开发前的最后一个数据工程阶段 (构建模型输入表, 不训练模型)")
     lines.append(f"- 构建日期: 2026-08-07")
-    lines.append(f"- 分支: research-sample-analysis (预期 HEAD 91bd2009; 特征覆盖阶段已结束)")
+    lines.append(f"- 分支: research-sample-analysis (模型表构建 commit ab2b067; "
+                 f"特征覆盖 commit 91bd2009)")
     lines.append("")
     lines.append("## 0. 输入版本与来源")
     lines.append("")
@@ -797,7 +870,8 @@ def _build_review_md(config: V004CModelTableConfig, table: pd.DataFrame,
         path = stage1_dir / name
         lines.append(f"   - `{name}` SHA256: `{_sha256(path)}`")
     lines.append(f"2. **Stage 2.1 输入版本**: `{dictionary_dir.name}` (ref `{config.stage2_1_ref}`)")
-    for name in (ALLOWLIST_PRIMARY_NAME, ALLOWLIST_SENSITIVITY_NAME, DERIVED_SPEC_NAME):
+    for name in (ALLOWLIST_PRIMARY_NAME, ALLOWLIST_SENSITIVITY_NAME,
+                 EXCLUSIONS_NAME, DERIVED_SPEC_NAME):
         path = dictionary_dir / name
         lines.append(f"   - `{name}` SHA256: `{_sha256(path)}`")
     lines.append(f"3. **特征覆盖结论**: `{coverage_csv.name}` SHA256: `{_sha256(coverage_csv)}` (commit 91bd2009)")
@@ -807,7 +881,8 @@ def _build_review_md(config: V004CModelTableConfig, table: pd.DataFrame,
     lines.append("")
     lines.append(f"- 总行数: {checks['rows']} (一行一个 D1 事件)")
     lines.append(f"- signal dates: {checks['signal_dates']}")
-    lines.append(f"- 列数: {checks['columns']}")
+    lines.append(f"- model table 列数: {checks['columns']}")
+    lines.append(f"- schema rows: {checks['columns']} (schema 只描述实际输出表列, 与 table 列一一对应)")
     lines.append(f"- feature 数量: {checks['feature_count']} "
                  f"(primary {checks['primary_count']} + sensitivity {checks['sensitivity_count']})")
     lines.append(f"- identifier 数量: {checks['identifier_count']}")
@@ -837,6 +912,11 @@ def _build_review_md(config: V004CModelTableConfig, table: pd.DataFrame,
     lines.append("严格日级最大回撤: `prior_peak_t = max(high_s), s < t` (只用严格较早交易日 high, "
                  "不使用同日 high/low 先后顺序; 当前日 high 只成为后续 prior peak; "
                  "所有后续 low 高于 prior peak 时回撤 = 0)。")
+    lines.append("")
+    lines.append("recent-7d 三字段的授权来源是 feature coverage "
+                 "(coverage_status=NEW_REQUIRED / recommended_role=M2_PRIMARY_CANDIDATE / "
+                 "available_as_of=D1_CLOSE / mechanism=RECENT_7D_PATH), "
+                 "不要求存在于旧 Stage 2.1 allowlist。")
     lines.append("")
     lines.append("## 4. 六月/七月数据完整性描述 (只允许行数与标签计数, 禁止模型表现)")
     lines.append("")
@@ -880,7 +960,11 @@ def _build_review_md(config: V004CModelTableConfig, table: pd.DataFrame,
     lines.append("")
     lines.append("未来第一版 M1/M2 预计只使用完整 primary 字段。")
     lines.append("")
-    lines.append("## 8. 明确排除的字段 (model_universe=NONE, 原因见 schema)")
+    lines.append("## 8. 明确排除的字段 (排除清单与原因由 feature coverage 资产负责)")
+    lines.append("")
+    lines.append("以下字段不得进入 PRIMARY/SENSITIVITY universe; 逐字段排除原因见 "
+                 f"`{COVERAGE_CSV_NAME}` (coverage_status / recommended_role / reason 列), "
+                 "model-table schema 不重复维护排除清单:")
     lines.append("")
     for group_label, names in (
         ("CONTEXT_ONLY (REUSE_AS_CONTEXT, 不升级为 primary)",
@@ -892,9 +976,10 @@ def _build_review_md(config: V004CModelTableConfig, table: pd.DataFrame,
                                             "v004a_probability")),
     ):
         lines.append(f"- **{group_label}**: {', '.join(names)}")
-    lines.append("- 其余 REDUNDANT/NOT_NEEDED/FORBIDDEN 排除行见 "
-                 f"`{SCHEMA_CSV_NAME}` (共 {int((schema_rows['model_universe'] == 'NONE').sum()) - 0} 行 NONE, "
-                 "含 4 个 identifier + 1 个 label + 5 个 audit 的常规 NONE 角色)。")
+    lines.append(f"- 其余 REDUNDANT / NOT_NEEDED / FORBIDDEN / AUDIT_ONLY / DERIVE_ONLY "
+                 f"候选字段同样不进入模型表; 全部由 `{COVERAGE_CSV_NAME}` 统一记录。")
+    lines.append(f"- 本 schema (`{SCHEMA_CSV_NAME}`) 只描述实际输出表列 "
+                 f"({checks['columns']} 行 = model table 列数), 不含任何不在表中的字段。")
     lines.append("")
     lines.append("## 9. M1/M2 槽位 (本阶段不选模型)")
     lines.append("")
@@ -907,6 +992,10 @@ def _build_review_md(config: V004CModelTableConfig, table: pd.DataFrame,
     lines.append("- 本阶段未做任何全样本预处理 (无 z-score / winsorize / P01-P99 clip / 标准化)。")
     lines.append("- 模型表保存 raw legal feature values; 预处理参数必须由下一阶段每个 "
                  "walk-forward fold 只用训练 fold 计算。")
+    lines.append("- recent-7d 三字段在 schema 中的 preprocess_policy 标记为 "
+                 "FOLD_CLIP_Z (临时约定, 与 Stage 2.1 连续变量约定一致, 不构成模型冻结); "
+                 "实际 clip 阈值、均值、标准差等参数只能在下一阶段每个 training fold "
+                 "内部拟合, 本阶段未生成任何全样本预处理参数。")
     lines.append("")
     lines.append("## 11. 原子输出")
     lines.append("")

@@ -2,7 +2,7 @@
 
 - 阶段: 正式多变量模型开发前的最后一个数据工程阶段 (构建模型输入表, 不训练模型)
 - 构建日期: 2026-08-07
-- 分支: research-sample-analysis (预期 HEAD 91bd2009; 特征覆盖阶段已结束)
+- 分支: research-sample-analysis (模型表构建 commit ab2b067; 特征覆盖 commit 91bd2009)
 
 ## 0. 输入版本与来源
 
@@ -12,6 +12,7 @@
 2. **Stage 2.1 输入版本**: `v004c_factor_dictionary_v001_20260601_20260729` (ref `v004c-factor-dictionary-0.1`)
    - `v004c_feature_allowlist_primary_v001.csv` SHA256: `03e8416bc8428dc2f1fd2c054e66e5a744e270fb27a19bbd9aa79f030241e9c9`
    - `v004c_feature_allowlist_sensitivity_v001.csv` SHA256: `10e41546c409e40fef66471b300a3b69dec09877f321e59c0fd7d9224804ad1b`
+   - `v004c_feature_exclusions_v001.csv` SHA256: `5e9b2bd9c540b4cef27e27e22737ac061b0ef3e8a861d8e998ac8624e4877979`
    - `v004c_predeclared_derived_factor_spec_v001.csv` SHA256: `d495112272ef15427894aec630b09c805ca6fecccd2d75f3bc416f958e678896`
 3. **特征覆盖结论**: `v004c_feature_coverage_v001.csv` SHA256: `835fb7541b9845cc149b7c737789d325ba3a2c3eed3f7c3311a4cc9f864ccdfa` (commit 91bd2009)
 4. **日线缓存**: `data\cache\daily` (offline, 未联网, 未修改 180/120 窗口)
@@ -20,7 +21,8 @@
 
 - 总行数: 333 (一行一个 D1 事件)
 - signal dates: 42
-- 列数: 65
+- model table 列数: 65
+- schema rows: 65 (schema 只描述实际输出表列, 与 table 列一一对应)
 - feature 数量: 55 (primary 29 + sensitivity 26)
 - identifier 数量: 4
 - label 数量: 1
@@ -46,6 +48,8 @@
 | recent_7d_close_position | (close(D1) - 7d_low) / (7d_high - 7d_low); 7d_high==7d_low 置空 | 333/333 (0 缺失) | 0.356787 | 0.779079 | 1.000000 |
 
 严格日级最大回撤: `prior_peak_t = max(high_s), s < t` (只用严格较早交易日 high, 不使用同日 high/low 先后顺序; 当前日 high 只成为后续 prior peak; 所有后续 low 高于 prior peak 时回撤 = 0)。
+
+recent-7d 三字段的授权来源是 feature coverage (coverage_status=NEW_REQUIRED / recommended_role=M2_PRIMARY_CANDIDATE / available_as_of=D1_CLOSE / mechanism=RECENT_7D_PATH), 不要求存在于旧 Stage 2.1 allowlist。
 
 ## 4. 六月/七月数据完整性描述 (只允许行数与标签计数, 禁止模型表现)
 
@@ -90,13 +94,16 @@
 
 未来第一版 M1/M2 预计只使用完整 primary 字段。
 
-## 8. 明确排除的字段 (model_universe=NONE, 原因见 schema)
+## 8. 明确排除的字段 (排除清单与原因由 feature coverage 资产负责)
+
+以下字段不得进入 PRIMARY/SENSITIVITY universe; 逐字段排除原因见 `v004c_feature_coverage_v001.csv` (coverage_status / recommended_role / reason 列), model-table schema 不重复维护排除清单:
 
 - **CONTEXT_ONLY (REUSE_AS_CONTEXT, 不升级为 primary)**: recent_limit_up_count_10d, recent_limit_up_count_20d, recent_pool_appearance_count_10d, recent_pool_appearance_count_20d, max_board_streak_20d
 - **DEFER_NOT_REQUIRED_FOR_V001**: d1_ma20_slope, recent_7d_limit_up_count, board_stage_volume_price_decomposition
 - **REDUNDANT (可由已有字段精确确定)**: profit_chip_ratio, d1_vwap_to_close_gap
 - **FORBIDDEN (未来/标签/旧模型输出)**: d2_open_daily, d3_high_daily, recognition_score, v002_rank, v004a_probability
-- 其余 REDUNDANT/NOT_NEEDED/FORBIDDEN 排除行见 `v004c_model_table_schema_v001.csv` (共 42 行 NONE, 含 4 个 identifier + 1 个 label + 5 个 audit 的常规 NONE 角色)。
+- 其余 REDUNDANT / NOT_NEEDED / FORBIDDEN / AUDIT_ONLY / DERIVE_ONLY 候选字段同样不进入模型表; 全部由 `v004c_feature_coverage_v001.csv` 统一记录。
+- 本 schema (`v004c_model_table_schema_v001.csv`) 只描述实际输出表列 (65 行 = model table 列数), 不含任何不在表中的字段。
 
 ## 9. M1/M2 槽位 (本阶段不选模型)
 
@@ -108,6 +115,7 @@
 
 - 本阶段未做任何全样本预处理 (无 z-score / winsorize / P01-P99 clip / 标准化)。
 - 模型表保存 raw legal feature values; 预处理参数必须由下一阶段每个 walk-forward fold 只用训练 fold 计算。
+- recent-7d 三字段在 schema 中的 preprocess_policy 标记为 FOLD_CLIP_Z (临时约定, 与 Stage 2.1 连续变量约定一致, 不构成模型冻结); 实际 clip 阈值、均值、标准差等参数只能在下一阶段每个 training fold 内部拟合, 本阶段未生成任何全样本预处理参数。
 
 ## 11. 原子输出
 

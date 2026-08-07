@@ -169,14 +169,66 @@ class LeakageTests(unittest.TestCase):
 
 
 class ContractTests(unittest.TestCase):
-    def test_contract_consistent_with_coverage(self):
-        coverage = pd.read_csv(REPO_ROOT / "reports/research/v004c_feature_coverage_v001.csv",
-                               encoding="utf-8-sig")
-        allowlist = pd.read_csv(DICTIONARY_DIR / "v004c_feature_allowlist_primary_v001.csv",
-                                encoding="utf-8-sig")
-        training = pd.read_csv(STAGE1_DIR / "v004c_training_d1_v001.csv",
-                               dtype={"code": str}, nrows=1)
-        verify_feature_contract(coverage, allowlist, set(training.columns))
+    """Stage 2.1 allowlist + feature coverage 交叉验证 (真实冻结资产)。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.coverage = pd.read_csv(
+            REPO_ROOT / "reports/research/v004c_feature_coverage_v001.csv",
+            encoding="utf-8-sig")
+        cls.allowlist_primary = pd.read_csv(
+            DICTIONARY_DIR / "v004c_feature_allowlist_primary_v001.csv", encoding="utf-8-sig")
+        cls.allowlist_sensitivity = pd.read_csv(
+            DICTIONARY_DIR / "v004c_feature_allowlist_sensitivity_v001.csv", encoding="utf-8-sig")
+        cls.exclusions = pd.read_csv(
+            DICTIONARY_DIR / "v004c_feature_exclusions_v001.csv", encoding="utf-8-sig")
+        cls.training_columns = set(pd.read_csv(
+            STAGE1_DIR / "v004c_training_d1_v001.csv", dtype={"code": str},
+            nrows=1).columns)
+
+    def test_contract_consistent_with_assets(self):
+        verify_feature_contract(
+            self.coverage, self.allowlist_primary, self.allowlist_sensitivity,
+            self.exclusions, self.training_columns)
+
+    def test_contract_illegal_primary_source_fails(self):
+        # A: 字段不属于合法 Stage 2.1 来源 (从 primary allowlist 移除) -> FAIL
+        allowlist = self.allowlist_primary[
+            self.allowlist_primary["feature_name"] != "break_open_return"]
+        with self.assertRaises(ModelTableError):
+            verify_feature_contract(
+                self.coverage, allowlist, self.allowlist_sensitivity,
+                self.exclusions, self.training_columns)
+
+    def test_contract_sensitivity_role_mismatch_fails(self):
+        # B: 非 SENSITIVITY_ONLY 字段放入 sensitivity universe -> FAIL
+        coverage = self.coverage.copy()
+        coverage.loc[coverage["feature_name"] == "d1_close_location",
+                     "recommended_role"] = "M2_PRIMARY_CANDIDATE"
+        with self.assertRaises(ModelTableError):
+            verify_feature_contract(
+                coverage, self.allowlist_primary, self.allowlist_sensitivity,
+                self.exclusions, self.training_columns)
+
+    def test_contract_preprocess_mismatch_fails(self):
+        # C: Stage2.1 preprocess_policy 与 coverage/contract 不一致 -> FAIL
+        allowlist = self.allowlist_primary.copy()
+        allowlist.loc[allowlist["feature_name"] == "break_touched_limit_up",
+                      "preprocess_policy"] = "FOLD_CLIP_Z"
+        with self.assertRaises(ModelTableError):
+            verify_feature_contract(
+                self.coverage, allowlist, self.allowlist_sensitivity,
+                self.exclusions, self.training_columns)
+
+    def test_contract_me_mismatch_fails(self):
+        # D: Stage2.1 mutual_exclusion_group 与 coverage 不一致 -> FAIL
+        allowlist = self.allowlist_primary.copy()
+        allowlist.loc[allowlist["feature_name"] == "break_volume_ratio_vs_board_days",
+                      "mutual_exclusion_group_id"] = "ME99_WRONG"
+        with self.assertRaises(ModelTableError):
+            verify_feature_contract(
+                self.coverage, allowlist, self.allowlist_sensitivity,
+                self.exclusions, self.training_columns)
 
     def test_primary_sensitivity_disjoint(self):
         self.assertTrue(set(PRIMARY_FEATURE_COLUMNS).isdisjoint(set(SENSITIVITY_FEATURE_COLUMNS)))
@@ -229,6 +281,24 @@ class ModelTableIntegrityTests(unittest.TestCase):
             for token in ("d2_", "d3_", "target", "v002", "v004a", "v004b", "v005"):
                 self.assertNotIn(token, lowered, column)
 
+    def test_schema_matches_table(self):
+        # schema rows == 65, column_name 与 table.columns 一一对应
+        schema = pd.read_csv(self.output_dir / "v004c_model_table_schema_v001.csv",
+                             encoding="utf-8-sig")
+        self.assertEqual(len(schema), len(self.table.columns))
+        self.assertEqual(schema["column_name"].tolist(), self.table.columns.tolist())
+
+    def test_schema_has_no_excluded_rows(self):
+        # 不在 table 中的字段不得出现在 model-table schema
+        schema = pd.read_csv(self.output_dir / "v004c_model_table_schema_v001.csv",
+                             encoding="utf-8-sig")
+        schema_names = set(schema["column_name"])
+        for excluded in ("recent_limit_up_count_10d", "d1_ma20_slope",
+                         "d2_open_daily", "d3_high_daily", "recognition_score",
+                         "v002_rank", "v004a_probability", "profit_chip_ratio"):
+            self.assertNotIn(excluded, schema_names)
+            self.assertNotIn(excluded, self.table.columns)
+
     def test_atomic_refuses_existing_dir(self):
         config = V004CModelTableConfig(
             stage1_dir=STAGE1_DIR,
@@ -238,6 +308,26 @@ class ModelTableIntegrityTests(unittest.TestCase):
         )
         with self.assertRaises(ModelTableError):
             build_v004c_model_table(config)
+
+    def test_atomic_validation_failure_cleans_tmp_and_leaves_no_formal_dir(self):
+        # 注入 _validate_written_outputs 抛错: formal dir 必须不存在, tmp 必须被清理
+        from unittest import mock
+
+        output_dir = Path(self.tmp) / "v004c_model_table_v001_atomic_fail"
+        config = V004CModelTableConfig(
+            stage1_dir=STAGE1_DIR,
+            dictionary_dir=DICTIONARY_DIR,
+            cache_dir=CACHE_DIR,
+            output_dir=output_dir,
+        )
+        with mock.patch("src.v004c_model_table._validate_written_outputs",
+                        side_effect=ModelTableError("injected validation failure")):
+            with self.assertRaises(ModelTableError):
+                build_v004c_model_table(config)
+        self.assertFalse(output_dir.exists(), "formal dir 不得在失败后存在")
+        self.assertFalse(
+            (output_dir.parent / (output_dir.name + ".tmp")).exists(),
+            "tmp dir 必须在失败后被清理")
 
 
 if __name__ == "__main__":
