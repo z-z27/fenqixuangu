@@ -1,10 +1,12 @@
-"""v004c 因子规格模块测试 (target-blind / factor 公式 / reference transform / VIF / condition number / 审计流水线)。
+"""v004c 因子规格模块测试 v002 (target-blind / factor 公式 / reference transform / VIF / condition number / 审计流水线)。
 
 覆盖任务要求:
 - A. X loader 返回列中不存在 Target (即使 model table 中存在)
 - B. Target 随机化后 factor/correlation/VIF/condition number 输出完全不变 (字节级)
 - C. primitive list 不含 target/d2_/d3_/outcome/future/v002/v004a/v004b/v005/recognition/policy
-- factor 公式 (OPEN/RESET/SUPPLY/REGIME)
+- factor 公式 (OPEN/RESET/HIGHZONE/LATESELL/REGIME; RESET 公式未变化)
+- v002 结构 (SUPPLY 不再 active; HIGHZONE/LATESELL 独立; POS7/TREND 不进 M1/M2;
+  M1 正好 4 factors; M2 正好 7 factors)
 - VIF/condition number 独立与完全复制 (不得静默输出正常值)
 - reference transform (June fit / July 只 apply June 参数)
 """
@@ -21,16 +23,20 @@ import pandas as pd
 from src.v004c_factor_spec import (
     CONTINUOUS_FACTORS,
     CONTINUOUS_PRIMITIVES,
+    CORE_FACTORS,
     FACTOR_NAMES,
     FACTOR_SPEC_FIELDS,
     FORBIDDEN_TOKENS,
     M1_FACTORS,
     M2_FACTORS,
+    PATH_BLOCK_FACTORS,
     PRIMITIVE_COLUMNS,
+    SENSITIVITY_FACTORS,
+    SENSITIVITY_HORIZON_STATIONARITY,
+    SENSITIVITY_STRUCTURAL_REDUNDANCY,
     FactorSpecError,
     apply_primitive_transform,
     composite_reset,
-    composite_supply,
     condition_number_diagnostic,
     construct_factors,
     correlation_severity,
@@ -70,7 +76,6 @@ def simple_params() -> dict:
     params = {p: {"q01": -1e9, "q99": 1e9, "mu": 0.0, "sigma": 1.0}
               for p in CONTINUOUS_PRIMITIVES}
     params["composite_RESET"] = {"mu": 0.0, "sigma": 1.0}
-    params["composite_SUPPLY"] = {"mu": 0.0, "sigma": 1.0}
     return params
 
 
@@ -103,7 +108,7 @@ class XLoaderTests(unittest.TestCase):
 
 
 class ReferenceTransformTests(unittest.TestCase):
-    """June fit / July 只 apply June 参数 (41)."""
+    """June fit / July 只 apply June 参数 (item 10: July 无法改变 June transform)."""
 
     def test_fit_uses_june_only_and_is_deterministic(self):
         june = _df_with(d1_ma10_slope=np.linspace(-3.0, 3.0, 200))
@@ -150,7 +155,7 @@ class ReferenceTransformTests(unittest.TestCase):
 
 
 class FactorFormulaTests(unittest.TestCase):
-    """factor 公式 (39): OPEN / RESET / SUPPLY / REGIME."""
+    """factor 公式: OPEN / RESET (item 8: 公式未变化) / HIGHZONE / LATESELL / REGIME."""
 
     def test_open_is_z(self):
         params = simple_params()
@@ -179,14 +184,30 @@ class FactorFormulaTests(unittest.TestCase):
         g = (1.0 + 2.0 + 0.5) / 3.0
         self.assertAlmostEqual(f["RESET"].iloc[0], (g - 0.5) / 2.0, places=12)
 
-    def test_supply_composite(self):
-        # z_high_zone=1, z_late_sell=3 -> G_SUPPLY = 2; F = z(G) = 2 (mu=0 sigma=1)
+    def test_highzone_is_z(self):
         params = simple_params()
-        df = _df_with(high_zone_volume_ratio=[1.0], late_day_sell_volume_ratio=[3.0])
+        params["high_zone_volume_ratio"] = {"q01": -1e9, "q99": 1e9,
+                                            "mu": 0.5, "sigma": 2.0}
+        df = _df_with(high_zone_volume_ratio=[2.5])
         f = construct_factors(df, params)
-        self.assertAlmostEqual(float(composite_supply(
-            apply_primitive_transform(df, params)).iloc[0]), 2.0, places=12)
-        self.assertAlmostEqual(f["SUPPLY"].iloc[0], 2.0, places=12)
+        self.assertAlmostEqual(f["HIGHZONE"].iloc[0], (2.5 - 0.5) / 2.0, places=12)
+
+    def test_latesell_is_z(self):
+        params = simple_params()
+        params["late_day_sell_volume_ratio"] = {"q01": -1e9, "q99": 1e9,
+                                                "mu": 0.5, "sigma": 2.0}
+        df = _df_with(late_day_sell_volume_ratio=[2.5])
+        f = construct_factors(df, params)
+        self.assertAlmostEqual(f["LATESELL"].iloc[0], (2.5 - 0.5) / 2.0, places=12)
+
+    def test_highzone_latesell_constructed_independently(self):
+        # 两个 primitive 各自独立 z-score, 不存在 SUPPLY composite 压缩
+        params = simple_params()
+        df = _df_with(high_zone_volume_ratio=[1.0, 3.0],
+                      late_day_sell_volume_ratio=[2.0, 4.0])
+        f = construct_factors(df, params)
+        np.testing.assert_allclose(f["HIGHZONE"], [1.0, 3.0], rtol=1e-12)
+        np.testing.assert_allclose(f["LATESELL"], [2.0, 4.0], rtol=1e-12)
 
     def test_single_primitive_factors_are_z(self):
         params = simple_params()
@@ -208,9 +229,46 @@ class FactorFormulaTests(unittest.TestCase):
         with self.assertRaises(FactorSpecError):
             construct_factors(_df_with(board_streak_is_3=[2.0]), simple_params())
 
+    def test_supply_not_active(self):
+        # item 1: SUPPLY 不再属于 active factor (仅存在于 v001 历史资产)
+        self.assertNotIn("SUPPLY", FACTOR_NAMES)
+        self.assertNotIn("SUPPLY", CORE_FACTORS)
+        self.assertNotIn("SUPPLY", SENSITIVITY_FACTORS)
+        f = construct_factors(_df_with(break_open_return=[1.0]), simple_params())
+        self.assertNotIn("SUPPLY", f.columns)
+        self.assertEqual(set(f.columns), set(FACTOR_NAMES))
+        spec_names = {r["factor_name"] for r in factor_spec_rows()}
+        self.assertNotIn("SUPPLY", spec_names)
+
+    def test_pos7_trend_not_in_m2(self):
+        # items 4/5: POS7 / TREND 不属于 M1/M2
+        for f in ("POS7", "TREND"):
+            self.assertNotIn(f, M1_FACTORS)
+            self.assertNotIn(f, M2_FACTORS)
+        rows = {r["factor_name"]: r for r in factor_spec_rows()}
+        self.assertIs(rows["POS7"]["m1_member"], False)
+        self.assertIs(rows["POS7"]["m2_member"], False)
+        self.assertIs(rows["TREND"]["m1_member"], False)
+        self.assertIs(rows["TREND"]["m2_member"], False)
+
+    def test_m1_m2_membership(self):
+        # items 6/7: M1 正好 4 factors; M2 正好 7 factors
+        self.assertEqual(M1_FACTORS, ("OPEN", "RESET", "HIGHZONE", "LATESELL"))
+        self.assertEqual(M2_FACTORS, CORE_FACTORS)
+        self.assertEqual(len(M1_FACTORS), 4)
+        self.assertEqual(len(M2_FACTORS), 7)
+        self.assertEqual(set(M1_FACTORS), {"OPEN", "RESET", "HIGHZONE", "LATESELL"})
+        self.assertEqual(set(M2_FACTORS),
+                         {"OPEN", "RESET", "HIGHZONE", "LATESELL",
+                          "MOM7", "DAMAGE7", "REGIME"})
+        self.assertEqual(PATH_BLOCK_FACTORS, ("MOM7", "DAMAGE7"))
+        self.assertEqual(set(FACTOR_NAMES), set(CORE_FACTORS) | set(SENSITIVITY_FACTORS))
+        self.assertEqual(set(CORE_FACTORS) & set(SENSITIVITY_FACTORS), set())
+        self.assertEqual(set(SENSITIVITY_FACTORS), {"POS7", "TREND"})
+
     def test_factor_spec_rows(self):
         rows = factor_spec_rows()
-        self.assertEqual(len(rows), 8)
+        self.assertEqual(len(rows), 9)
         self.assertEqual({r["factor_name"] for r in rows}, set(FACTOR_NAMES))
         for row in rows:
             self.assertEqual(list(row.keys()), list(FACTOR_SPEC_FIELDS))
@@ -219,13 +277,24 @@ class FactorFormulaTests(unittest.TestCase):
             self.assertEqual(row["m2_member"], row["factor_name"] in M2_FACTORS)
             self.assertIn(row["final_model_preprocessing"],
                           ("0/1 原值, 不做 z-score; 只有 condition number 诊断副本中临时 "
-                           "center/scale (diagnostic scaling != future model preprocessing)",
+                           "center/scale (diagnostic scaling != future model preprocessing); "
+                           "第一版禁止 interaction",
                            "walk-forward 中每个 training fold 内拟合: clip [q01, q99] "
                            "+ (x - mu)/sigma (fold 参数; 禁止全样本参数)"))
+        by_name = {r["factor_name"]: r for r in rows}
+        for f in CORE_FACTORS:
+            self.assertEqual(by_name[f]["sensitivity_status"], "")
+            self.assertIn("CORE", by_name[f]["factor_role"])
+        self.assertEqual(by_name["POS7"]["sensitivity_status"],
+                         SENSITIVITY_STRUCTURAL_REDUNDANCY)
+        self.assertEqual(by_name["TREND"]["sensitivity_status"],
+                         SENSITIVITY_HORIZON_STATIONARITY)
+        for f in SENSITIVITY_FACTORS:
+            self.assertIn("SENSITIVITY", by_name[f]["factor_role"])
 
 
 class VifConditionNumberTests(unittest.TestCase):
-    """VIF / condition number (40): 独立 -> 正常; 完全复制 -> 显式 severe/near-singular."""
+    """VIF / condition number (item 11): 独立 -> 正常; 完全复制 -> 显式 severe/near-singular."""
 
     def _matrix(self, duplicate=False):
         rng = np.random.default_rng(3)
@@ -305,7 +374,7 @@ class CorrelationDiagnosticTests(unittest.TestCase):
 
 
 class AuditPipelineTests(unittest.TestCase):
-    """B: Target 随机化后输出完全不变 (字节级); 输出文件结构完整."""
+    """B: Target 随机化后输出完全不变 (字节级); v002 结构在流水线输出中成立."""
 
     @classmethod
     def setUpClass(cls):
@@ -341,11 +410,40 @@ class AuditPipelineTests(unittest.TestCase):
 
     def test_no_degenerate_factors(self):
         self.assertEqual(self.res1["degenerate_factors"], [])
-        self.assertIn(self.res1["status"], ("PASS_X_STRUCTURE", "REVIEW_REQUIRED"))
+        self.assertIn(self.res1["status"], ("PASS_X_STRUCTURE_V002", "REVIEW_REQUIRED"))
 
     def test_pair_counts(self):
         self.assertEqual(len(self.res1["primitive_pairs"]), 55)
-        self.assertEqual(len(self.res1["factor_pairs"]), 28)
+        self.assertEqual(len(self.res1["factor_pairs"]), 36)  # 9 choose 2
+
+    def test_core_sensitivity_split(self):
+        self.assertEqual(list(self.res1["core_factors"]), list(CORE_FACTORS))
+        self.assertEqual(list(self.res1["sensitivity_factors"]),
+                         list(SENSITIVITY_FACTORS))
+        core_pairs = [p for p in self.res1["factor_pairs"] if p["core_pair"]]
+        sens_pairs = [p for p in self.res1["factor_pairs"] if not p["core_pair"]]
+        self.assertEqual(len(core_pairs), 21)  # 7 choose 2
+        self.assertEqual(len(sens_pairs), 15)  # 36 - 21
+        rp = next(p for p in self.res1["factor_pairs"]
+                  if p["left_factor"] == "RESET" and p["right_factor"] == "POS7")
+        self.assertFalse(rp["core_pair"])
+
+    def test_highzone_latesell_pair_present(self):
+        pairs = self.res1["factor_pairs"]
+        hl = next((p for p in pairs
+                   if p["left_factor"] == "HIGHZONE" and p["right_factor"] == "LATESELL"),
+                  None)
+        self.assertIsNotNone(hl)
+        self.assertTrue(hl["core_pair"])
+
+    def test_sensitivity_severe_is_nonblocking(self):
+        # 含 sensitivity 成员的 SEVERE pair (如 RESET-POS7) 不得进入 core 触发列表
+        for p in self.res1["factor_pairs"]:
+            if p["severity"] == "SEVERE" and not p["core_pair"]:
+                self.assertNotIn(p, self.res1["core_severe_pairs"])
+                for reason in self.res1["status_reasons"]:
+                    self.assertNotIn("{}-{}".format(
+                        p["left_factor"], p["right_factor"]), reason)
 
     def test_deterministic_same_input(self):
         for name in OUTPUT_FILES:
@@ -356,19 +454,26 @@ class AuditPipelineTests(unittest.TestCase):
         # target 随机化后: factor/correlation/VIF/condition number 输出必须完全不变
         # (review md 中只有输入文件 SHA256 一行是文件级 provenance, 允许不同;
         #   该行在 analysis 语义之外)
-        analysis = [n for n in OUTPUT_FILES if n != "v004c_factor_dependence_review.md"]
+        analysis = [n for n in OUTPUT_FILES
+                    if n != "v004c_factor_dependence_review_v002.md"]
         for name in analysis:
             self.assertEqual((self.out1 / name).read_bytes(),
                              (self.out3 / name).read_bytes(), name)
-        md1 = (self.out1 / "v004c_factor_dependence_review.md").read_text(encoding="utf-8")
-        md3 = (self.out3 / "v004c_factor_dependence_review.md").read_text(encoding="utf-8")
+        md1 = (self.out1 / "v004c_factor_dependence_review_v002.md").read_text(
+            encoding="utf-8")
+        md3 = (self.out3 / "v004c_factor_dependence_review_v002.md").read_text(
+            encoding="utf-8")
         norm = lambda s: re.sub(r"SHA256: `[0-9a-f]{64}`", "SHA256: <sha>", s)  # noqa: E731
         self.assertEqual(norm(md1), norm(md3))
 
-    def test_factor_spec_csv_has_eight_rows(self):
-        spec = pd.read_csv(self.out1 / "v004c_factor_spec_v001.csv", encoding="utf-8-sig")
-        self.assertEqual(len(spec), 8)
+    def test_factor_spec_csv_has_nine_rows(self):
+        spec = pd.read_csv(self.out1 / "v004c_factor_spec_v002.csv",
+                           encoding="utf-8-sig")
+        self.assertEqual(len(spec), 9)
         self.assertTrue((spec["target_used_to_construct"] == False).all())  # noqa: E712
+        self.assertNotIn("SUPPLY", spec["factor_name"].tolist())
+        core_rows = spec[spec["sensitivity_status"].isna() | (spec["sensitivity_status"] == "")]
+        self.assertEqual(len(core_rows), 7)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""v004c 因子结构纯 X 侧审计工具 (v004c factor dependence v001)。
+"""v004c 因子结构纯 X 侧审计工具 (v004c factor dependence v002)。
 
 职责:
 
@@ -6,10 +6,14 @@
   读取入口即 target-blind (绝不加载 target7_daily_d2open_d3high / D2 / D3 / 旧模型输出)
 - June (reference X sample) 拟合 reference transform (q01/q99/mu/sigma)
 - July 只 apply June 参数 (不得用 July 重算 mean/std)
-- 构造 8 个 factor (OPEN/RESET/SUPPLY/MOM7/DAMAGE7/POS7/TREND/REGIME)
+- 构造 9 个 factor (7 CORE: OPEN/RESET/HIGHZONE/LATESELL/MOM7/DAMAGE7/REGIME;
+  2 SENSITIVITY: POS7/TREND; v002 起无 active SUPPLY composite)
 - primitive/factor 相关性 (Pearson + Spearman), VIF (M1/M2), condition number
   (M1/M2/PATH, centered + unit-variance 诊断矩阵), factor 分布,
   July 无标签 X 稳定性 (SMD / KS)
+- 最终状态只由 CORE 矩阵判定: CORE cross-factor |rho| >= 0.85 / VIF >= 10 /
+  condition number >= 100 / degenerate factor => REVIEW_REQUIRED, 否则
+  PASS_X_STRUCTURE_V002; 含 sensitivity 成员的 pair 只记录, 不触发状态
 - 输出 6 个正式报告文件 + 控制台摘要
 
 明确禁止: 任何模型训练/预测/指标; 读取 Target; 根据 Target 修改 factor;
@@ -38,6 +42,7 @@ from src.v004c_factor_spec import (
     BINARY_PRIMITIVES,
     CONTINUOUS_FACTORS,
     CONTINUOUS_PRIMITIVES,
+    CORE_FACTORS,
     FACTOR_NAMES,
     FACTOR_PRIMITIVES,
     FORBIDDEN_TOKENS,
@@ -45,6 +50,8 @@ from src.v004c_factor_spec import (
     M2_FACTORS,
     PATH_BLOCK_FACTORS,
     PRIMITIVE_COLUMNS,
+    SENSITIVITY_FACTORS,
+    SENSITIVITY_STATUS,
     X_ID_COLUMNS,
     DEGENERATE_STD,
     KS_WATCH,
@@ -65,20 +72,21 @@ from src.v004c_factor_spec import (
 DEFAULT_INPUT = (REPO_ROOT
                  / "reports/research/v004c_model_table_v001_20260601_20260729"
                  / "v004c_model_table_v001.csv")
-DEFAULT_OUTPUT = REPO_ROOT / "reports/research/v004c_factor_dependence_v001_20260601_20260729"
+DEFAULT_OUTPUT = REPO_ROOT / "reports/research/v004c_factor_dependence_v002_20260601_20260729"
 DICTIONARY_DIR = REPO_ROOT / "reports/research/v004c_factor_dictionary_v001_20260601_20260729"
 COVERAGE_CSV = REPO_ROOT / "reports/research/v004c_feature_coverage_v001.csv"
+V001_DIR = REPO_ROOT / "reports/research/v004c_factor_dependence_v001_20260601_20260729"
 
 JUNE_START, JUNE_END = "2026-06-01", "2026-06-30"
 JULY_START, JULY_END = "2026-07-01", "2026-07-29"
 
 OUTPUT_FILES = (
-    "v004c_primitive_dependence_v001.csv",
-    "v004c_factor_dependence_v001.csv",
-    "v004c_factor_diagnostics_v001.csv",
-    "v004c_factor_spec_v001.csv",
-    "v004c_factor_model_spec_v001.md",
-    "v004c_factor_dependence_review.md",
+    "v004c_primitive_dependence_v002.csv",
+    "v004c_factor_dependence_v002.csv",
+    "v004c_factor_diagnostics_v002.csv",
+    "v004c_factor_spec_v002.csv",
+    "v004c_factor_model_spec_v002.md",
+    "v004c_factor_dependence_review_v002.md",
 )
 
 PRIMITIVE_TO_FACTOR = {p: f for f, prims in FACTOR_PRIMITIVES.items() for p in prims}
@@ -193,7 +201,10 @@ def primitive_pair_rows(june: pd.DataFrame, july: pd.DataFrame) -> list[dict]:
 
 
 def factor_pair_rows(f_june: pd.DataFrame, f_july: pd.DataFrame) -> list[dict]:
-    """8 choose 2 = 28 对 (June 为主参考, July 只做稳定性描述)."""
+    """9 choose 2 = 36 对 (June 为主参考, July 只做稳定性描述)。
+
+    core_pair = 两端都是 CORE factor; 只有 core_pair 参与最终状态判定。
+    """
     rows = []
     for i in range(len(FACTOR_NAMES)):
         for j in range(i + 1, len(FACTOR_NAMES)):
@@ -204,6 +215,7 @@ def factor_pair_rows(f_june: pd.DataFrame, f_july: pd.DataFrame) -> list[dict]:
             rows.append({
                 "left_factor": left,
                 "right_factor": right,
+                "core_pair": left in CORE_FACTORS and right in CORE_FACTORS,
                 "june_pearson": rp_jun,
                 "june_spearman": rs_jun,
                 "abs_june_pearson": abs(rp_jun),
@@ -260,6 +272,43 @@ def cross_check_stage21() -> dict:
         "policies": policies,
         "near_duplicate_within_universe": within,
     }
+
+
+# ---------------------------------------------------------------------------
+# v001 历史报告对照 (只读冻结资产, 用于说明 v002 结构变化的效果)
+# ---------------------------------------------------------------------------
+
+def _v001_reference() -> dict:
+    """读取冻结 v001 报告作跨版本对照 (只读; 缺失/损坏则返回空 dict)."""
+    dep_path = V001_DIR / "v004c_factor_dependence_v001.csv"
+    diag_path = V001_DIR / "v004c_factor_diagnostics_v001.csv"
+    if not dep_path.exists() or not diag_path.exists():
+        return {}
+    out: dict = {}
+    try:
+        dep = pd.read_csv(dep_path, encoding="utf-8-sig")
+        diag = pd.read_csv(diag_path, encoding="utf-8-sig")
+    except Exception:
+        return {}
+    for row in dep.itertuples(index=False):
+        if (row.left_factor, row.right_factor) == ("MOM7", "TREND"):
+            out["v001_mom7_trend_pearson"] = float(row.june_pearson)
+            out["v001_mom7_trend_spearman"] = float(row.june_spearman)
+        elif (row.left_factor, row.right_factor) == ("RESET", "POS7"):
+            out["v001_reset_pos7_pearson"] = float(row.june_pearson)
+            out["v001_reset_pos7_spearman"] = float(row.june_spearman)
+    m2_vifs: dict[str, float] = {}
+    for row in diag.itertuples(index=False):
+        vif = getattr(row, "m2_vif", None)
+        if vif is not None and not pd.isna(vif):
+            m2_vifs[str(row.factor)] = float(vif)
+    for f, vif in m2_vifs.items():
+        out[f"v001_m2_vif_{f}"] = vif
+    if m2_vifs:
+        best = max(m2_vifs, key=m2_vifs.get)
+        out["v001_m2_vif_max"] = m2_vifs[best]
+        out["v001_m2_vif_max_factor"] = best
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -343,26 +392,29 @@ def run_factor_dependence_audit(input_csv, output_dir) -> dict:
                         factor_stats["REGIME"]["july"]["count_1"]),
     }
 
-    # --- 最终状态 (只判定, 不自动改 factor) ---
-    severe_pairs = [p for p in fac_pairs if p["severity"] == "SEVERE"]
+    # --- 最终状态 (只判定 CORE 矩阵, 不自动改 factor) ---
+    core_severe_pairs = [p for p in fac_pairs
+                         if p["severity"] == "SEVERE" and p["core_pair"]]
+    sensitivity_severe_pairs = [p for p in fac_pairs
+                                if p["severity"] == "SEVERE" and not p["core_pair"]]
     reasons: list[str] = []
     if degenerate_factors:
         reasons.append(f"degenerate factor: {degenerate_factors} (June std <= 1e-8)")
     for name, k in kappa.items():
-        if k["near_singular"]:
+        if k["near_singular"] or k["kappa"] >= KAPPA_SEVERE:
             reasons.append(f"{name} condition matrix near singular "
-                           f"(kappa={k['kappa']:.3g})")
+                           f"or kappa={k['kappa']:.3g} >= 100")
     for f, v in m1_vif.items():
         if v >= VIF_SEVERE:
             reasons.append(f"M1 factor {f} VIF={v:.4g} >= 10 SEVERE")
     for f, v in m2_vif.items():
         if v >= VIF_SEVERE:
             reasons.append(f"M2 factor {f} VIF={v:.4g} >= 10 SEVERE")
-    for p in severe_pairs:
+    for p in core_severe_pairs:
         reasons.append(
             f"factor pair {p['left_factor']}-{p['right_factor']} SEVERE "
             f"(|rho|={max(p['abs_june_pearson'], p['abs_june_spearman']):.3f})")
-    status = "PASS_X_STRUCTURE" if not reasons else "REVIEW_REQUIRED"
+    status = "PASS_X_STRUCTURE_V002" if not reasons else "REVIEW_REQUIRED"
 
     results = {
         "input": str(input_csv),
@@ -385,9 +437,13 @@ def run_factor_dependence_audit(input_csv, output_dir) -> dict:
         "m2_vif": m2_vif,
         "kappa": kappa,
         "regime": regime,
+        "core_factors": list(CORE_FACTORS),
+        "sensitivity_factors": list(SENSITIVITY_FACTORS),
         "degenerate_factors": degenerate_factors,
         "shift_factors": shift_factors,
-        "severe_pairs": severe_pairs,
+        "core_severe_pairs": core_severe_pairs,
+        "sensitivity_severe_pairs": sensitivity_severe_pairs,
+        "v001_ref": _v001_reference(),
         "status": status,
         "status_reasons": reasons,
         "stage21": cross_check_stage21(),
@@ -431,7 +487,7 @@ def _write_all(output_dir: Path, r: dict) -> None:
 
     # 5. model spec md (M0/M1/M2 公式, 只记录)
     (output_dir / OUTPUT_FILES[4]).write_text(
-        _model_spec_md(), encoding="utf-8")
+        _model_spec_md(r), encoding="utf-8")
 
     # 6. review md (数据驱动, 确定性)
     (output_dir / OUTPUT_FILES[5]).write_text(
@@ -449,6 +505,12 @@ _FACTOR_DIAG_COLUMNS = (
 )
 
 
+def _factor_membership(f: str) -> str:
+    if f in SENSITIVITY_FACTORS:
+        return "SENSITIVITY"
+    return "M1,M2" if f in M1_FACTORS else "M2"
+
+
 def _factor_diagnostics_rows(r: dict) -> list[dict]:
     rows = []
     for f in FACTOR_NAMES:
@@ -457,7 +519,7 @@ def _factor_diagnostics_rows(r: dict) -> list[dict]:
         if f in CONTINUOUS_FACTORS:
             row = {
                 "factor": f,
-                "model_membership": "M1,M2" if f in M1_FACTORS else "M2",
+                "model_membership": _factor_membership(f),
                 "june_n": june_d["n"], "june_missing": june_d["missing"],
                 "june_mean": june_d["mean"], "june_std": june_d["std"],
                 "june_min": june_d["min"],
@@ -476,7 +538,7 @@ def _factor_diagnostics_rows(r: dict) -> list[dict]:
         else:  # REGIME: 连续统计不适用 => 留空; mean/std = Bernoulli 统计
             row = {
                 "factor": f,
-                "model_membership": "M1,M2" if f in M1_FACTORS else "M2",
+                "model_membership": _factor_membership(f),
                 "june_n": june_d["n"], "june_missing": june_d["missing"],
                 "june_mean": june_d["rate_1"],
                 "june_std": (np.sqrt(june_d["rate_1"] * (1.0 - june_d["rate_1"]))
@@ -498,19 +560,44 @@ def _factor_diagnostics_rows(r: dict) -> list[dict]:
     return rows
 
 
-def _model_spec_md() -> str:
-    return """# v004c 因子模型规格 v001 (M0/M1/M2 数学结构 — 仅记录, 不拟合)
+def _model_spec_md(r: dict) -> str:
+    v = r["v001_ref"]
+    hl = next((p for p in r["primitive_pairs"]
+               if {p["left"], p["right"]} ==
+               {"high_zone_volume_ratio", "late_day_sell_volume_ratio"}), None)
+    hz_ls = ("Pearson={} / Spearman={}".format(
+        _fmt(hl["june_pearson"]), _fmt(hl["june_spearman"]))
+        if hl is not None else "见 primitive dependence CSV")
+    rp = ("Pearson={} / Spearman={}".format(
+        _fmt(v.get("v001_reset_pos7_pearson")), _fmt(v.get("v001_reset_pos7_spearman")))
+        if v.get("v001_reset_pos7_pearson") is not None else "见 v001 报告")
+    mt = ("Pearson={} / Spearman={}".format(
+        _fmt(v.get("v001_mom7_trend_pearson")), _fmt(v.get("v001_mom7_trend_spearman")))
+        if v.get("v001_mom7_trend_pearson") is not None else "见 v001 报告")
+    return f"""# v004c 因子模型规格 v002 (M0/M1/M2 数学结构 — 仅记录, 不拟合)
 
-- 阶段: 多变量建模前的纯 X 侧因子结构审查产物; 本规格只定义公式与未来训练算法
-- 状态: factor definition freeze 候选 (由 v004c_factor_dependence_review.md 结论背书)
+- 阶段: 多变量建模前的纯 X 侧因子结构审查产物 (v002 修订); 本规格只定义公式与未来训练算法
+- 状态: factor definition freeze 候选 (由 v004c_factor_dependence_review_v002.md 结论背书)
 - 注意: 这是 factor definition freeze, **不是** model coefficient freeze;
   本阶段未执行任何训练/预测/指标, 未读取 Target
+
+## v002 修订要点 (依据 v001 纯 X 结构审查结论, 与 Target 无关)
+
+1. SUPPLY composite 拆分: `high_zone_volume_ratio` 与 `late_day_sell_volume_ratio`
+   在 June 中接近独立 ({hz_ls}), 不再强制压缩成 50/50 composite;
+   HIGHZONE 与 LATESELL 作为独立 factor, 未来必须由 Logistic 独立估计系数,
+   禁止重新合成 SUPPLY。v001 中 SUPPLY 的历史定义只保留在 v001 报告资产。
+2. POS7 移入 SENSITIVITY: 与 RESET 结构重复 (v001 June {rp});
+   状态 SENSITIVITY_STRUCTURAL_REDUNDANCY, 不得进入 M2 core。
+3. TREND 移入 SENSITIVITY: 与 MOM7 高度相关 (v001 June {mt})
+   + June→July X shift (v001 SMD ≈ -0.63); 状态 SENSITIVITY_HORIZON_STATIONARITY,
+   不得进入第一版 M2 core。
 
 ## Factor 预处理 (future walk-forward)
 
 - 连续 factor: 每个 training fold 内拟合 clip [q01, q99] + (x - mu)/sigma
   (q01/q99/mu/sigma 只允许来自当前 training fold; 禁止全样本参数)
-- REGIME: 0/1 原值, 不做 z-score
+- REGIME: 0/1 原值, 不做 z-score; 第一版禁止 interaction
 - 禁止对 beta/gamma 施加正负约束 (系数方向由模型估计)
 
 ## M0 — INTERCEPT BASELINE
@@ -522,25 +609,36 @@ def _model_spec_md() -> str:
     logit(p) = alpha
              + beta_1 * F_OPEN
              + beta_2 * F_RESET
-             + beta_3 * F_SUPPLY
+             + beta_3 * F_HIGHZONE
+             + beta_4 * F_LATESELL
 
-经济假设: D1 开盘承接、D1 价格重置和 D1 供应压力是否共同形成对未来 Target7
-概率有解释力的结构。只描述结构问题, 不预设系数方向。
+(4 factors + intercept)
+
+经济假设: D1 开盘承接 (OPEN)、D1 价格重置 (RESET)、高位筹码堆积 (HIGHZONE)
+与尾盘主动卖压 (LATESELL) 是否共同形成对未来 Target7 概率有解释力的 D1 结构。
+只描述结构问题, 不预设系数方向。
 
 ## M2 — INTEGRATED PATH MODEL
 
     logit(p) = alpha
              + beta_1 * F_OPEN
              + beta_2 * F_RESET
-             + beta_3 * F_SUPPLY
+             + beta_3 * F_HIGHZONE
+             + beta_4 * F_LATESELL
              + gamma_1 * F_MOM7
              + gamma_2 * F_DAMAGE7
-             + gamma_3 * F_POS7
-             + gamma_4 * F_TREND
-             + gamma_5 * F_REGIME
+             + gamma_3 * F_REGIME
 
-M2 回答: 在 D1 结构已知后, 最近价格路径 (MOM7/DAMAGE7/POS7)、中期趋势
-(TREND) 和二/三板 regime (REGIME) 是否提供增量预测信息。
+(7 factors + intercept)
+
+M2 回答: 在 D1 结构已知后, 最近价格路径 (MOM7/DAMAGE7) 和二/三板 regime (REGIME)
+是否提供增量预测信息。DAMAGE7 即使存在 SHIFT_WATCH 也继续属于 core
+(与 RESET/MOM7 提供明显不同的路径信息)。
+
+## Sensitivity factors (不进 M1/M2 core, 只做诊断)
+
+- POS7: SENSITIVITY_STRUCTURAL_REDUNDANCY (与 RESET 严重重复, 纯 X 结构发现)
+- TREND: SENSITIVITY_HORIZON_STATIONARITY (与 MOM7 高度相关 + June→July X shift)
 
 ## 未来训练算法 (只记录, 本阶段禁止执行)
 
@@ -550,6 +648,8 @@ M2 回答: 在 D1 结构已知后, 最近价格路径 (MOM7/DAMAGE7/POS7)、中�
 
       min_theta [ -sum_i ( y_i*log(p_i) + (1-y_i)*log(1-p_i) ) + lambda * ||theta_{-0}||_2^2 ]
 
+- walk-forward 的目的不是只获得一组系数, 而是产生严格时间外 OOF 预测以及逐 fold
+  系数路径, 用于检验预测能力、增量价值和参数稳定性
 - 训练/验证: M0/M1/M2 expanding-date walk-forward (下一阶段)
 
 ## June/July 命名约定
@@ -592,11 +692,15 @@ def _review_md(r: dict) -> str:
     lines: list[str] = []
     add = lines.append
 
-    add("# v004c 因子结构纯 X 侧审查 (v004c factor dependence v001)")
+    add("# v004c 因子结构纯 X 侧审查 (v004c factor dependence v002)")
     add("")
-    add("- 阶段: 多变量建模前的纯 X 侧因子结构审查 (X ONLY, 不训练模型, 不读取 Target)")
+    add("- 阶段: 多变量建模前的纯 X 侧因子结构审查 v002 (X ONLY, 不训练模型, 不读取 Target)")
     add("- 分支: research-sample-analysis")
     add("- 输入: `v004c_model_table_v001.csv` SHA256: `{}`".format(r["input_sha256"]))
+    add("- v002 修订依据 (v001 纯 X 审查结论, 与 Target 无关): SUPPLY composite 拆分"
+        " (HIGHZONE/LATESELL 独立); POS7 移入 SENSITIVITY"
+        " (SENSITIVITY_STRUCTURAL_REDUNDANCY); TREND 移入 SENSITIVITY"
+        " (SENSITIVITY_HORIZON_STATIONARITY)。v001 历史资产保持不变。")
     add("")
 
     # 0. 输入与 target-blind
@@ -684,18 +788,21 @@ def _review_md(r: dict) -> str:
         ", ".join("{}-{} ({})".format(p["left"], p["right"], _fmt(max(
             p["abs_june_pearson"], p["abs_june_spearman"]))) for p in within_severe)
         if within_severe else "无"))
+    add("- 注: primitive 级跨因子 SEVERE 只作诊断; factor 级判定只针对 CORE 矩阵 (§5),"
+        " 含 SENSITIVITY 成员的 pair 不触发状态 (§12)。")
     add("")
-    add("完整 55 对明细见 `v004c_primitive_dependence_v001.csv` (same_factor 标记"
+    add("完整 55 对明细见 `v004c_primitive_dependence_v002.csv` (same_factor 标记"
         " 因子内/因子间)。")
     add("")
 
     # 4. factor 构造验证与分布
-    add("## 4. factor 构造验证与 June 分布")
+    add("## 4. factor 构造验证与 June 分布 (9 factors: 7 CORE + 2 SENSITIVITY)")
     add("")
-    add("- 构造: 8 个 factor 全部 finite, 无缺失; 连续 factor June std 均 > 1e-8"
+    add("- 构造: 9 个 factor 全部 finite, 无缺失; 连续 factor June std 均 > 1e-8"
         " (degenerate 检查通过: {})".format(
             "无退化" if not r["degenerate_factors"] else r["degenerate_factors"]))
     add("- REGIME 严格 0/1 (未标准化); 只有 condition number 诊断矩阵中临时 center/scale")
+    add("- HIGHZONE / LATESELL 独立构造 (各自 z-score), 无 SUPPLY composite")
     add("")
     add("| factor | membership | mean | std | min | p01 | p05 | p25 | median | p75 | p95 | p99 | max | skew |")
     add("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
@@ -703,7 +810,7 @@ def _review_md(r: dict) -> str:
         st = r["factor_stats"][f]["june"]
         if f in CONTINUOUS_FACTORS:
             add("| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} |".format(
-                f, "M1,M2" if f in M1_FACTORS else "M2",
+                f, _factor_membership(f),
                 _fmt(st["mean"]), _fmt(st["std"]), _fmt(st["min"]),
                 _fmt(st["p01"]), _fmt(st["p05"]), _fmt(st["p25"]),
                 _fmt(st["median"]), _fmt(st["p75"]), _fmt(st["p95"]),
@@ -715,29 +822,44 @@ def _review_md(r: dict) -> str:
     add("")
 
     # 5. factor 相关性
-    add("## 5. factor 相关性 (June 主参考; July 稳定性)")
+    add("## 5. factor 相关性 (June 主参考; July 稳定性; 判定只看 CORE 矩阵)")
     add("")
     fp = r["factor_pairs"]
+    core_pairs = [p for p in fp if p["core_pair"]]
     maxp = max(fp, key=lambda row: row["abs_june_pearson"])
     maxs = max(fp, key=lambda row: row["abs_june_spearman"])
-    add("- 最大 June Pearson pair: `{}-{}` rho={} (severity={})".format(
+    maxpc = max(core_pairs, key=lambda row: row["abs_june_pearson"])
+    maxsc = max(core_pairs, key=lambda row: row["abs_june_spearman"])
+    add("- 最大 June Pearson pair (9 factor 全集): `{}-{}` rho={} (severity={}){}".format(
         maxp["left_factor"], maxp["right_factor"], _fmt(maxp["june_pearson"]),
-        maxp["severity"]))
-    add("- 最大 June Spearman pair: `{}-{}` rho={} (severity={})".format(
+        maxp["severity"], " — 含 SENSITIVITY 成员" if not maxp["core_pair"] else ""))
+    add("- 最大 June Spearman pair (9 factor 全集): `{}-{}` rho={} (severity={}){}".format(
         maxs["left_factor"], maxs["right_factor"], _fmt(maxs["june_spearman"]),
-        maxs["severity"]))
-    add("- severe pairs (|rho| >= 0.85): {}".format(
+        maxs["severity"], " — 含 SENSITIVITY 成员" if not maxs["core_pair"] else ""))
+    add("- 最大 June Pearson pair (**CORE**): `{}-{}` rho={} (severity={})".format(
+        maxpc["left_factor"], maxpc["right_factor"], _fmt(maxpc["june_pearson"]),
+        maxpc["severity"]))
+    add("- 最大 June Spearman pair (**CORE**): `{}-{}` rho={} (severity={})".format(
+        maxsc["left_factor"], maxsc["right_factor"], _fmt(maxsc["june_spearman"]),
+        maxsc["severity"]))
+    add("- CORE severe pairs (|rho| >= 0.85): {}".format(
         ", ".join("{}-{} ({})".format(p["left_factor"], p["right_factor"], _fmt(max(
-            p["abs_june_pearson"], p["abs_june_spearman"]))) for p in r["severe_pairs"])
-        if r["severe_pairs"] else "无"))
-    high = [p for p in fp if p["severity"] == "HIGH"]
-    add("- high pairs (0.70 <= |rho| < 0.85): {}".format(
+            p["abs_june_pearson"], p["abs_june_spearman"]))) for p in r["core_severe_pairs"])
+        if r["core_severe_pairs"] else "无"))
+    core_high = [p for p in core_pairs if p["severity"] == "HIGH"]
+    add("- CORE high pairs (0.70 <= |rho| < 0.85): {}".format(
         ", ".join("{}-{} ({})".format(p["left_factor"], p["right_factor"], _fmt(max(
-            p["abs_june_pearson"], p["abs_june_spearman"]))) for p in high)
-        if high else "无"))
+            p["abs_june_pearson"], p["abs_june_spearman"]))) for p in core_high)
+        if core_high else "无"))
+    add("- sensitivity 级 SEVERE pairs (非阻塞, 见 §12): {}".format(
+        ", ".join("{}-{} ({})".format(p["left_factor"], p["right_factor"], _fmt(max(
+            p["abs_june_pearson"], p["abs_june_spearman"])))
+            for p in r["sensitivity_severe_pairs"])
+        if r["sensitivity_severe_pairs"] else "无"))
     add("")
-    add("完整 28 对明细见 `v004c_factor_dependence_v001.csv` (REGIME 为二元变量,"
-        " 其 Pearson/Spearman 只作描述性参考, 不作连续线性解释)。")
+    add("完整 36 对明细见 `v004c_factor_dependence_v002.csv` (core_pair 标记"
+        " CORE×CORE; REGIME 为二元变量, 其 Pearson/Spearman 只作描述性参考,"
+        " 不作连续线性解释)。")
     add("")
 
     # 6. VIF
@@ -765,6 +887,21 @@ def _review_md(r: dict) -> str:
         ", ".join("{}={}".format(f, _fmt(v, 3)) for f, v in m2_bad) or "无",
         ", ".join("{}={}".format(f, _fmt(v, 3)) for f, v in m2_bad if v >= 10) or "无"))
     add("- 解释: VIF < 5 OK; 5 <= VIF < 10 WATCH; VIF >= 10 SEVERE (只解释, 禁止自动删因子)")
+    vref = r["v001_ref"]
+    if vref:
+        add("- v001 对照 (冻结 v001 报告, 只读): v001 M2 max VIF = {} (factor `{}`);"
+            " POS7={}, RESET={}, TREND={}, MOM7={}。v002 M2 移除 POS7/TREND 后"
+            " max VIF = {} (factor `{}`)。".format(
+                _fmt(vref.get("v001_m2_vif_max"), 3),
+                vref.get("v001_m2_vif_max_factor", ""),
+                _fmt(vref.get("v001_m2_vif_POS7"), 3),
+                _fmt(vref.get("v001_m2_vif_RESET"), 3),
+                _fmt(vref.get("v001_m2_vif_TREND"), 3),
+                _fmt(vref.get("v001_m2_vif_MOM7"), 3),
+                _fmt(max(r["m2_vif"].values()), 3),
+                max(r["m2_vif"], key=r["m2_vif"].get)))
+    else:
+        add("- v001 对照: 不可用 (v001 报告目录缺失, 仅报告 v002 数值)")
     add("")
 
     # 7. condition number
@@ -772,9 +909,9 @@ def _review_md(r: dict) -> str:
     add("")
     add("| matrix | factors | largest s | smallest s | kappa = s_max/s_min | 判定 |")
     add("|---|---|---|---|---|---|")
-    for name, factors, label in (("M1", M1_FACTORS, "OPEN RESET SUPPLY"),
-                                 ("M2", M2_FACTORS, "8 factors"),
-                                 ("PATH", PATH_BLOCK_FACTORS, "MOM7 DAMAGE7 POS7")):
+    for name, factors, label in (("M1", M1_FACTORS, "OPEN RESET HIGHZONE LATESELL"),
+                                 ("M2", M2_FACTORS, "7 CORE factors"),
+                                 ("PATH", PATH_BLOCK_FACTORS, "MOM7 DAMAGE7")):
         k = r["kappa"][name]
         if k["near_singular"] or k["kappa"] >= KAPPA_SEVERE:
             judge = "SEVERE"
@@ -831,25 +968,67 @@ def _review_md(r: dict) -> str:
     add(_qa_md(r))
     add("")
 
-    # 10. 结构冲突说明 (只记录, 不实施)
-    if r["severe_pairs"]:
-        add("## 10. 结构冲突说明 (仅记录, 不实施)")
-        add("")
-        add("- 触发 REVIEW_REQUIRED 的 factor pair 说明如下; 本阶段不实施任何修正"
+    # 10. v002 修订要点确认
+    add("## 10. v002 修订要点确认 (v001 → v002 结构变化的效果, 纯 X 数据)")
+    add("")
+    add(_revision_check_md(r))
+    add("")
+
+    # 11. 结构冲突说明 (只记录, 不实施)
+    add("## 11. 结构冲突说明 (仅记录, 不实施)")
+    add("")
+    if r["core_severe_pairs"]:
+        add("- 触发 REVIEW_REQUIRED 的 CORE factor pair 说明如下; 本阶段不实施任何修正"
             " (禁止 drop / swap / PCA / Lasso / 改权重)。")
         add("")
-        for p in r["severe_pairs"]:
+        for p in r["core_severe_pairs"]:
             add(_conflict_card_md(r, p))
             add("")
+    else:
+        add("- CORE M1/M2 无 cross-factor SEVERE pair (|rho| >= 0.85), 无需冲突说明。")
+        add("")
+        add("- 含 SENSITIVITY 成员的 SEVERE pair (如 RESET-POS7) 按 v002 决策记录为"
+            " 非阻塞, 见 §12。")
+    add("")
 
-    # 11. 最终状态
-    add("## 11. 最终状态")
+    # 12. 非阻塞 sensitivity 记录
+    add("## 12. 非阻塞 SENSITIVITY 记录 (v002 决策, 只记录不实施)")
+    add("")
+    if r["sensitivity_severe_pairs"]:
+        for p in r["sensitivity_severe_pairs"]:
+            sens = p["left_factor"] if p["left_factor"] in SENSITIVITY_FACTORS \
+                else p["right_factor"]
+            other = p["right_factor"] if p["left_factor"] == sens else p["left_factor"]
+            add("- `{}-{}` (June Pearson={} / Spearman={}; July Pearson={} /"
+                " Spearman={}): `{}` 已按 v002 决策移入 SENSITIVITY (状态 `{}`),"
+                " 该结构冗余只记录, 不阻塞 CORE 矩阵健康判定。".format(
+                    p["left_factor"], p["right_factor"],
+                    _fmt(p["june_pearson"]), _fmt(p["june_spearman"]),
+                    _fmt(p["july_pearson"]), _fmt(p["july_spearman"]),
+                    sens, SENSITIVITY_STATUS.get(sens, "SENSITIVITY")))
+    else:
+        add("- 无 sensitivity 级 SEVERE pair。")
+    mt = next((p for p in r["factor_pairs"]
+               if p["left_factor"] == "MOM7" and p["right_factor"] == "TREND"), None)
+    if mt is not None and mt["severity"] in ("HIGH", "SEVERE"):
+        add("- `MOM7-TREND` (June Pearson={} / Spearman={}, severity={}): TREND 已移入"
+            " SENSITIVITY (SENSITIVITY_HORIZON_STATIONARITY), 该关联不再属于 CORE"
+            " 矩阵。".format(_fmt(mt["june_pearson"]), _fmt(mt["june_spearman"]),
+                            mt["severity"]))
+    add("")
+
+    # 13. 最终状态
+    add("## 13. 最终状态")
     add("")
     add("- 最终状态: **{}**".format(r["status"]))
     if r["status_reasons"]:
         add("- 触发原因:")
         for reason in r["status_reasons"]:
             add("  - " + reason)
+    add("- 判定阈值 (任务 §12): CORE M1/M2 cross-factor |Pearson or Spearman| >= 0.85,"
+        " 或 VIF >= 10, 或 condition number >= 100, 或 degenerate factor"
+        " => REVIEW_REQUIRED; 否则 PASS_X_STRUCTURE_V002。VIF 5-10 或相关 0.70-0.85"
+        " 只记 WATCH, 不自动失败。")
     add("- 本审查只做 X 结构诊断: 未读取 Target, 未做任何 Target 方向解释"
         " (不得据此声称某 factor 应取正/负系数), 未执行任何训练/预测")
     add("- 禁止自动修正: 即使出现 SEVERE / VIF >= 10 / kappa >= 100 / 退化,"
@@ -859,46 +1038,98 @@ def _review_md(r: dict) -> str:
 
 
 def _conflict_card_md(r: dict, p: dict) -> str:
-    """SEVERE factor pair 的冲突说明卡片 (§27: 哪个冲突 / 为什么 / 最小可考虑修正方向)."""
+    """CORE SEVERE factor pair 的冲突说明卡片 (哪个冲突 / 为什么 / 最小可考虑修正方向)."""
     left, right = p["left_factor"], p["right_factor"]
-    lines = [
+    return "\n".join([
         "### {}-{} (June Pearson={} / Spearman={}, severity=SEVERE; July Pearson={}"
         " / Spearman={})".format(
             left, right, _fmt(p["june_pearson"]), _fmt(p["june_spearman"]),
             _fmt(p["july_pearson"]), _fmt(p["july_spearman"])),
         "",
-    ]
-    if (left, right) == ("RESET", "POS7"):
-        # primitive 层面证据 (动态取值, 防手抄)
-        pp = next((row for row in r["primitive_pairs"]
-                   if {row["left"], row["right"]} ==
-                   {"d1_high_to_close_drawdown_raw", "recent_7d_close_position"}), None)
-        prim_evidence = ("`d1_high_to_close_drawdown_raw`-`recent_7d_close_position`"
-                         " 原始相关性已 SEVERE (Pearson={} / Spearman={})".format(
-                             _fmt(pp["june_pearson"]), _fmt(pp["june_spearman"]))
-                         if pp else "对应 primitive 相关性见 primitive dependence CSV")
-        lines += [
-            "- 冲突: RESET (D1 单日价格重置强度) 与 POS7 (最近 7 日区间收盘相对位置)"
-            " 高度负相关。",
-            "- 为什么: 两者共享同一 D1 收盘锚定信息 — RESET 高表示 D1 收盘相对开盘/最高价/"
-            "VWAP 大幅向下重置, POS7 低表示收盘位于 7 日区间下部; 大幅向下重置的 D1 收盘"
-            " 在机制上几乎必然落在 7 日区间底部, 两者近似互为逆观测。primitive 层面 "
-            + prim_evidence + "。该冲突为纯 X 结构发现, 不涉及 Target。",
-            "- 最小可考虑修正方向 (本阶段不实施):",
-            "  1) M2 membership 层面考虑不同时保留 RESET 与 POS7 (例如 POS7 移入"
-            " sensitivity 集), 不修改 factor 定义与 composite 权重;",
-            "  2) 或保留两者, 接受 M2 VIF WATCH (POS7 VIF=8.37, RESET VIF=8.09),"
-            " 由下一阶段 walk-forward 的训练证据决定去留;",
-            "  3) 上述方向仅供人工参考, 本阶段禁止实施。",
-        ]
+        "- 冲突: `{}` 与 `{}` 都是 CORE factor 且高度相关 (|rho| >= 0.85)。".format(
+            left, right),
+        "- 为什么: 由 CORE 相关性诊断发现; 具体经济机制需人工确认, 本阶段不自动解释。",
+        "- 最小可考虑修正方向 (本阶段不实施): 在 M2 membership 层面避免同时保留高度"
+        " 共线组合 (参考 v002 对 POS7/TREND 的处理, 将其中一个移入 SENSITIVITY 集),"
+        " 或由下一阶段 walk-forward 训练证据决定; 本阶段禁止实施任何修改。",
+    ])
+
+
+def _revision_check_md(r: dict) -> str:
+    """§10: v002 修订要点确认 — 6 项重点, 数据驱动 + v001 对照."""
+    v = r["v001_ref"]
+    fp = r["factor_pairs"]
+    core_pairs = [p for p in fp if p["core_pair"]]
+    m1max = max(r["m1_vif"], key=r["m1_vif"].get)
+    m2max = max(r["m2_vif"], key=r["m2_vif"].get)
+    rp = next((p for p in fp
+               if p["left_factor"] == "RESET" and p["right_factor"] == "POS7"), None)
+    mt = next((p for p in fp
+               if p["left_factor"] == "MOM7" and p["right_factor"] == "TREND"), None)
+    hl = next((p for p in fp
+               if p["left_factor"] == "HIGHZONE" and p["right_factor"] == "LATESELL"), None)
+    mom_dmg = next((p for p in fp
+                    if p["left_factor"] == "MOM7" and p["right_factor"] == "DAMAGE7"), None)
+
+    lines = []
+    add = lines.append
+
+    add("**1. RESET 从 POS7 移出 core 后, VIF 是否明显改善?**")
+    add("- v002 M2 中 RESET VIF = {}; POS7 已不在任何 CORE 矩阵。".format(
+        _fmt(r["m2_vif"]["RESET"], 3)))
+    if v.get("v001_m2_vif_RESET") is not None:
+        add("- v001 对照: v001 M2 中 RESET VIF = {}, POS7 VIF = {}。".format(
+            _fmt(v["v001_m2_vif_RESET"], 3), _fmt(v.get("v001_m2_vif_POS7"), 3)))
+    add("")
+    add("**2. MOM7 移除 TREND 后, 是否不再出现明显共线性?**")
+    if mom_dmg is not None:
+        add("- v002 CORE 中 MOM7 最大相关 pair = `{}-{}`: pearson={} / spearman={}"
+            " (severity={})。".format(
+                mom_dmg["left_factor"], mom_dmg["right_factor"],
+                _fmt(mom_dmg["june_pearson"]), _fmt(mom_dmg["june_spearman"]),
+                mom_dmg["severity"]))
+    add("- v002 M2 中 MOM7 VIF = {}。".format(_fmt(r["m2_vif"]["MOM7"], 3)))
+    if mt is not None:
+        add("- v001 对照: v001 `MOM7-TREND` pearson={} / spearman={} (severity={});"
+            " TREND 现已移出 CORE。".format(
+                _fmt(mt["june_pearson"]), _fmt(mt["june_spearman"]), mt["severity"]))
+    add("")
+    add("**3. HIGHZONE 与 LATESELL 独立进入 M1/M2 后, 矩阵是否仍健康?**")
+    if hl is not None:
+        add("- `HIGHZONE-LATESELL`: pearson={} / spearman={} (severity={})"
+            " — 接近独立, 支持拆分。".format(
+                _fmt(hl["june_pearson"]), _fmt(hl["june_spearman"]), hl["severity"]))
+    add("- v002 M1/M2 中 HIGHZONE VIF = {} / {}, LATESELL VIF = {} / {}。".format(
+        _fmt(r["m1_vif"]["HIGHZONE"], 3), _fmt(r["m2_vif"]["HIGHZONE"], 3),
+        _fmt(r["m1_vif"]["LATESELL"], 3), _fmt(r["m2_vif"]["LATESELL"], 3)))
+    add("")
+    add("**4. M1 是否存在严重共线性?**")
+    add("- M1 max VIF = {} (factor `{}`); M1 kappa = {} (s_max={}, s_min={})。".format(
+        _fmt(r["m1_vif"][m1max], 3), m1max,
+        _fmt(r["kappa"]["M1"]["kappa"], 3), _fmt(r["kappa"]["M1"]["s_max"], 3),
+        _fmt(r["kappa"]["M1"]["s_min"], 6)))
+    add("")
+    add("**5. M2 是否存在严重共线性?**")
+    add("- M2 max VIF = {} (factor `{}`); M2 kappa = {} (s_max={}, s_min={})。".format(
+        _fmt(r["m2_vif"][m2max], 3), m2max,
+        _fmt(r["kappa"]["M2"]["kappa"], 3), _fmt(r["kappa"]["M2"]["s_max"], 3),
+        _fmt(r["kappa"]["M2"]["s_min"], 6)))
+    add("")
+    add("**6. 是否仍有 cross-factor SEVERE pair?**")
+    if r["core_severe_pairs"]:
+        add("- CORE: {}".format("; ".join(
+            "`{}-{}` (|rho|={})".format(p["left_factor"], p["right_factor"], _fmt(max(
+                p["abs_june_pearson"], p["abs_june_spearman"])))
+            for p in r["core_severe_pairs"])))
     else:
-        lines += [
-            "- 冲突: `{}` 与 `{}` 因子高度相关 (|rho| >= 0.85)。".format(left, right),
-            "- 为什么: 由相关性诊断发现; 具体经济机制需人工确认, 本阶段不自动解释。",
-            "- 最小可考虑修正方向 (本阶段不实施): 在 M2 membership 层面避免同时保留高度"
-            " 共线组合 (移入 sensitivity 集) 或由下一阶段 walk-forward 训练证据决定;"
-            " 本阶段禁止实施任何修改。",
-        ]
+        add("- CORE: 无 (7 个 CORE factor 内部无 |rho| >= 0.85 pair)。")
+    if r["sensitivity_severe_pairs"]:
+        add("- SENSITIVITY (非阻塞, 只记录): {}".format("; ".join(
+            "`{}-{}` (|rho|={})".format(p["left_factor"], p["right_factor"], _fmt(max(
+                p["abs_june_pearson"], p["abs_june_spearman"])))
+            for p in r["sensitivity_severe_pairs"])))
+    else:
+        add("- SENSITIVITY: 无。")
     return "\n".join(lines)
 
 
@@ -916,18 +1147,15 @@ def _primitive_dist_table(r: dict, month: str) -> str:
 def _qa_md(r: dict) -> str:
     pp = r["primitive_pairs"]
     fp = r["factor_pairs"]
+    core_pairs = [p for p in fp if p["core_pair"]]
+    vref = r["v001_ref"]
     lines: list[str] = []
 
-    def pair(rows, left, right):
-        for row in rows:
+    def prim_pair(left, right):
+        for row in pp:
             if {row["left"], row["right"]} == {left, right}:
                 return row
-            if row.get("left_factor") == left and row.get("right_factor") == right:
-                return row
         return None
-
-    def prim_pair(left, right):
-        return pair(pp, left, right)
 
     def fac_pair(left, right):
         for row in fp:
@@ -956,6 +1184,8 @@ def _qa_md(r: dict) -> str:
             "; ".join("`{}-{}` rho={}".format(p["left"], p["right"], _fmt(max(
                 p["abs_june_pearson"], p["abs_june_spearman"])))
                 for p in within_severe) or "无"))
+        add("- 注: 跨因子 SEVERE 对应 factor 级 pair 为 RESET×POS7, POS7 已移入"
+            " SENSITIVITY (见 §5/§12), 不触发 CORE 判定。")
     else:
         add("- 无任何 SEVERE primitive pair (|rho| >= 0.85); 11 个 primitive 内部"
             " 无 near-duplicate pair (NP01-07 均不命中本 universe)")
@@ -974,30 +1204,51 @@ def _qa_md(r: dict) -> str:
         " 与 VWAP 取负、对 HC 取正, 使三者对齐同一方向; 内部相关性因此是设计的一部分"
         " (同一潜在经济因子的多个观测)。")
     add("")
-    add("**Q3. SUPPLY 内部 2 个 primitive 是否合理描述同一潜变量?**")
+    add("**Q3. HIGHZONE 与 LATESELL 是否接近独立 (SUPPLY 拆分依据)?**")
     row = prim_pair("high_zone_volume_ratio", "late_day_sell_volume_ratio")
     if row:
         add("- `high_zone_volume_ratio-late_day_sell_volume_ratio`: pearson={} /"
             " spearman={} (severity={})".format(
                 _fmt(row["june_pearson"]), _fmt(row["june_spearman"]),
                 row["severity"]))
-    add("- 结构说明: 高位成交占比与尾盘下跌 bar 成交占比都是 D1 供应压力来源的观测;"
-        " composite 等权 (+1/2, +1/2) 固定, 不因相关性强弱调整。")
+    add("- 结构说明: 两者接近独立, 缺乏同一潜变量依据 => v002 不再压缩成 50/50"
+        " SUPPLY composite; HIGHZONE/LATESELL 各自独立 z-score, 未来由 Logistic"
+        " 独立估计系数 (禁止重新合成 SUPPLY)。")
     add("")
-    add("**Q4. 8 个 factor 之间最大的 Pearson/Spearman pair 是什么?**")
+    add("**Q4. 9 个 factor 中最大 Pearson/Spearman pair 是什么 (全集 与 CORE)?**")
     maxp = max(fp, key=lambda row: row["abs_june_pearson"])
     maxs = max(fp, key=lambda row: row["abs_june_spearman"])
-    add("- 最大 Pearson: `{}-{}` rho={}".format(
-        maxp["left_factor"], maxp["right_factor"], _fmt(maxp["june_pearson"])))
-    add("- 最大 Spearman: `{}-{}` rho={}".format(
-        maxs["left_factor"], maxs["right_factor"], _fmt(maxs["june_spearman"])))
+    maxpc = max(core_pairs, key=lambda row: row["abs_june_pearson"])
+    maxsc = max(core_pairs, key=lambda row: row["abs_june_spearman"])
+    add("- 全集最大 Pearson: `{}-{}` rho={} (severity={}){}".format(
+        maxp["left_factor"], maxp["right_factor"], _fmt(maxp["june_pearson"]),
+        maxp["severity"], " — 含 SENSITIVITY 成员" if not maxp["core_pair"] else ""))
+    add("- 全集最大 Spearman: `{}-{}` rho={} (severity={}){}".format(
+        maxs["left_factor"], maxs["right_factor"], _fmt(maxs["june_spearman"]),
+        maxs["severity"], " — 含 SENSITIVITY 成员" if not maxs["core_pair"] else ""))
+    add("- CORE 最大 Pearson: `{}-{}` rho={} (severity={})".format(
+        maxpc["left_factor"], maxpc["right_factor"], _fmt(maxpc["june_pearson"]),
+        maxpc["severity"]))
+    add("- CORE 最大 Spearman: `{}-{}` rho={} (severity={})".format(
+        maxsc["left_factor"], maxsc["right_factor"], _fmt(maxsc["june_spearman"]),
+        maxsc["severity"]))
     add("")
     add("**Q5. MOM7/DAMAGE7/POS7 是否存在明显路径信息重复?**")
     for left, right in (("MOM7", "DAMAGE7"), ("MOM7", "POS7"), ("DAMAGE7", "POS7")):
-        add("- `{}-{}`: {}".format(left, right, show_fac(fac_pair(left, right))))
+        add("- `{}-{}`: {}{}".format(
+            left, right, show_fac(fac_pair(left, right)),
+            " (POS7 为 SENSITIVITY)" if "POS7" in (left, right) else ""))
     add("")
     add("**Q6. MOM7 和 TREND 是否高度重复?**")
     add("- `MOM7-TREND`: {}".format(show_fac(fac_pair("MOM7", "TREND"))))
+    if vref.get("v001_mom7_trend_pearson") is not None:
+        add("- v001 对照: June Pearson={} / Spearman={} — 该关联是 TREND 移入"
+            " SENSITIVITY (SENSITIVITY_HORIZON_STATIONARITY) 的依据之一。".format(
+                _fmt(vref["v001_mom7_trend_pearson"]),
+                _fmt(vref["v001_mom7_trend_spearman"])))
+    else:
+        add("- TREND 已移入 SENSITIVITY (SENSITIVITY_HORIZON_STATIONARITY),"
+            " 该 pair 不再属于 CORE 矩阵。")
     add("")
     add("**Q7. RESET 和 DAMAGE7 是否实际上描述同一回撤?**")
     add("- `RESET-DAMAGE7`: {}".format(show_fac(fac_pair("RESET", "DAMAGE7"))))
@@ -1011,6 +1262,16 @@ def _qa_md(r: dict) -> str:
     add("**Q9. M2 最大 VIF 是多少?**")
     m2f = max(r["m2_vif"], key=r["m2_vif"].get)
     add("- M2 max VIF = {} (factor `{}`)".format(_fmt(r["m2_vif"][m2f], 3), m2f))
+    if vref.get("v001_m2_vif_max") is not None:
+        add("- v001 对照: v001 M2 max VIF = {} (factor `{}`); POS7={}, TREND={},"
+            " RESET={}, MOM7={}。v002 移除 POS7/TREND 后 max VIF = {} (factor"
+            " `{}`)。".format(
+                _fmt(vref["v001_m2_vif_max"], 3), vref.get("v001_m2_vif_max_factor", ""),
+                _fmt(vref.get("v001_m2_vif_POS7"), 3),
+                _fmt(vref.get("v001_m2_vif_TREND"), 3),
+                _fmt(vref.get("v001_m2_vif_RESET"), 3),
+                _fmt(vref.get("v001_m2_vif_MOM7"), 3),
+                _fmt(r["m2_vif"][m2f], 3), m2f))
     add("")
     add("**Q10. M1 condition number 是多少?**")
     add("- M1 kappa = {} (s_max={}, s_min={})".format(
@@ -1031,8 +1292,9 @@ def _qa_md(r: dict) -> str:
     if r["shift_factors"]:
         for f in r["shift_factors"]:
             st = r["factor_stats"][f]
-            add("- `{}`: SMD={}, KS={} (SHIFT_WATCH)".format(
-                f, _fmt(st["smd"]), _fmt(st["ks"])))
+            add("- `{}`: SMD={}, KS={} (SHIFT_WATCH){}".format(
+                f, _fmt(st["smd"]), _fmt(st["ks"]),
+                " — 该 shift 是 TREND 移入 SENSITIVITY 的依据之一" if f == "TREND" else ""))
     else:
         add("- 无 (所有连续 factor 的 |SMD| < 0.50 且 KS < 0.25)")
     add("- REGIME: June rate1={}, July rate1={}, 差值={}".format(
@@ -1044,7 +1306,7 @@ def _qa_md(r: dict) -> str:
         add("- 退化 factor (June std <= 1e-8): {}".format(
             ", ".join(r["degenerate_factors"])))
     else:
-        add("- 退化 factor: 无 (8 个 factor 全部有限, 连续 factor June std > 1e-8)")
+        add("- 退化 factor: 无 (9 个 factor 全部有限, 连续 factor June std > 1e-8)")
     add("- REGIME 稀疏性: June count0={} count1={} (rate1={}); July count0={}"
         " count1={} (rate1={}); minority 计数 {} / {}; 是否过疏由人工判断,"
         " 本阶段不处理".format(
@@ -1055,11 +1317,11 @@ def _qa_md(r: dict) -> str:
             r["regime_dist"]["june"]["minority_count"],
             r["regime_dist"]["july"]["minority_count"]))
     add("")
-    add("**Q15. 8 因子结构是否可以进入正式 walk-forward?**")
+    add("**Q15. v002 CORE 结构是否可以进入正式 walk-forward?**")
     add("- 最终状态: **{}**".format(r["status"]))
     if r["status_reasons"]:
         add("- 触发原因: {}".format("; ".join(r["status_reasons"])))
-    add("- 含义: 该状态只回答 'factor 结构是否适合进入 M0/M1/M2 expanding-date"
+    add("- 含义: 该状态只回答 'CORE factor 结构是否适合进入 M0/M1/M2 expanding-date"
         " walk-forward', 不是 model coefficient freeze; 是否继续由人工审查"
         " primitive/factor dependence、VIF、condition number、distribution stability"
         " 后决定。")
@@ -1072,17 +1334,17 @@ def _qa_md(r: dict) -> str:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
-        description="v004c 因子结构纯 X 侧审计 (不训练模型, 不读取 Target)")
+        description="v004c 因子结构纯 X 侧审计 v002 (不训练模型, 不读取 Target)")
     parser.add_argument("--input", default=str(DEFAULT_INPUT),
                         help="model table CSV 路径 (默认正式 model table)")
     parser.add_argument("--output", default=str(DEFAULT_OUTPUT),
                         help="输出目录 (默认 reports/research/"
-                             "v004c_factor_dependence_v001_20260601_20260729)")
+                             "v004c_factor_dependence_v002_20260601_20260729)")
     args = parser.parse_args(argv)
 
     r = run_factor_dependence_audit(args.input, args.output)
 
-    print("=== v004c factor dependence audit ===")
+    print("=== v004c factor dependence audit v002 ===")
     print(f"input      : {r['input']}")
     print(f"sha256     : {r['input_sha256']}")
     print(f"June rows  : {r['june_rows']} ({r['june_date_count']} signal dates)")
@@ -1093,12 +1355,20 @@ def main(argv=None) -> int:
           f"rho={maxp['june_pearson']:.4f}")
     print(f"primitive max Spearman : {maxs['left']}-{maxs['right']} "
           f"rho={maxs['june_spearman']:.4f}")
+    core_pairs = [p for p in r["factor_pairs"] if p["core_pair"]]
     maxp = max(r["factor_pairs"], key=lambda row: row["abs_june_pearson"])
     maxs = max(r["factor_pairs"], key=lambda row: row["abs_june_spearman"])
+    maxpc = max(core_pairs, key=lambda row: row["abs_june_pearson"])
+    maxsc = max(core_pairs, key=lambda row: row["abs_june_spearman"])
     print(f"factor max Pearson     : {maxp['left_factor']}-{maxp['right_factor']} "
+          f"rho={maxp['june_pearson']:.4f} (含 sensitivity)"
+          if not maxp["core_pair"] else
+          f"factor max Pearson     : {maxp['left_factor']}-{maxp['right_factor']} "
           f"rho={maxp['june_pearson']:.4f}")
-    print(f"factor max Spearman    : {maxs['left_factor']}-{maxs['right_factor']} "
-          f"rho={maxs['june_spearman']:.4f}")
+    print(f"factor CORE max Pearson: {maxpc['left_factor']}-{maxpc['right_factor']} "
+          f"rho={maxpc['june_pearson']:.4f}")
+    print(f"factor CORE max Spear. : {maxsc['left_factor']}-{maxsc['right_factor']} "
+          f"rho={maxsc['june_spearman']:.4f}")
     m1f = max(r["m1_vif"], key=r["m1_vif"].get)
     m2f = max(r["m2_vif"], key=r["m2_vif"].get)
     print(f"M1 max VIF             : {r['m1_vif'][m1f]:.3f} ({m1f})")
@@ -1109,6 +1379,8 @@ def main(argv=None) -> int:
         print(f"kappa {name:4s}            : {k['kappa']:.3f}{near}")
     print(f"degenerate factors     : {r['degenerate_factors'] or 'none'}")
     print(f"shift factors          : {r['shift_factors'] or 'none'}")
+    print(f"core severe pairs      : {len(r['core_severe_pairs'])}")
+    print(f"sensitivity severe pairs: {len(r['sensitivity_severe_pairs'])}")
     print(f"status                 : {r['status']}")
     for reason in r["status_reasons"]:
         print(f"  - {reason}")
