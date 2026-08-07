@@ -11,6 +11,8 @@ data/raw/
 data/processed/*.csv
 data/research/
 data/snapshots/
+data/backups/
+data/snapshots_stage1_*/
 reports/daily_signals/
 reports/daily_v005/
 reports/backtest_results/
