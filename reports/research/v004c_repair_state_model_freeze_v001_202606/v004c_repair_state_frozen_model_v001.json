@@ -1,0 +1,145 @@
+{
+  "R1": {
+    "coefficients": {
+      "CLOSE_DAMAGE": 0.4371984738633886,
+      "DIVERGENCE": -0.08794881141190218,
+      "OPEN": 0.07483231325397154,
+      "RECLAIM": 0.3440150544488799,
+      "SUPPLY": -0.1458378254358144
+    },
+    "factor_order": [
+      "OPEN",
+      "DIVERGENCE",
+      "CLOSE_DAMAGE",
+      "SUPPLY",
+      "RECLAIM"
+    ],
+    "intercept": -0.6730455750012894
+  },
+  "R2": {
+    "coefficients": {
+      "CLOSE_DAMAGE": 0.5397001296627395,
+      "DIVERGENCE": -0.1566019473151536,
+      "DIVERGENCE_SQ": 0.2787008248926637,
+      "DIVERGENCE_X_DAMAGE": -0.3644586048782202,
+      "DIVERGENCE_X_RECLAIM": -0.28630680595148444,
+      "OPEN": 0.11990402218639971,
+      "RECLAIM": 0.414053328248222,
+      "SUPPLY": -0.1629768806766291
+    },
+    "factor_order": [
+      "OPEN",
+      "DIVERGENCE",
+      "CLOSE_DAMAGE",
+      "SUPPLY",
+      "RECLAIM",
+      "DIVERGENCE_SQ",
+      "DIVERGENCE_X_RECLAIM",
+      "DIVERGENCE_X_DAMAGE"
+    ],
+    "intercept": -0.6765726244947639
+  },
+  "algorithm": {
+    "C": 1.0,
+    "class_weight": null,
+    "estimator": "LogisticRegression",
+    "fit_intercept": true,
+    "library": "scikit-learn",
+    "max_iter": 1000,
+    "penalty": "l2",
+    "random_state": null,
+    "solver": "lbfgs"
+  },
+  "composite_transforms": {
+    "CLOSE_DAMAGE": {
+      "mu": 2.0535917218500004e-17,
+      "sigma": 0.9274309196615663
+    },
+    "RECLAIM": {
+      "mu": 2.0535917218500004e-17,
+      "sigma": 0.8889357141534371
+    }
+  },
+  "derived_transforms": {
+    "DIVERGENCE_SQ": {
+      "mu": 1.0,
+      "sigma": 1.4969308568761153
+    },
+    "DIVERGENCE_X_DAMAGE": {
+      "mu": 0.3298966961247638,
+      "sigma": 1.2950982438130445
+    },
+    "DIVERGENCE_X_RECLAIM": {
+      "mu": 0.21409102640183234,
+      "sigma": 1.3309871109316023
+    }
+  },
+  "factor_spec_version": "v004c_repair_state_spec_v002",
+  "model_version": "v004c_repair_state_model_v001",
+  "primitive_transforms": {
+    "break_open_return": {
+      "mu": 0.00869710015316699,
+      "q01": -0.06836661872185401,
+      "q99": 0.10010513723142017,
+      "sigma": 0.03544670696306947
+    },
+    "d1_afternoon_return": {
+      "mu": -0.0005801560702312826,
+      "q01": -0.069290033290305,
+      "q99": 0.07444496904776862,
+      "sigma": 0.024718501110310494
+    },
+    "d1_close_to_vwap_raw": {
+      "mu": -0.006502615175045418,
+      "q01": -0.06015607223395202,
+      "q99": 0.05955208818430944,
+      "sigma": 0.024062650149756153
+    },
+    "d1_high_to_close_drawdown_raw": {
+      "mu": 0.05442991013336092,
+      "q01": 0.003530639001776656,
+      "q99": 0.14764101135474944,
+      "sigma": 0.03340983683614227
+    },
+    "d1_intraday_range": {
+      "mu": 0.09653122375335328,
+      "q01": 0.036994743348767706,
+      "q99": 0.18856373802503265,
+      "sigma": 0.03205218355789944
+    },
+    "d1_low_to_close_recovery": {
+      "mu": 0.040255644038255524,
+      "q01": 0.0,
+      "q99": 0.1459738971665577,
+      "sigma": 0.03233606407471326
+    },
+    "d1_open_to_close_return_raw": {
+      "mu": -0.011832317896963908,
+      "q01": -0.137569343683033,
+      "q99": 0.09527582678542748,
+      "sigma": 0.05233963317125395
+    },
+    "late_day_sell_volume_ratio": {
+      "mu": 0.07306475036218175,
+      "q01": 0.0,
+      "q99": 0.15759403816416928,
+      "sigma": 0.0362692311490848
+    }
+  },
+  "ranking": {
+    "probability": "descending",
+    "tie_break": "event_id ascending"
+  },
+  "research_status": {
+    "july_target_seen": false,
+    "june_is_validation": false,
+    "post_june_hypothesis": true
+  },
+  "target_column": "target7_daily_d2open_d3high",
+  "training_dates": 21,
+  "training_period": {
+    "end": "2026-06-30",
+    "start": "2026-06-01"
+  },
+  "training_rows": 173
+}

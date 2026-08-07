@@ -1,0 +1,26 @@
+﻿section,field,value
+dataset,input,F:\fenqixuangu\reports\research\v004c_model_table_v001_20260601_20260729\v004c_model_table_v001.csv
+dataset,x_only_sha256,f78da6a8a4436a3942b9e5df412965f00316db6adf87e9d69169314fffb57f49
+dataset,model_version,v004c_repair_state_model_v001
+window,june_start,2026-06-01
+window,june_end,2026-06-30
+window,july_start,2026-07-01
+window,july_end,2026-07-29
+window,window_rows,333
+window,out_of_window_rows,0
+june,rows,173
+june,signal_dates,21
+june,date_min,2026-06-01
+june,date_max,2026-06-30
+june,positive,59
+june,negative,114
+june,base_rate,0.34104046242774566
+june,target_column,target7_daily_d2open_d3high
+july_boundary,july_x_rows,160
+july_boundary,july_x_date_count,21
+july_boundary,july_x_used_for_transform,NO
+july_boundary,july_target_read,NO
+july_boundary,july_target_loaded,NO
+july_boundary,july_target_used,NO
+fit,development_only,DEVELOPMENT_IN_SAMPLE_ONLY
+fit,june_is_validation,NO (post-June hypothesis)

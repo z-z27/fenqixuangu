@@ -1,0 +1,14 @@
+﻿scope,key,q01,q99,mu,sigma
+primitive,break_open_return,-0.068367,0.100105,0.008697,0.035447
+primitive,d1_intraday_range,0.036995,0.188564,0.096531,0.032052
+primitive,d1_open_to_close_return_raw,-0.137569,0.095276,-0.011832,0.052340
+primitive,d1_high_to_close_drawdown_raw,0.003531,0.147641,0.054430,0.033410
+primitive,d1_close_to_vwap_raw,-0.060156,0.059552,-0.006503,0.024063
+primitive,late_day_sell_volume_ratio,0.000000,0.157594,0.073065,0.036269
+primitive,d1_low_to_close_recovery,0.000000,0.145974,0.040256,0.032336
+primitive,d1_afternoon_return,-0.069290,0.074445,-0.000580,0.024719
+composite,CLOSE_DAMAGE,,,0.000000,0.927431
+composite,RECLAIM,,,0.000000,0.888936
+derived,DIVERGENCE_SQ,,,1.000000,1.496931
+derived,DIVERGENCE_X_RECLAIM,,,0.214091,1.330987
+derived,DIVERGENCE_X_DAMAGE,,,0.329897,1.295098
