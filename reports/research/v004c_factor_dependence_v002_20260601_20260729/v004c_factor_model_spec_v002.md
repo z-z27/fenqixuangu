@@ -19,7 +19,8 @@
 
 ## Factor 预处理 (future walk-forward)
 
-- 连续 factor: 每个 training fold 内拟合 clip [q01, q99] + (x - mu)/sigma
+- 连续 factor: 每个 training fold 内拟合 (FOLD_CLIP_Z 顺序: 在 fold 原始值上拟合
+  q01/q99 -> clip -> 在 clipped fold 值上拟合 mu/sigma) + (x - mu)/sigma
   (q01/q99/mu/sigma 只允许来自当前 training fold; 禁止全样本参数)
 - REGIME: 0/1 原值, 不做 z-score; 第一版禁止 interaction
 - 禁止对 beta/gamma 施加正负约束 (系数方向由模型估计)
@@ -68,9 +69,9 @@ M2 回答: 在 D1 结构已知后, 最近价格路径 (MOM7/DAMAGE7) 和二/三�
 
 - L2 Logistic Regression: C = 1.0, solver = lbfgs, fit_intercept = True,
   class_weight = None
-- 目标函数:
+- 目标函数 (beta = non-intercept coefficients; alpha/intercept is not penalized):
 
-      min_theta [ -sum_i ( y_i*log(p_i) + (1-y_i)*log(1-p_i) ) + lambda * ||theta_0||_2^2 ]
+      min_{alpha, beta} [ -sum_i ( y_i*log(p_i) + (1-y_i)*log(1-p_i) ) + lambda * ||beta||_2^2 ]
 
 - walk-forward 的目的不是只获得一组系数, 而是产生严格时间外 OOF 预测以及逐 fold
   系数路径, 用于检验预测能力、增量价值和参数稳定性

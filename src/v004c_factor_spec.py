@@ -136,8 +136,10 @@ class FactorSpecError(Exception):
 def fit_reference_transform(june_df: pd.DataFrame) -> dict:
     """仅用 June (reference X sample) 拟合 transform 参数。
 
-    连续 primitive: q01/q99 (clip) + mu/sigma (standardize), 全部来自 June。
-    RESET composite G 的 mu/sigma 同样只来自 June 上构造的 G。
+    连续 primitive (FOLD_CLIP_Z 顺序, 与 future walk-forward 规范一致):
+    ① q01/q99 在 June 原始有限值上拟合 -> ② clip -> ③ mu/sigma 在 clipped
+    June 值上拟合。全部来自 June; July 只 apply。
+    RESET composite G 的 mu/sigma 同样只来自 June 上构造的 G (基于修正后的 z)。
     任何退化 (sigma <= 1e-8) 直接失败, 不静默。
     """
     if len(june_df) == 0:
@@ -149,8 +151,9 @@ def fit_reference_transform(june_df: pd.DataFrame) -> dict:
         if len(finite) == 0:
             raise FactorSpecError(f"June 中 primitive {col} 无有限值")
         q01, q99 = np.quantile(finite, [0.01, 0.99])
-        mu = float(finite.mean())
-        sigma = float(finite.std(ddof=0))
+        clipped = np.clip(finite, q01, q99)
+        mu = float(clipped.mean())
+        sigma = float(clipped.std(ddof=0))
         if not np.isfinite(sigma) or sigma <= DEGENERATE_STD:
             raise FactorSpecError(
                 f"June 中 primitive {col} 退化 (sigma={sigma}, 禁止继续)")
@@ -337,8 +340,9 @@ FACTOR_SPEC_FIELDS: tuple[str, ...] = (
     "target_used_to_construct", "sensitivity_status",
 )
 
-_FOLD_PREPROCESS = ("walk-forward 中每个 training fold 内拟合: clip [q01, q99] "
-                    "+ (x - mu)/sigma (fold 参数; 禁止全样本参数)")
+_FOLD_PREPROCESS = ("walk-forward 中每个 training fold 内拟合 (FOLD_CLIP_Z 顺序: "
+                    "在 fold 原始值上拟合 q01/q99 -> clip -> 在 clipped fold 值上拟合 "
+                    "mu/sigma) + (x - mu)/sigma (fold 参数; 禁止全样本参数)")
 
 
 def factor_spec_rows() -> list[dict]:

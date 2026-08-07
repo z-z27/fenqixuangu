@@ -91,25 +91,25 @@
 
 | factor | membership | mean | std | min | p01 | p05 | p25 | median | p75 | p95 | p99 | max | skew |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| OPEN | M1,M2 | 0.0008 | 0.9979 | -2.1688 | -2.1679 | -1.3976 | -0.6401 | -0.2140 | 0.5923 | 2.0123 | 2.5740 | 2.5742 | 0.5323 |
-| RESET | M1,M2 | -0.0000 | 1.0000 | -2.1400 | -1.8418 | -1.4115 | -0.7263 | -0.0897 | 0.6964 | 1.6843 | 2.2606 | 2.6678 | 0.3493 |
-| HIGHZONE | M1,M2 | -0.0082 | 0.9717 | -0.9598 | -0.9598 | -0.9598 | -0.9598 | -0.1972 | 0.4868 | 2.0317 | 2.7000 | 2.7040 | 1.0485 |
-| LATESELL | M1,M2 | -0.0028 | 0.9929 | -2.0031 | -2.0031 | -1.6488 | -0.6193 | -0.1058 | 0.5553 | 1.9335 | 2.2847 | 2.3112 | 0.3088 |
-| MOM7 | M2 | 0.0028 | 0.9575 | -1.9245 | -1.8559 | -1.4619 | -0.7840 | -0.1029 | 0.6586 | 1.6682 | 1.9178 | 1.9183 | 0.1683 |
-| DAMAGE7 | M2 | -0.0152 | 0.9225 | -1.3344 | -1.3333 | -1.1651 | -0.7065 | -0.2054 | 0.4637 | 1.7906 | 2.8835 | 2.9101 | 1.0261 |
+| OPEN | M1,M2 | -0.0000 | 1.0000 | -2.1741 | -2.1732 | -1.4013 | -0.6423 | -0.2152 | 0.5928 | 2.0157 | 2.5785 | 2.5787 | 0.5323 |
+| RESET | M1,M2 | 0.0000 | 1.0000 | -2.1411 | -1.8466 | -1.4110 | -0.7259 | -0.0921 | 0.6937 | 1.6833 | 2.2581 | 2.6676 | 0.3490 |
+| HIGHZONE | M1,M2 | -0.0000 | 1.0000 | -0.9794 | -0.9794 | -0.9794 | -0.9794 | -0.1945 | 0.5095 | 2.0994 | 2.7872 | 2.7913 | 1.0485 |
+| LATESELL | M1,M2 | -0.0000 | 1.0000 | -2.0145 | -2.0145 | -1.6577 | -0.6208 | -0.1037 | 0.5621 | 1.9502 | 2.3039 | 2.3306 | 0.3088 |
+| MOM7 | M2 | -0.0000 | 1.0000 | -2.0129 | -1.9412 | -1.5297 | -0.8217 | -0.1104 | 0.6850 | 1.7395 | 2.0001 | 2.0007 | 0.1683 |
+| DAMAGE7 | M2 | 0.0000 | 1.0000 | -1.4300 | -1.4288 | -1.2465 | -0.7494 | -0.2062 | 0.5191 | 1.9575 | 3.1422 | 3.1711 | 1.0261 |
 | REGIME | M2 | 0.1618 (rate1) | 0.3683 | 0 | - | - | - | - | - | - | - | 1 | - |
-| POS7 | SENSITIVITY | 0.0069 | 0.9781 | -2.4572 | -2.3194 | -1.7812 | -0.6410 | 0.0819 | 0.8489 | 1.3932 | 1.5136 | 1.5208 | -0.5041 |
-| TREND | SENSITIVITY | 0.0026 | 0.9592 | -2.3403 | -2.2570 | -1.2854 | -0.6844 | -0.0811 | 0.7144 | 1.7608 | 2.3067 | 2.4017 | 0.2679 |
+| POS7 | SENSITIVITY | 0.0000 | 1.0000 | -2.5193 | -2.3784 | -1.8281 | -0.6624 | 0.0767 | 0.8609 | 1.4173 | 1.5404 | 1.5478 | -0.5041 |
+| TREND | SENSITIVITY | 0.0000 | 1.0000 | -2.4425 | -2.3556 | -1.3428 | -0.7162 | -0.0872 | 0.7421 | 1.8330 | 2.4020 | 2.5011 | 0.2679 |
 
 ## 5. factor 相关性 (June 主参考; July 稳定性; 判定只看 CORE 矩阵)
 
-- 最大 June Pearson pair (9 factor 全集): `RESET-POS7` rho=-0.8681 (severity=SEVERE) — 含 SENSITIVITY 成员
-- 最大 June Spearman pair (9 factor 全集): `RESET-POS7` rho=-0.8980 (severity=SEVERE) — 含 SENSITIVITY 成员
+- 最大 June Pearson pair (9 factor 全集): `RESET-POS7` rho=-0.8682 (severity=SEVERE) — 含 SENSITIVITY 成员
+- 最大 June Spearman pair (9 factor 全集): `RESET-POS7` rho=-0.8988 (severity=SEVERE) — 含 SENSITIVITY 成员
 - 最大 June Pearson pair (**CORE**): `MOM7-DAMAGE7` rho=-0.5838 (severity=MODERATE)
 - 最大 June Spearman pair (**CORE**): `MOM7-DAMAGE7` rho=-0.5437 (severity=MODERATE)
 - CORE severe pairs (|rho| >= 0.85): 无
 - CORE high pairs (0.70 <= |rho| < 0.85): 无
-- sensitivity 级 SEVERE pairs (非阻塞, 见 §12): RESET-POS7 (0.8980)
+- sensitivity 级 SEVERE pairs (非阻塞, 见 §12): RESET-POS7 (0.8988)
 
 完整 36 对明细见 `v004c_factor_dependence_v002.csv` (core_pair 标记 CORE×CORE; REGIME 为二元变量, 其 Pearson/Spearman 只作描述性参考, 不作连续线性解释)。
 
@@ -117,27 +117,27 @@
 
 | factor | M1 VIF | M2 VIF |
 |---|---|---|
-| OPEN | 1.2089 | 1.4762 |
-| RESET | 1.3396 | 1.7336 |
-| HIGHZONE | 1.1779 | 1.2282 |
-| LATESELL | 1.0315 | 1.0339 |
-| MOM7 | — | 2.5891 |
-| DAMAGE7 | — | 1.6215 |
-| REGIME | — | 1.2085 |
+| OPEN | 1.2075 | 1.4736 |
+| RESET | 1.3370 | 1.7295 |
+| HIGHZONE | 1.1762 | 1.2270 |
+| LATESELL | 1.0316 | 1.0341 |
+| MOM7 | — | 2.5879 |
+| DAMAGE7 | — | 1.6214 |
+| REGIME | — | 1.2084 |
 | POS7 | — | — |
 | TREND | — | — |
 
-- M1 max VIF: 1.340 (factor `RESET`); VIF >= 5: 无; VIF >= 10: 无
-- M2 max VIF: 2.589 (factor `MOM7`); VIF >= 5: 无; VIF >= 10: 无
+- M1 max VIF: 1.337 (factor `RESET`); VIF >= 5: 无; VIF >= 10: 无
+- M2 max VIF: 2.588 (factor `MOM7`); VIF >= 5: 无; VIF >= 10: 无
 - 解释: VIF < 5 OK; 5 <= VIF < 10 WATCH; VIF >= 10 SEVERE (只解释, 禁止自动删因子)
-- v001 对照 (冻结 v001 报告, 只读): v001 M2 max VIF = 8.374 (factor `POS7`); POS7=8.374, RESET=8.090, TREND=2.921, MOM7=5.505。v002 M2 移除 POS7/TREND 后 max VIF = 2.589 (factor `MOM7`)。
+- v001 对照 (冻结 v001 报告, 只读): v001 M2 max VIF = 8.374 (factor `POS7`); POS7=8.374, RESET=8.090, TREND=2.921, MOM7=5.505。v002 M2 移除 POS7/TREND 后 max VIF = 2.588 (factor `MOM7`)。
 
 ## 7. condition number (centered + unit-variance 诊断矩阵, SVD)
 
 | matrix | factors | largest s | smallest s | kappa = s_max/s_min | 判定 |
 |---|---|---|---|---|---|
-| M1 | OPEN RESET HIGHZONE LATESELL | 15.737 | 8.988889 | 1.751 | OK |
-| M2 | 7 CORE factors | 18.760 | 6.237097 | 3.008 | OK |
+| M1 | OPEN RESET HIGHZONE LATESELL | 15.731 | 9.002240 | 1.747 | OK |
+| M2 | 7 CORE factors | 18.759 | 6.241049 | 3.006 | OK |
 | PATH | MOM7 DAMAGE7 | 16.553 | 8.485274 | 1.951 | OK |
 - 参考: kappa < 30 OK; 30-100 WATCH; >= 100 SEVERE; smallest singular ~ 0 => SEVERE / near singular
 - REGIME 只在此诊断副本中 center/scale (diagnostic scaling != future model preprocessing)
@@ -146,15 +146,15 @@
 
 | factor | June mean | June std | July mean | July std | SMD | KS | flag |
 |---|---|---|---|---|---|---|---|
-| OPEN | 0.0008 | 0.9979 | -0.0984 | 1.1799 | -0.0908 | 0.1246 | — |
-| RESET | -0.0000 | 1.0000 | 0.2327 | 1.0146 | 0.2310 | 0.1230 | — |
-| HIGHZONE | -0.0082 | 0.9717 | 0.0231 | 0.8995 | 0.0335 | 0.0690 | — |
-| LATESELL | -0.0028 | 0.9929 | 0.1011 | 1.1030 | 0.0991 | 0.0774 | — |
-| MOM7 | 0.0028 | 0.9575 | -0.4396 | 0.8115 | -0.4984 | 0.2402 | — |
-| DAMAGE7 | -0.0152 | 0.9225 | 0.3864 | 0.9541 | 0.4279 | 0.2804 | SHIFT_WATCH |
+| OPEN | -0.0000 | 1.0000 | -0.0994 | 1.1824 | -0.0908 | 0.1246 | — |
+| RESET | 0.0000 | 1.0000 | 0.2327 | 1.0151 | 0.2310 | 0.1226 | — |
+| HIGHZONE | -0.0000 | 1.0000 | 0.0323 | 0.9258 | 0.0335 | 0.0690 | — |
+| LATESELL | -0.0000 | 1.0000 | 0.1047 | 1.1109 | 0.0991 | 0.0774 | — |
+| MOM7 | -0.0000 | 1.0000 | -0.4620 | 0.8476 | -0.4984 | 0.2402 | — |
+| DAMAGE7 | 0.0000 | 1.0000 | 0.4353 | 1.0342 | 0.4279 | 0.2804 | SHIFT_WATCH |
 | REGIME | 0.1618 (rate1) | 0.3683 | 0.1313 (rate1) | 0.3377 | — | — | — |
-| POS7 | 0.0069 | 0.9781 | -0.3513 | 0.9800 | -0.3659 | 0.1757 | — |
-| TREND | 0.0026 | 0.9592 | -0.6006 | 0.9507 | -0.6316 | 0.2688 | SHIFT_WATCH |
+| POS7 | 0.0000 | 1.0000 | -0.3663 | 1.0019 | -0.3659 | 0.1757 | — |
+| TREND | 0.0000 | 1.0000 | -0.6288 | 0.9911 | -0.6316 | 0.2688 | SHIFT_WATCH |
 
 - 判定: |SMD| >= 0.50 或 KS >= 0.25 => SHIFT_WATCH (只诊断, 不因 July X shift 自动换因子)
 - REGIME: June rate1=0.1618 ((145, 28)), July rate1=0.1313 ((139, 21)), 差值=-0.0306
@@ -178,8 +178,8 @@
 - 结构说明: 两者接近独立, 缺乏同一潜变量依据 => v002 不再压缩成 50/50 SUPPLY composite; HIGHZONE/LATESELL 各自独立 z-score, 未来由 Logistic 独立估计系数 (禁止重新合成 SUPPLY)。
 
 **Q4. 9 个 factor 中最大 Pearson/Spearman pair 是什么 (全集 与 CORE)?**
-- 全集最大 Pearson: `RESET-POS7` rho=-0.8681 (severity=SEVERE) — 含 SENSITIVITY 成员
-- 全集最大 Spearman: `RESET-POS7` rho=-0.8980 (severity=SEVERE) — 含 SENSITIVITY 成员
+- 全集最大 Pearson: `RESET-POS7` rho=-0.8682 (severity=SEVERE) — 含 SENSITIVITY 成员
+- 全集最大 Spearman: `RESET-POS7` rho=-0.8988 (severity=SEVERE) — 含 SENSITIVITY 成员
 - CORE 最大 Pearson: `MOM7-DAMAGE7` rho=-0.5838 (severity=MODERATE)
 - CORE 最大 Spearman: `MOM7-DAMAGE7` rho=-0.5437 (severity=MODERATE)
 
@@ -193,21 +193,21 @@
 - v001 对照: June Pearson=0.7770 / Spearman=0.7764 — 该关联是 TREND 移入 SENSITIVITY (SENSITIVITY_HORIZON_STATIONARITY) 的依据之一。
 
 **Q7. RESET 和 DAMAGE7 是否实际上描述同一回撤?**
-- `RESET-DAMAGE7`: pearson=0.0897 / spearman=0.1419 (severity=LOW)
+- `RESET-DAMAGE7`: pearson=0.0897 / spearman=0.1431 (severity=LOW)
 - 注意: RESET 是 D1 单日价格重置强度, DAMAGE7 是最近 7 日路径峰值破坏, 时间尺度不同; 相关性高低只记录, 不做自动处理。
 
 **Q8. M1 最大 VIF 是多少?**
-- M1 max VIF = 1.340 (factor `RESET`)
+- M1 max VIF = 1.337 (factor `RESET`)
 
 **Q9. M2 最大 VIF 是多少?**
-- M2 max VIF = 2.589 (factor `MOM7`)
-- v001 对照: v001 M2 max VIF = 8.374 (factor `POS7`); POS7=8.374, TREND=2.921, RESET=8.090, MOM7=5.505。v002 移除 POS7/TREND 后 max VIF = 2.589 (factor `MOM7`)。
+- M2 max VIF = 2.588 (factor `MOM7`)
+- v001 对照: v001 M2 max VIF = 8.374 (factor `POS7`); POS7=8.374, TREND=2.921, RESET=8.090, MOM7=5.505。v002 移除 POS7/TREND 后 max VIF = 2.588 (factor `MOM7`)。
 
 **Q10. M1 condition number 是多少?**
-- M1 kappa = 1.751 (s_max=15.737, s_min=8.988889)
+- M1 kappa = 1.747 (s_max=15.731, s_min=9.002240)
 
 **Q11. M2 condition number 是多少?**
-- M2 kappa = 3.008 (s_max=18.760, s_min=6.237097)
+- M2 kappa = 3.006 (s_max=18.759, s_min=6.241049)
 
 **Q12. PATH BLOCK condition number 是多少?**
 - PATH BLOCK kappa = 1.951 (s_max=16.553, s_min=8.485274)
@@ -228,27 +228,27 @@
 ## 10. v002 修订要点确认 (v001 → v002 结构变化的效果, 纯 X 数据)
 
 **1. RESET 从 POS7 移出 core 后, VIF 是否明显改善?**
-- v002 M2 中 RESET VIF = 1.734; POS7 已不在任何 CORE 矩阵。
+- v002 M2 中 RESET VIF = 1.730; POS7 已不在任何 CORE 矩阵。
 - v001 对照: v001 M2 中 RESET VIF = 8.090, POS7 VIF = 8.374。
 
 **2. MOM7 移除 TREND 后, 是否不再出现明显共线性?**
 - v002 CORE 中 MOM7 最大相关 pair = `MOM7-DAMAGE7`: pearson=-0.5838 / spearman=-0.5437 (severity=MODERATE)。
-- v002 M2 中 MOM7 VIF = 2.589。
+- v002 M2 中 MOM7 VIF = 2.588。
 - v001 对照: v001 `MOM7-TREND` pearson=0.7770 / spearman=0.7764 (severity=HIGH); TREND 现已移出 CORE。
 
 **3. HIGHZONE 与 LATESELL 独立进入 M1/M2 后, 矩阵是否仍健康?**
 - `HIGHZONE-LATESELL`: pearson=-0.0513 / spearman=-0.0263 (severity=LOW) — 接近独立, 支持拆分。
-- v002 M1/M2 中 HIGHZONE VIF = 1.178 / 1.228, LATESELL VIF = 1.031 / 1.034。
+- v002 M1/M2 中 HIGHZONE VIF = 1.176 / 1.227, LATESELL VIF = 1.032 / 1.034。
 
 **4. M1 是否存在严重共线性?**
-- M1 max VIF = 1.340 (factor `RESET`); M1 kappa = 1.751 (s_max=15.737, s_min=8.988889)。
+- M1 max VIF = 1.337 (factor `RESET`); M1 kappa = 1.747 (s_max=15.731, s_min=9.002240)。
 
 **5. M2 是否存在严重共线性?**
-- M2 max VIF = 2.589 (factor `MOM7`); M2 kappa = 3.008 (s_max=18.760, s_min=6.237097)。
+- M2 max VIF = 2.588 (factor `MOM7`); M2 kappa = 3.006 (s_max=18.759, s_min=6.241049)。
 
 **6. 是否仍有 cross-factor SEVERE pair?**
 - CORE: 无 (7 个 CORE factor 内部无 |rho| >= 0.85 pair)。
-- SENSITIVITY (非阻塞, 只记录): `RESET-POS7` (|rho|=0.8980)
+- SENSITIVITY (非阻塞, 只记录): `RESET-POS7` (|rho|=0.8988)
 
 ## 11. 结构冲突说明 (仅记录, 不实施)
 
@@ -258,7 +258,7 @@
 
 ## 12. 非阻塞 SENSITIVITY 记录 (v002 决策, 只记录不实施)
 
-- `RESET-POS7` (June Pearson=-0.8681 / Spearman=-0.8980; July Pearson=-0.8475 / Spearman=-0.8355): `POS7` 已按 v002 决策移入 SENSITIVITY (状态 `SENSITIVITY_STRUCTURAL_REDUNDANCY`), 该结构冗余只记录, 不阻塞 CORE 矩阵健康判定。
+- `RESET-POS7` (June Pearson=-0.8682 / Spearman=-0.8988; July Pearson=-0.8474 / Spearman=-0.8352): `POS7` 已按 v002 决策移入 SENSITIVITY (状态 `SENSITIVITY_STRUCTURAL_REDUNDANCY`), 该结构冗余只记录, 不阻塞 CORE 矩阵健康判定。
 - `MOM7-TREND` (June Pearson=0.7770 / Spearman=0.7764, severity=HIGH): TREND 已移入 SENSITIVITY (SENSITIVITY_HORIZON_STATIONARITY), 该关联不再属于 CORE 矩阵。
 
 ## 13. 最终状态

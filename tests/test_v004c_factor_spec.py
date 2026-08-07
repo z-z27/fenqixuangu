@@ -153,6 +153,38 @@ class ReferenceTransformTests(unittest.TestCase):
         with self.assertRaises(FactorSpecError):
             fit_reference_transform(june)
 
+    def test_fold_clip_z_uses_clipped_statistics(self):
+        # FOLD_CLIP_Z 顺序 A (正确): q01/q99 在原始值上拟合 -> clip ->
+        #   mu/sigma 在 clipped 值上拟合。
+        # 顺序 B (错误, 旧实现): mu/sigma 在原始值上拟合, clip 只在 apply 时发生。
+        # 极端值 1000 使 A/B 的 mu/sigma 显著分离 -> 断言能区分两种实现。
+        raw = np.array([0.0, 1.0, 2.0, 3.0, 1000.0])
+        params = fit_reference_transform(
+            _df_with(break_open_return=raw))["break_open_return"]
+        q01 = np.quantile(raw, 0.01)
+        q99 = np.quantile(raw, 0.99)
+        clipped = np.clip(raw, q01, q99)
+        # 顺序 A: quantile 仍是原始值上的分位数
+        self.assertAlmostEqual(params["q01"], float(q01), places=12)
+        self.assertAlmostEqual(params["q99"], float(q99), places=12)
+        # 顺序 A: mu/sigma 是 clipped 统计量, 不是 raw 统计量
+        self.assertAlmostEqual(params["mu"], float(clipped.mean()), places=12)
+        self.assertAlmostEqual(params["sigma"], float(clipped.std(ddof=0)), places=12)
+        self.assertNotAlmostEqual(params["mu"], float(raw.mean()), places=6)
+        self.assertNotAlmostEqual(params["sigma"], float(raw.std(ddof=0)), places=6)
+
+    def test_july_cannot_change_june_transform_params(self):
+        # 修改 July 不得改变 June 的 q01/q99/mu/sigma 与 composite_RESET 参数
+        june = _df_with(d1_ma10_slope=np.linspace(-3.0, 3.0, 200))
+        params = fit_reference_transform(june)
+        july_modified = _df_with(d1_ma10_slope=np.linspace(300.0, 400.0, 160))
+        _ = construct_factors(july_modified, params)
+        refit = fit_reference_transform(june)
+        for key in ("q01", "q99", "mu", "sigma"):
+            self.assertEqual(params["d1_ma10_slope"][key],
+                             refit["d1_ma10_slope"][key])
+        self.assertEqual(params["composite_RESET"], refit["composite_RESET"])
+
 
 class FactorFormulaTests(unittest.TestCase):
     """factor 公式: OPEN / RESET (item 8: 公式未变化) / HIGHZONE / LATESELL / REGIME."""
@@ -279,8 +311,9 @@ class FactorFormulaTests(unittest.TestCase):
                           ("0/1 原值, 不做 z-score; 只有 condition number 诊断副本中临时 "
                            "center/scale (diagnostic scaling != future model preprocessing); "
                            "第一版禁止 interaction",
-                           "walk-forward 中每个 training fold 内拟合: clip [q01, q99] "
-                           "+ (x - mu)/sigma (fold 参数; 禁止全样本参数)"))
+                           "walk-forward 中每个 training fold 内拟合 (FOLD_CLIP_Z 顺序: "
+                           "在 fold 原始值上拟合 q01/q99 -> clip -> 在 clipped fold 值上拟合 "
+                           "mu/sigma) + (x - mu)/sigma (fold 参数; 禁止全样本参数)"))
         by_name = {r["factor_name"]: r for r in rows}
         for f in CORE_FACTORS:
             self.assertEqual(by_name[f]["sensitivity_status"], "")
