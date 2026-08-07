@@ -92,6 +92,8 @@ def main(argv: list[str] | None = None) -> int:
             return build_v004c_factor_dictionary_command(args)
         if args.command == "analyze-v004c-stage2-2":
             return analyze_v004c_stage2_2_command(args)
+        if args.command == "freeze-v004c-stage2-3-candidate-specs":
+            return freeze_v004c_stage2_3_candidate_specs_command(args)
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
@@ -304,6 +306,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="阶段2.1来源 tag (必须为 v004c-factor-dictionary-0.1)",
     )
     p.add_argument("--output-dir", required=True, help="输出目录")
+
+    p = sub.add_parser(
+        "freeze-v004c-stage2-3-candidate-specs",
+        help="v004c 阶段2.3: 人工候选模型规格冻结 (只冻结规格与协议, "
+             "不训练模型, 不生成预测)",
+    )
+    p.add_argument("--stage1-dir", required=True, help="阶段1冻结目录 (v004c_d1_dataset_v001_...)")
+    p.add_argument("--stage2-1-dir", required=True,
+                   help="阶段2.1冻结目录 (v004c_factor_dictionary_v001_...)")
+    p.add_argument("--stage2-2-dir", required=True,
+                   help="阶段2.2冻结目录 (v004c_stage2_2_univariate_v001_...)")
+    p.add_argument(
+        "--stage2-2-ref",
+        default="v004c-stage2-2-univariate-0.1",
+        help="阶段2.2来源 tag (必须为 v004c-stage2-2-univariate-0.1)",
+    )
+    p.add_argument("--output-dir", required=True, help="输出目录")
+    p.add_argument(
+        "--failure-audit-dir",
+        default=None,
+        help="失败审计目录 (默认 reports/diagnostics/v004c_stage2_3_failures; "
+             "失败时不写正式输出目录)",
+    )
     return parser
 
 
@@ -591,6 +616,57 @@ def analyze_v004c_stage2_2_command(args) -> int:
           f"{audit.get('check_count')} PASS "
           f"(all_pass={audit.get('all_pass')})")
     print(f"audit complete: {manifest.get('audit_complete')}")
+    print(f"output dir: {args.output_dir}")
+    return 0
+
+
+def freeze_v004c_stage2_3_candidate_specs_command(args) -> int:
+    """v004c 阶段2.3: 人工候选模型规格冻结 (只冻结规格与协议, 不训练不预测)。"""
+    from pathlib import Path as _Path
+
+    from .v004c_candidate_model_specs import run_v004c_stage2_3_candidate_specs
+    from .v004c_d1_dataset import DatasetValidationError, collect_git_provenance
+
+    try:
+        git_before = collect_git_provenance(_Path.cwd())
+    except DatasetValidationError as exc:
+        print(f"ERROR: Git provenance 采集失败, 阻止冻结: {exc}", file=sys.stderr)
+        return 1
+    try:
+        result = run_v004c_stage2_3_candidate_specs(
+            stage1_dir=args.stage1_dir,
+            stage2_1_dir=args.stage2_1_dir,
+            stage2_2_dir=args.stage2_2_dir,
+            stage2_2_ref=args.stage2_2_ref,
+            output_dir=args.output_dir,
+            git_provenance_before=git_before,
+            git_provenance_after=None,
+            failure_audit_dir=args.failure_audit_dir,
+        )
+    except DatasetValidationError as exc:
+        print(f"ERROR: v004c 阶段2.3 候选规格冻结被阻止: {exc}", file=sys.stderr)
+        return 1
+    manifest = result["manifest"]
+    audit = manifest.get("holdout_lock_audit", {})
+    print("v004c stage2.3 candidate model specs frozen "
+          "(research only, no training, no prediction)")
+    print(f"candidate_selection_mode={manifest['candidate_selection_mode']}")
+    print(f"models: {manifest['model_count']} "
+          f"(substantive {manifest['substantive_model_count']}, "
+          f"M0=0 M1={manifest['model_feature_counts']['M1']} "
+          f"M2={manifest['model_feature_counts']['M2']} "
+          f"M3={manifest['model_feature_counts']['M3']})")
+    print(f"selected unique features: "
+          f"{manifest['selected_unique_feature_count']}")
+    print(f"boundary: {manifest['boundary_counts']['rows']} rows "
+          f"(selected {manifest['boundary_counts']['selected_fixed']})")
+    print(f"redundancy audit: {manifest['redundancy_counts']['rows']} rows")
+    print(f"holdout lock audit: {audit.get('pass_count')}/"
+          f"{audit.get('check_count')} PASS "
+          f"(all_pass={audit.get('all_pass')})")
+    print(f"model_training_performed={manifest['model_training_performed']} "
+          f"prediction_generated={manifest['prediction_generated']} "
+          f"holdout_label_access={manifest['holdout_label_access']}")
     print(f"output dir: {args.output_dir}")
     return 0
 
