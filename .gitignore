@@ -25,6 +25,8 @@ reports/v004b/
 reports/ranking_backtests/
 reports/research_runs/
 reports/warmup/
+reports/diagnostics/
+reports/research/**/backup/
 reports/*_pack/
 reports/rb_*/
 reports/top3_diagnostics/
