@@ -1,0 +1,9 @@
+﻿primitive,below_count,above_count,total_clipped,clip_rate
+break_open_return,9,1,10,0.062500
+d1_intraday_range,3,0,3,0.018750
+d1_open_to_close_return_raw,1,2,3,0.018750
+d1_high_to_close_drawdown_raw,2,1,3,0.018750
+d1_close_to_vwap_raw,6,0,6,0.037500
+late_day_sell_volume_ratio,0,5,5,0.031250
+d1_low_to_close_recovery,0,0,0,0.000000
+d1_afternoon_return,3,0,3,0.018750
