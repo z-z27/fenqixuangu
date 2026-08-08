@@ -1,0 +1,99 @@
+﻿feature_name,pairwise_v1_decision,decision_reason
+CLOSE_DAMAGE,EXCLUDE_MANUAL_COMPOSITE,repair-state CLOSE_DAMAGE 综合
+DAMAGE7,EXCLUDE_MANUAL_COMPOSITE,repair-state 因子
+DIVERGENCE,EXCLUDE_MANUAL_COMPOSITE,repair-state DIVERGENCE 综合
+DIVERGENCE_SQ,EXCLUDE_MANUAL_COMPOSITE,repair-state 非线性变换
+DIVERGENCE_X_DAMAGE,EXCLUDE_MANUAL_COMPOSITE,repair-state 交互项
+DIVERGENCE_X_RECLAIM,EXCLUDE_MANUAL_COMPOSITE,repair-state 交互项
+DIVERGENCE_X_SUPPLY,EXCLUDE_MANUAL_COMPOSITE,repair-state 交互项
+HIGHZONE,EXCLUDE_MANUAL_COMPOSITE,repair-state 因子
+LATESELL,EXCLUDE_MANUAL_COMPOSITE,repair-state 因子
+MOM7,EXCLUDE_MANUAL_COMPOSITE,repair-state 因子
+OPEN,EXCLUDE_MANUAL_COMPOSITE,repair-state 核心因子 (标准化合成分)
+POS7,EXCLUDE_MANUAL_COMPOSITE,repair-state 因子
+RECLAIM,EXCLUDE_MANUAL_COMPOSITE,repair-state RECLAIM 综合
+REGIME,EXCLUDE_MANUAL_COMPOSITE,repair-state 因子
+RESET,EXCLUDE_MANUAL_COMPOSITE,repair-state 因子
+SUPPLY,EXCLUDE_MANUAL_COMPOSITE,repair-state SUPPLY 综合
+TREND,EXCLUDE_MANUAL_COMPOSITE,repair-state 因子
+TURNOVER_COST,EXCLUDE_MANUAL_COMPOSITE,repair-state TURNOVER_COST 综合
+board_day_amount_rank,EXCLUDE_SOURCE_UNAVAILABLE,"pool amount 在 2026-05-06..06-04 全 NaN (daily_limitup_derived), daily amount 全 NaN (0/463902), 无法确定性重建 May 窗口 -> 排除"
+board_day_turnover_rank,EXCLUDE_SOURCE_UNAVAILABLE,"pool turnover_rate 在 2026-05-06..06-04 全 NaN, daily turnover_rate 全 NaN, 无法确定性重建 May 窗口 -> 排除"
+board_stage_volume_price_decomposition,PENDING_EVIDENCE,"提案未实现; 逐阶段量价重建复杂, 数据质量不稳定"
+board_streak_before_break,IDENTIFIER,"身份列, 只经派生 board_streak_is_3 进入模型"
+break_amount,EXCLUDE_EXACT_DUPLICATE_ALIAS,ED09: 与 d1_amount 精确重复
+break_amount_ratio_vs_board_days,EXCLUDE_SOURCE_UNAVAILABLE,"分母 mean(board 日 amount) 在 May 窗口不可得 (daily amount 全 NaN, pool amount 5 月 NaN) -> 排除"
+break_close,EXCLUDE_EXACT_DUPLICATE_ALIAS,ED04: 与 d1_close 精确重复
+break_close_location,EXCLUDE_EXACT_DUPLICATE_ALIAS,ED07: 与 d1_close_location 精确重复
+break_date,AUDIT_ONLY,与 signal_date 逐行一致 (D1 identity)
+break_high,EXCLUDE_EXACT_DUPLICATE_ALIAS,ED02: 与 d1_high 精确重复
+break_high_to_close_drawdown,EXCLUDE_EXACT_DUPLICATE_ALIAS,ED06: 与 d1_high_to_close_drawdown_raw 精确重复
+break_intraday_range,EXCLUDE_EXACT_DUPLICATE_ALIAS,ED05: 与 d1_intraday_range 精确重复
+break_low,EXCLUDE_EXACT_DUPLICATE_ALIAS,ED03: 与 d1_low 精确重复
+break_open,EXCLUDE_EXACT_DUPLICATE_ALIAS,ED01: 与 d1_open 精确重复
+break_prev_close,AUDIT_ONLY,"绝对价格锚点, DERIVE_ONLY; 派生后使用"
+break_turnover_ratio,EXCLUDE_ALL_MISSING,"100% 缺失 (日线缓存无 turnover_rate), 字段不可用"
+break_volume,EXCLUDE_EXACT_DUPLICATE_ALIAS,ED08: 与 d1_volume 精确重复
+break_volume_abnormality,EXCLUDE_MANUAL_COMPOSITE,|log(volume_ratio)|: 同机制再表达
+code,IDENTIFIER,股票代码
+d1_amount,AUDIT_ONLY,绝对额 DERIVE_ONLY
+d1_close,AUDIT_ONLY,绝对价格 DERIVE_ONLY
+d1_close_to_ma5_bucket,EXCLUDE_REDUNDANT_DETERMINISTIC_TRANSFORM,"预分桶表达, 源码 d1_close_to_ma5_raw 已入契约"
+d1_down_bar_volume_ratio,EXCLUDE_EXACT_DUPLICATE_ALIAS,ED12: 与 down_bar_volume_ratio 精确重复
+d1_high,AUDIT_ONLY,绝对价格 DERIVE_ONLY
+d1_low,AUDIT_ONLY,绝对价格 DERIVE_ONLY
+d1_ma10,AUDIT_ONLY,绝对 MA10 DERIVE_ONLY
+d1_ma20,AUDIT_ONLY,绝对 MA20 DERIVE_ONLY
+d1_ma5,AUDIT_ONLY,绝对 MA5 DERIVE_ONLY
+d1_open,AUDIT_ONLY,绝对价格 DERIVE_ONLY
+d1_open_to_close_bucket,EXCLUDE_REDUNDANT_DETERMINISTIC_TRANSFORM,"预分桶表达, 源码 d1_open_to_close_return_raw 已入契约"
+d1_to_d0_amount_ratio,PENDING_EVIDENCE,"提案未实现; 且 volume 版已覆盖, 金额版数据源不可得"
+d1_to_d0_volume_ratio,PENDING_EVIDENCE,提案未实现; break_volume_ratio_vs_board_days 已覆盖
+d1_volume,AUDIT_ONLY,绝对量 DERIVE_ONLY
+d1_vwap,AUDIT_ONLY,绝对 VWAP DERIVE_ONLY
+d1_vwap_to_close_gap,EXCLUDE_REDUNDANT_DETERMINISTIC_TRANSFORM,"(vwap-close)/close 与 close_to_vwap 反向 (spearman -1), 只留一种"
+d2_open_daily,LABEL_ONLY,"D2 开盘, 未来信息, 标签序列"
+d3_close_daily,LABEL_ONLY,"D3 收盘, 未来信息, 标签序列"
+d3_high_daily,LABEL_ONLY,"D3 最高, 未来信息, 标签序列"
+daily_d2open_to_d3close_return,LABEL_ONLY,"标签收益, 未来信息"
+daily_d2open_to_d3high_return,LABEL_ONLY,"标签收益, 未来信息"
+daily_label_complete,AUDIT_ONLY,标签质量审计
+daily_label_quality_ok,AUDIT_ONLY,标签质量审计
+deprecated_d1_reclaimed_ma10_v01,EXCLUDE_EXACT_DUPLICATE_ALIAS,"ED11: 与 d1_close_above_ma10 精确重复, 命名废弃"
+deprecated_d1_reclaimed_ma5_v01,EXCLUDE_EXACT_DUPLICATE_ALIAS,"ED10: 与 d1_close_above_ma5 精确重复, 命名废弃"
+event_id,IDENTIFIER,事件身份
+is_v002_scorable,EXCLUDE_MODEL_OUTPUT,v002 模型可打分标记
+is_v002_top10,EXCLUDE_MODEL_OUTPUT,v002 Top10 标记
+is_v002_top15,EXCLUDE_MODEL_OUTPUT,v002 Top15 标记
+is_v002_top3,EXCLUDE_MODEL_OUTPUT,v002 Top3 标记
+is_v004a_scorable,EXCLUDE_MODEL_OUTPUT,v004a 模型可打分标记
+is_v004a_top10,EXCLUDE_MODEL_OUTPUT,v004a Top10 标记
+is_v004a_top15,EXCLUDE_MODEL_OUTPUT,v004a Top15 标记
+is_v004a_top3,EXCLUDE_MODEL_OUTPUT,v004a Top3 标记
+label_d2_date,AUDIT_ONLY,标签审计元数据
+label_d3_date,AUDIT_ONLY,标签审计元数据
+m0_probability,EXCLUDE_MODEL_OUTPUT,logistic walkforward 模型概率
+m1_probability,EXCLUDE_MODEL_OUTPUT,logistic walkforward 模型概率
+m1_rank_daily,EXCLUDE_MODEL_OUTPUT,logistic walkforward 模型排名
+m2_probability,EXCLUDE_MODEL_OUTPUT,logistic walkforward 模型概率
+m2_rank_daily,EXCLUDE_MODEL_OUTPUT,logistic walkforward 模型排名
+ma5_ma10_spread,PENDING_EVIDENCE,"提案未实现; 可由 a/b 精确确定, 非新机制"
+ma5_overheat_10,EXCLUDE_REDUNDANT_DETERMINISTIC_TRANSFORM,close_to_ma5>=0.10 二元化: 确定性阈值变换
+overrepair,EXCLUDE_MANUAL_COMPOSITE,"max(open_to_close-0.03,0): 同机制再表达, 非新机制"
+profit_chip_ratio,EXCLUDE_REDUNDANT_DETERMINISTIC_TRANSFORM,1 - volume_above_d1_close_ratio: 精确互补
+profit_pressure,EXCLUDE_MANUAL_COMPOSITE,"三字段交互项: 非新机制, 留待人工评估"
+r0_probability,EXCLUDE_MODEL_OUTPUT,repair-state 模型概率
+r1_probability,EXCLUDE_MODEL_OUTPUT,repair-state 模型概率
+r1_rank,EXCLUDE_MODEL_OUTPUT,repair-state 模型排名
+r2_probability,EXCLUDE_MODEL_OUTPUT,repair-state 模型概率
+r2_rank,EXCLUDE_MODEL_OUTPUT,repair-state 模型排名
+recognition_score,EXCLUDE_MODEL_OUTPUT,"旧模型/辨识度综合评分, 禁止作为 v004c 输入"
+signal_date,IDENTIFIER,"GROUP_KEY, 非 FEATURE"
+source_window,AUDIT_ONLY,"may/june 来源窗口, 非特征"
+tail_loss_daily_5pct,LABEL_ONLY,"tail-loss 标签, 未来信息"
+target7_daily_d2open_d3high,LABEL_ONLY,"Target7 标签, 未来信息"
+v002_rank,EXCLUDE_MODEL_OUTPUT,v002 模型排名输出
+v004a_probability,EXCLUDE_MODEL_OUTPUT,v004a 模型概率输出
+v004a_rank,EXCLUDE_MODEL_OUTPUT,v004a 模型排名输出
+v004a_score_source,AUDIT_ONLY,v004a 分数来源审计
+volume_above_break_close_ratio,EXCLUDE_EXACT_DUPLICATE_ALIAS,ED13: 与 volume_above_d1_close_ratio 精确重复 (signal==break)

@@ -1,0 +1,6 @@
+﻿label_name,role,definition,horizon,available_as_of,physical_isolation,usage
+target7_daily_d2open_d3high,LABEL_ONLY,1[(d3_high / d2_open - 1) >= 0.07],D2 open -> D3 high (未来信息),D3_CLOSE (未来),"生成 X 时未知; 仅作为最后两列附加, 特征序之前永不读取","未来 Pairwise 训练标签 (Y), 不作为任何特征"
+tail_loss_daily_5pct,LABEL_ONLY,1[(d3_high / d2_open - 1) <= -0.05],D2 open -> D3 high (未来信息),D3_CLOSE (未来),生成 X 时未知; 仅作为最后两列附加,"未来 Pairwise 训练标签 (Y), 不作为任何特征"
+d2_open_daily,LABEL_ONLY,D2 开盘 (标签分子原始值),D2,D2_OPEN,"标签序列原始字段, 绝不入 X",标签派生
+d3_high_daily,LABEL_ONLY,D3 最高 (标签分子原始值),D3,D3_CLOSE,"标签序列原始字段, 绝不入 X",标签派生
+d3_close_daily,LABEL_ONLY,D3 收盘 (扩展标签候选),D3,D3_CLOSE,"标签序列原始字段, 绝不入 X",保留未用
