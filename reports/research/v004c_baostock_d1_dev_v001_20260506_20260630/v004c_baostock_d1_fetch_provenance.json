@@ -1,0 +1,1066 @@
+{
+ "cache_dir": "F:\\fenqixuangu\\data\\cache\\baostock_5m",
+ "codes": {
+  "000012": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000029": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000048": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000055": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000066": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000068": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000070": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000090": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000402": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000417": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000506": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000510": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000517": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000520": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000553": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000566": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000571": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000601": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000636": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000657": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000672": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000679": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000700": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000720": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000725": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000759": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000767": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000777": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000783": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000811": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000818": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000823": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000889": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000925": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000967": {
+   "cache": "reused",
+   "rows": null
+  },
+  "000980": {
+   "cache": "reused",
+   "rows": null
+  },
+  "001210": {
+   "cache": "reused",
+   "rows": null
+  },
+  "001211": {
+   "cache": "reused",
+   "rows": null
+  },
+  "001223": {
+   "cache": "reused",
+   "rows": null
+  },
+  "001225": {
+   "cache": "reused",
+   "rows": null
+  },
+  "001257": {
+   "cache": "reused",
+   "rows": null
+  },
+  "001296": {
+   "cache": "reused",
+   "rows": null
+  },
+  "001316": {
+   "cache": "reused",
+   "rows": null
+  },
+  "001339": {
+   "cache": "reused",
+   "rows": null
+  },
+  "001359": {
+   "cache": "reused",
+   "rows": null
+  },
+  "001696": {
+   "cache": "reused",
+   "rows": null
+  },
+  "001896": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002025": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002030": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002031": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002036": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002051": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002068": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002080": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002119": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002137": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002141": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002149": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002158": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002165": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002180": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002181": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002185": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002192": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002203": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002208": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002217": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002251": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002254": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002272": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002281": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002297": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002317": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002354": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002361": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002362": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002374": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002388": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002404": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002409": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002421": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002432": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002442": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002453": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002484": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002491": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002498": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002515": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002552": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002568": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002579": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002580": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002584": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002585": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002608": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002613": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002631": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002636": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002640": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002645": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002655": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002669": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002672": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002687": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002741": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002747": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002771": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002782": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002787": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002805": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002806": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002824": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002830": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002842": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002851": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002865": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002897": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002903": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002929": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002930": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002931": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002938": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002940": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002957": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002965": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002971": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002975": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002980": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002989": {
+   "cache": "reused",
+   "rows": null
+  },
+  "002990": {
+   "cache": "reused",
+   "rows": null
+  },
+  "003004": {
+   "cache": "reused",
+   "rows": null
+  },
+  "003009": {
+   "cache": "reused",
+   "rows": null
+  },
+  "003018": {
+   "cache": "reused",
+   "rows": null
+  },
+  "003026": {
+   "cache": "reused",
+   "rows": null
+  },
+  "003031": {
+   "cache": "reused",
+   "rows": null
+  },
+  "003036": {
+   "cache": "reused",
+   "rows": null
+  },
+  "003041": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600011": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600067": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600076": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600078": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600110": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600121": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600130": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600141": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600156": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600162": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600172": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600178": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600186": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600192": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600228": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600234": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600255": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600280": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600293": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600303": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600322": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600378": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600379": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600396": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600400": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600439": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600470": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600487": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600488": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600503": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600520": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600539": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600545": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600549": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600563": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600584": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600611": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600615": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600665": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600667": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600673": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600683": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600688": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600703": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600707": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600714": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600719": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600748": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600758": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600769": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600850": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600851": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600857": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600869": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600903": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600909": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600936": {
+   "cache": "reused",
+   "rows": null
+  },
+  "600962": {
+   "cache": "reused",
+   "rows": null
+  },
+  "601133": {
+   "cache": "reused",
+   "rows": null
+  },
+  "601179": {
+   "cache": "reused",
+   "rows": null
+  },
+  "601636": {
+   "cache": "reused",
+   "rows": null
+  },
+  "601678": {
+   "cache": "reused",
+   "rows": null
+  },
+  "601696": {
+   "cache": "reused",
+   "rows": null
+  },
+  "601869": {
+   "cache": "reused",
+   "rows": null
+  },
+  "601958": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603001": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603002": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603007": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603014": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603032": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603045": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603052": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603061": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603065": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603070": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603082": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603093": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603115": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603155": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603158": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603163": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603186": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603203": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603206": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603256": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603261": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603269": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603278": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603311": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603316": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603324": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603335": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603380": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603459": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603500": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603516": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603616": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603618": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603636": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603650": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603661": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603663": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603678": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603713": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603738": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603757": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603773": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603859": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603929": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603936": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603937": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603938": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603956": {
+   "cache": "reused",
+   "rows": null
+  },
+  "603989": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605006": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605069": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605099": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605162": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605189": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605198": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605218": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605288": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605289": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605318": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605377": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605580": {
+   "cache": "reused",
+   "rows": null
+  },
+  "605589": {
+   "cache": "reused",
+   "rows": null
+  }
+ },
+ "socks5_proxy": null,
+ "window": [
+  "2026-05-06",
+  "2026-06-30"
+ ]
+}

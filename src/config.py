@@ -37,6 +37,7 @@ class DataConfig:
             self.raw_dir / "minute_5m",
             self.cache_dir / "daily",
             self.cache_dir / "minute_5m",
+            self.cache_dir / "baostock_5m",
             self.cache_dir / "limit_ups",
             self.cache_dir / "listing_metadata",
             self.cache_dir / "suspension_status",

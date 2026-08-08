@@ -3,8 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from importlib import import_module
 import json
+import socket
 from typing import Any, Callable
 
+import numpy as np
 import pandas as pd
 
 from .code_utils import (
@@ -18,6 +20,17 @@ from .code_utils import (
 from .config import DataConfig
 from .http_client import RequestClient
 
+
+SINA_5M_SOURCE = "sina_5m"
+BAOSTOCK_5M_SOURCE = "baostock_5m"
+VALID_5M_SOURCES = (SINA_5M_SOURCE, BAOSTOCK_5M_SOURCE)
+NORMALIZED_5M_INTERVAL = "5m"
+BAOSTOCK_5M_FREQUENCY = "5"
+BAOSTOCK_5M_ADJUSTFLAG_NO_ADJUST = "3"
+# baostock 0.9.x 起数据服务迁移至 public-api.baostock.com (旧 www.baostock.com
+# 的 10030 数据端口已退役, 0.8.x 客户端将无法登录)。
+BAOSTOCK_SERVER_HOST = "public-api.baostock.com"
+BAOSTOCK_SERVER_PORT = 10030
 
 LISTING_METADATA_SOURCE = "eastmoney_stock_info_f189"
 SUSPENSION_STATUS_SOURCE = "eastmoney_RPT_CUSTOM_SUSPEND_DATA_INTERFACE_via_akshare"
@@ -198,15 +211,21 @@ class MarketDataProvider:
         start_datetime: str,
         end_datetime: str,
         adjust: str = "none",
+        source: str = SINA_5M_SOURCE,
     ) -> tuple[pd.DataFrame, str]:
+        """Fetch 5m bars from an explicitly selected source.
+
+        source="sina_5m" (default, backward compatible) or "baostock_5m".
+        There is NO silent fallback: the requested source alone is attempted;
+        any failure raises RuntimeError. Unknown source raises ValueError.
+        """
+        if source not in VALID_5M_SOURCES:
+            raise ValueError(
+                f"unknown 5m source {source!r} (expected one of {sorted(VALID_5M_SOURCES)})")
         normalized = normalize_stock_code(code)
-        source_attempts = [
-            ("sina_5m", lambda: self._fetch_5min_sina(normalized, start_datetime, end_datetime, adjust)),
-        ]
-        errors: list[str] = []
-        for source, fetcher in source_attempts:
+        if source == SINA_5M_SOURCE:
             try:
-                frame = fetcher()
+                frame = self._fetch_5min_sina(normalized, start_datetime, end_datetime, adjust)
                 if frame is None or frame.empty:
                     raise RuntimeError("empty 5m frame")
                 frame = normalize_5min_frame(frame, normalized, source, adjust)
@@ -214,8 +233,15 @@ class MarketDataProvider:
                     raise RuntimeError("normalized 5m frame is empty")
                 return frame, source
             except Exception as exc:
-                errors.append(f"{source}: {exc}")
-        raise RuntimeError(f"{normalized} all 5m sources failed: " + " | ".join(errors))
+                raise RuntimeError(f"{normalized} sina_5m failed: {exc}") from exc
+        frame = self._fetch_5min_baostock(normalized, start_datetime, end_datetime, adjust)
+        if frame is None or frame.empty:
+            raise RuntimeError(f"{normalized} baostock_5m empty raw frame")
+        frame = normalize_baostock_5m_frame(frame, normalized, source, adjust)
+        if frame.empty:
+            raise RuntimeError(f"{normalized} normalized baostock_5m frame is empty")
+        validate_normalized_5m_frame(frame)
+        return frame, source
 
     def _fetch_limit_up_pool_akshare(self, date_text: str) -> pd.DataFrame:
         ak = load_akshare()
@@ -397,6 +423,59 @@ class MarketDataProvider:
         frame["datetime"] = pd.to_datetime(frame["datetime"], errors="coerce")
         return frame[(frame["datetime"] >= pd.Timestamp(start_datetime)) & (frame["datetime"] <= pd.Timestamp(end_datetime))]
 
+    def _fetch_5min_baostock(
+        self,
+        code: str,
+        start_datetime: str,
+        end_datetime: str,
+        adjust: str,
+    ) -> pd.DataFrame:
+        """Fetch raw 5m bars from BaoStock (frequency=5, adjustflag=3 -> none).
+
+        Batch login lifecycle: login once per process (idempotent), queries
+        reuse the session; explicit logout_baostock() ends it. NEVER login per
+        bar / per event. Raises RuntimeError on any failure (no silent fallback).
+        """
+        if adjust not in ("", "none"):
+            raise RuntimeError(
+                f"BaoStock 5m only supports adjust='none' (adjustflag=3); got {adjust!r}")
+        login_baostock()
+        bs = load_baostock()
+        bs_code = to_baostock_code(code)
+        rs = bs.query_history_k_data_plus(
+            code=bs_code,
+            fields="date,time,code,open,high,low,close,volume,amount",
+            start_date=str(start_datetime)[:10],
+            end_date=str(end_datetime)[:10],
+            frequency=BAOSTOCK_5M_FREQUENCY,
+            adjustflag=BAOSTOCK_5M_ADJUSTFLAG_NO_ADJUST,
+        )
+        error_code = str(getattr(rs, "error_code", ""))
+        if error_code not in ("0", ""):
+            raise RuntimeError(
+                f"baostock query failed for {bs_code}: "
+                f"error_code={error_code} error_msg={getattr(rs, 'error_msg', '')}")
+        rows: list[list[str]] = []
+        while rs.next():
+            rows.append(list(rs.get_row_data()))
+        if not rows:
+            raise RuntimeError(f"baostock 5m response is empty for {bs_code}")
+        frame = pd.DataFrame(rows, columns=list(rs.fields))
+        # baostock 对停牌日返回 OHLC 全为 0 的占位 bar (Sina 则省略该日)。
+        # 这些占位行不是真实成交, 与 D1 的"缺日=停牌"语义冲突, 丢弃之。
+        # 仅当 open/high/low/close 四项全为 0 时判定为占位; 不做任何价格调整。
+        if {"open", "high", "low", "close"}.issubset(frame.columns):
+            zero_ohlc = (
+                pd.to_numeric(frame["open"], errors="coerce").fillna(-1).eq(0)
+                & pd.to_numeric(frame["high"], errors="coerce").fillna(-1).eq(0)
+                & pd.to_numeric(frame["low"], errors="coerce").fillna(-1).eq(0)
+                & pd.to_numeric(frame["close"], errors="coerce").fillna(-1).eq(0)
+            )
+            frame = frame.loc[~zero_ohlc].reset_index(drop=True)
+        if frame.empty:
+            raise RuntimeError(f"baostock 5m response is empty for {bs_code}")
+        return frame
+
 def normalize_limit_up_pool(frame: pd.DataFrame, trade_date: str, source: str) -> pd.DataFrame:
     result = frame.copy()
     rename = {
@@ -537,6 +616,7 @@ def normalize_5min_frame(frame: pd.DataFrame, code: str, source: str, adjust: st
         result[column] = pd.to_numeric(result[column], errors="coerce")
     result["source"] = source
     result["adjust"] = adjust or "none"
+    result["interval"] = NORMALIZED_5M_INTERVAL
     result = result.dropna(subset=["datetime", "open", "high", "low", "close"])
     result = result.drop_duplicates(["code", "datetime"]).sort_values("datetime").reset_index(drop=True)
     return result[
@@ -558,8 +638,277 @@ def normalize_5min_frame(frame: pd.DataFrame, code: str, source: str, adjust: st
             "turnover_rate",
             "source",
             "adjust",
+            "interval",
         ]
     ]
+
+
+NORMALIZED_5M_COLUMNS = (
+    "datetime",
+    "trade_date",
+    "time",
+    "code",
+    "market",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+    "amount",
+    "pct_chg",
+    "change",
+    "amplitude",
+    "turnover_rate",
+    "source",
+    "adjust",
+    "interval",
+)
+
+
+def to_baostock_code(code: str) -> str:
+    """6 位代码确定性转换到 baostock sh./sz. 前缀。
+
+    规则 (v004c cross-source 标准): 6/9 开头 -> sh., 其余 -> sz.。
+    4/8/9 开头的北交所代码按既有约定映射 sz. (仅历史研究窗口使用)。
+    """
+    normalized = normalize_stock_code(code)
+    prefix = "sh." if normalized.startswith(("6", "9")) else "sz."
+    return prefix + normalized
+
+
+def parse_baostock_time17(value: object) -> str:
+    """17 位 time 字符串 "YYYYMMDDHHMMSSmmm" -> "HH:MM:SS"。"""
+    text = str(value).strip()
+    if len(text) < 14:
+        raise ValueError(f"invalid baostock time string {text!r} (expected >= 14 chars)")
+    return f"{text[8:10]}:{text[10:12]}:{text[12:14]}"
+
+
+def normalize_baostock_5m_frame(
+    frame: pd.DataFrame,
+    code: str,
+    source: str,
+    adjust: str,
+) -> pd.DataFrame:
+    """baostock 原始 5m 行 (date/time/code/open/high/low/close/volume/amount)
+    -> 统一 normalized 5m contract (与 normalize_5min_frame 同 schema)。
+
+    原始值均为字符串; volume=股, amount=元 (baostock 单位); 不做任何价格校准。
+    """
+    result = frame.copy()
+    result["datetime"] = pd.to_datetime(
+        result["date"].astype(str) + " " + result["time"].map(parse_baostock_time17),
+        format="%Y-%m-%d %H:%M:%S",
+        errors="coerce",
+    )
+    result["code"] = normalize_stock_code(code)
+    result["market"] = detect_market(code)
+    result["trade_date"] = result["datetime"].dt.strftime("%Y-%m-%d")
+    result["time"] = result["datetime"].dt.strftime("%H:%M:%S")
+    for column in (
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "amount",
+        "pct_chg",
+        "change",
+        "amplitude",
+        "turnover_rate",
+    ):
+        if column not in result.columns:
+            result[column] = None
+        result[column] = pd.to_numeric(result[column], errors="coerce")
+    result["source"] = source
+    result["adjust"] = adjust or "none"
+    result["interval"] = NORMALIZED_5M_INTERVAL
+    result = result.dropna(subset=["datetime", "open", "high", "low", "close"])
+    result = result.drop_duplicates(["code", "datetime"]).sort_values("datetime").reset_index(drop=True)
+    return result[list(NORMALIZED_5M_COLUMNS)]
+
+
+def validate_normalized_5m_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    """§8 严格验证统一 normalized 5m contract (用于 baostock 路径)。
+
+    datetime 可解析 / 严格升序 / 无重复 / OHLC finite>0 / high>=max(open,close)
+    / low<=min(open,close) / volume>=0 / amount>=0 / source / adjust / interval。
+    违反任一规则 -> RuntimeError (fail closed)。
+    """
+    if frame is None or frame.empty:
+        raise RuntimeError("normalized 5m frame is empty")
+    missing = [c for c in ("datetime", "open", "high", "low", "close", "volume", "amount",
+                           "source", "adjust", "interval") if c not in frame.columns]
+    if missing:
+        raise RuntimeError(f"normalized 5m frame missing columns: {missing}")
+    dt = pd.to_datetime(frame["datetime"], errors="coerce")
+    if dt.isna().any():
+        raise RuntimeError(f"normalized 5m frame has unparseable datetime ({int(dt.isna().sum())} rows)")
+    if not dt.is_monotonic_increasing or dt.duplicated().any():
+        raise RuntimeError("normalized 5m frame datetime must be strictly ascending and unique")
+    numeric = frame[["open", "high", "low", "close", "volume", "amount"]].apply(
+        pd.to_numeric, errors="coerce")
+    for column in ("open", "high", "low", "close"):
+        bad = numeric[column].isna() | (numeric[column] <= 0) | ~np.isfinite(numeric[column])
+        if bad.any():
+            raise RuntimeError(f"normalized 5m frame {column} must be finite and > 0 ({int(bad.sum())} rows)")
+    high_bad = (numeric["high"] < numeric["open"]) | (numeric["high"] < numeric["close"])
+    if high_bad.any():
+        raise RuntimeError(f"normalized 5m frame high < open/close ({int(high_bad.sum())} rows)")
+    low_bad = (numeric["low"] > numeric["open"]) | (numeric["low"] > numeric["close"])
+    if low_bad.any():
+        raise RuntimeError(f"normalized 5m frame low > open/close ({int(low_bad.sum())} rows)")
+    for column in ("volume", "amount"):
+        bad = numeric[column].isna() | (numeric[column] < 0) | ~np.isfinite(numeric[column])
+        if bad.any():
+            raise RuntimeError(f"normalized 5m frame {column} must be >= 0 ({int(bad.sum())} rows)")
+    if not (frame["source"] == BAOSTOCK_5M_SOURCE).all():
+        raise RuntimeError("normalized 5m frame source must be baostock_5m")
+    if not (frame["adjust"] == "none").all():
+        raise RuntimeError("normalized 5m frame adjustment must be none")
+    if not (frame["interval"] == NORMALIZED_5M_INTERVAL).all():
+        raise RuntimeError(f"normalized 5m frame interval must be {NORMALIZED_5M_INTERVAL}")
+    return frame
+
+
+_BAOSTOCK_MODULE = None
+_BAOSTOCK_LOGGED_IN = False
+
+
+def load_baostock():
+    """惰性加载 baostock (与 load_akshare 同惯用法; 依赖声明于 pyproject/requirements)。"""
+    global _BAOSTOCK_MODULE
+    if _BAOSTOCK_MODULE is None:
+        try:
+            _BAOSTOCK_MODULE = import_module("baostock")
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "missing dependency baostock; run python -m pip install -r requirements.txt") from exc
+    return _BAOSTOCK_MODULE
+
+
+def login_baostock() -> None:
+    """批量生命周期: 进程内只 login 一次 (幂等), 由 logout_baostock() 显式结束。"""
+    global _BAOSTOCK_LOGGED_IN
+    if _BAOSTOCK_LOGGED_IN:
+        return
+    bs = load_baostock()
+    login_result = bs.login()
+    error_code = str(getattr(login_result, "error_code", ""))
+    if error_code not in ("0", ""):
+        _BAOSTOCK_LOGGED_IN = False
+        raise RuntimeError(
+            f"baostock login failed: error_code={error_code} "
+            f"error_msg={getattr(login_result, 'error_msg', '')}")
+    _BAOSTOCK_LOGGED_IN = True
+
+
+def logout_baostock() -> None:
+    global _BAOSTOCK_LOGGED_IN
+    if not _BAOSTOCK_LOGGED_IN:
+        return
+    try:
+        load_baostock().logout()
+    finally:
+        _BAOSTOCK_LOGGED_IN = False
+
+
+# ---------------------------------------------------------------------------
+# 可选 SOCKS5 代理 (显式 opt-in; 仅拦截 baostock 服务器连接, 不影响其他流量)
+# ---------------------------------------------------------------------------
+_BAOSTOCK_SOCKS5_PROXY: tuple[str, int] | None = None
+_SOCKET_CONNECT_PATCHED = False
+
+
+def _socks5_connect(
+    sock: socket.socket,
+    host: str,
+    port: int,
+    proxy_host: str,
+    proxy_port: int,
+    timeout: float = 15.0,
+) -> None:
+    """SOCKS5 无认证 CONNECT 握手 (ATYP=3 域名); 失败 raise RuntimeError。"""
+    orig_timeout = sock.gettimeout()
+    sock.settimeout(timeout)
+    try:
+        sock.connect((proxy_host, proxy_port))
+        sock.sendall(b"\x05\x01\x00")
+        reply = sock.recv(2)
+        if reply != b"\x05\x00":
+            raise RuntimeError(f"socks5 auth failed: {reply!r}")
+        host_bytes = host.encode("utf-8")
+        if len(host_bytes) > 255:
+            raise RuntimeError(f"socks5 target host too long: {host}")
+        sock.sendall(b"\x05\x01\x00\x03" + bytes([len(host_bytes)]) +
+                     host_bytes + port.to_bytes(2, "big"))
+        head = sock.recv(4)
+        if len(head) < 2 or head[0] != 0x05:
+            raise RuntimeError(f"socks5 connect failed (protocol): {head!r}")
+        if head[1] != 0x00:
+            raise RuntimeError(f"socks5 connect rejected: code={head[1]}")
+        # 消费剩余 bind 地址 (ATYP=1: +6, ATYP=3: +len+2, ATYP=4: +18)
+        atyp = head[3]
+        if atyp == 0x01:
+            remain = 6
+        elif atyp == 0x03:
+            length = sock.recv(1)
+            remain = 1 + int(length[0]) + 2
+        elif atyp == 0x04:
+            remain = 18
+        else:
+            remain = 0
+        while remain > 0:
+            chunk = sock.recv(remain)
+            if not chunk:
+                break
+            remain -= len(chunk)
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(
+            f"socks5 connect to {host}:{port} via {proxy_host}:{proxy_port} failed: "
+            f"{exc}") from exc
+    finally:
+        sock.settimeout(orig_timeout)
+
+
+def set_baostock_socks5_proxy(host: str, port: int) -> None:
+    """显式启用 SOCKS5 代理: 包装 socket.socket.connect, 仅拦截 baostock
+    数据服务目标 (BAOSTOCK_SERVER_HOST:BAOSTOCK_SERVER_PORT), 其余连接保持原逻辑。"""
+    global _BAOSTOCK_SOCKS5_PROXY, _SOCKET_CONNECT_PATCHED
+    _BAOSTOCK_SOCKS5_PROXY = (host, int(port))
+    if _SOCKET_CONNECT_PATCHED:
+        return
+    _orig_connect = socket.socket.connect
+
+    def _patched_connect(self_sock: socket.socket, address: tuple) -> None:
+        if _BAOSTOCK_SOCKS5_PROXY is not None and len(address) >= 2:
+            host, port = str(address[0]), int(address[1])
+            if host == BAOSTOCK_SERVER_HOST and port == BAOSTOCK_SERVER_PORT:
+                _socks5_connect(self_sock, host, port, *_BAOSTOCK_SOCKS5_PROXY)
+                return
+        _orig_connect(self_sock, address)
+
+    socket.socket.connect = _patched_connect  # type: ignore[method-assign]
+    _SOCKET_CONNECT_PATCHED = True
+
+
+def clear_baostock_socks5_proxy() -> None:
+    """恢复原始 socket.socket.connect (幂等)。"""
+    global _BAOSTOCK_SOCKS5_PROXY, _SOCKET_CONNECT_PATCHED
+    _BAOSTOCK_SOCKS5_PROXY = None
+    if _SOCKET_CONNECT_PATCHED:
+        socket.socket.connect = _orig_socket_connect()  # type: ignore[method-assign]
+        _SOCKET_CONNECT_PATCHED = False
+
+
+def _orig_socket_connect():
+    """恢复用的原始 connect (首次 patch 时保存, 存入本函数默认闭包)。"""
+    return _PATCH_ORIG_CONNECT
+
+
+_PATCH_ORIG_CONNECT = socket.socket.connect
 
 
 def normalize_date_text(value: str) -> str:

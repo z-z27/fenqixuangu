@@ -1,0 +1,48 @@
+﻿feature_name,feature_group,formula_source,raw_dependency,rebuilt_from
+d1_open_to_close_return_raw,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_low_to_close_recovery,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_high_to_close_drawdown_raw,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_close_location,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_vwap,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_close_to_vwap_raw,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_intraday_range,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_afternoon_return,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_last_hour_return,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_up_bar_volume_ratio,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_down_bar_volume_ratio,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+volume_above_d1_close_ratio,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+amount_above_d1_close_ratio,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+volume_above_break_close_ratio,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+high_zone_volume_ratio,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+high_zone_amount_ratio,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+late_day_sell_volume_ratio,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+late_day_sell_amount_ratio,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+down_bar_volume_ratio,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_vwap_to_close_gap,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_amount,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_volume,minute,build_v004c_dataset.py E/F (src/v004c_minute_features.py 1:1),5m bars: open/high/low/close/volume/amount,baostock_5m
+d1_open,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_high,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_low,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_close,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+break_open_return,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_ma5,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_ma10,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_ma20,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_close_to_ma5_raw,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_low_to_ma5_raw,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_high_to_ma5_raw,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_close_to_ma10_raw,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_low_to_ma10_raw,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_close_to_ma20,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_ma5_slope,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_ma10_slope,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_close_above_ma5,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_close_above_ma10,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_true_reclaim_ma5,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+d1_true_reclaim_ma10,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+consecutive_days_below_ma5,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+consecutive_days_below_ma10,daily_ma_state,build_v004c_dataset.py D section + v004c_factor_dictionary EXISTING_RECOMPUTE_CHECKS,canonical daily cache OHLC (rolling ma),canonical_daily_cache
+recent_7d_cumulative_return,recent_7d,v004c_model_table.py compute_recent_7d_features,canonical daily cache OHLC (7-row window),canonical_daily_cache
+recent_7d_max_drawdown,recent_7d,v004c_model_table.py compute_recent_7d_features,canonical daily cache OHLC (7-row window),canonical_daily_cache
+recent_7d_close_position,recent_7d,v004c_model_table.py compute_recent_7d_features,canonical daily cache OHLC (7-row window),canonical_daily_cache
