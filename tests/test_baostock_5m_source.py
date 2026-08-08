@@ -9,6 +9,11 @@
 - fetch_5min_history 单源 dispatch: source 校验 (ValueError) / baostock 路径
   18 列 schema / numeric coercion / volume=股 / amount=元 (不校准) /
   NO silent fallback (baostock 失败不得尝试 sina)
+- normalize_baostock_5m_frame: **fail closed** (v002 修复) — unparseable
+  datetime / NaN 核心数值 / 重复 (code, datetime) 一律 RuntimeError, 无 silent drop
+- fetch_5min_history (baostock 路径): normalize 后**严格 datetime 裁剪**
+  start<=dt<=end (partial-window 无区间外 bar); invalid OHLC / 负 volume 经
+  全链路 fail closed; 停牌占位 (OHLC 全 0) 显式分类移除
 - validate_normalized_5m_frame: 严格升序 / 重复拒绝 / OHLC finite>0 /
   high>=max(o,c) / low<=min(o,c) / volume/amount>=0 / source/adjust/interval 标记
 - login/logout 批量生命周期: 幂等 login (进程内一次)
@@ -64,12 +69,15 @@ class FakeResultSet:
 class FakeSocks5Server:
     """本地 SOCKS5 服务端: 记录 CONNECT 目标, 回复成功, 之后 echo 回显。"""
 
-    def __init__(self):
+    def __init__(self, bind_atyp=0x01):
+        """bind_atyp=0x03 时, bind 回复用 ATYP=3 (domain) 编码 — 用于复现
+        §33 domain-bind 长度消费 bug (旧实现多算一个 length byte)。"""
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.srv.bind(("127.0.0.1", 0))
         self.srv.listen(1)
         self.port = self.srv.getsockname()[1]
+        self.bind_atyp = bind_atyp
         self.targets: list[tuple[str, int]] = []
         self.payloads: list[bytes] = []
         self.running = True
@@ -102,7 +110,12 @@ class FakeSocks5Server:
             else:
                 host, port = "", 0
             self.targets.append((host, port))
-            conn.sendall(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
+            if self.bind_atyp == 0x03:
+                domain = b"fake-bind.example.com"
+                conn.sendall(b"\x05\x00\x00\x03" + bytes([len(domain)])
+                             + domain + b"\x00\x50")
+            else:
+                conn.sendall(b"\x05\x00\x00\x01\x00\x00\x00\x00\x00\x00")
             while True:
                 data = conn.recv(4096)
                 if not data:
@@ -332,35 +345,117 @@ class BaostockSourceTestCase(unittest.TestCase):
         self.assertEqual(norm["time"].iloc[0], "09:35:00")
         self.assertEqual(norm["code"].iloc[0], "600000")
 
-    def test_normalize_drops_unparseable_rows(self):
+    def test_normalize_unparseable_datetime_fails_closed(self):
+        # §5/§14/§15: 原始坏行 (unparseable datetime) 必须 fail closed, 禁止
+        # silent drop (v001 用 dropna 吞掉 -> 校验器看不见, 已修复)
         rows = raw_bao_rows(n=2)
         rows[0][0] = "not-a-date"
         raw = pd.DataFrame(rows, columns=FIELDS)
-        norm = normalize_baostock_5m_frame(raw, "600000", BAOSTOCK_5M_SOURCE, "none")
-        self.assertEqual(len(norm), 1)
+        with self.assertRaises(RuntimeError):
+            normalize_baostock_5m_frame(raw, "600000", BAOSTOCK_5M_SOURCE, "none")
 
-    def test_normalize_deduplicates_sorts(self):
+    def test_normalize_duplicate_rows_fail_closed(self):
+        # §5/§15: 重复 (code, datetime) 必须 fail closed, 禁止 silent dedup
         rows = raw_bao_rows(n=2)
         raw = pd.DataFrame(rows + [rows[1]], columns=FIELDS)
-        norm = normalize_baostock_5m_frame(raw, "600000", BAOSTOCK_5M_SOURCE, "none")
-        self.assertEqual(len(norm), 2)
-        self.assertTrue(pd.to_datetime(norm["datetime"]).is_monotonic_increasing)
+        with self.assertRaises(RuntimeError):
+            normalize_baostock_5m_frame(raw, "600000", BAOSTOCK_5M_SOURCE, "none")
+
+    def test_normalize_nan_core_numeric_fails_closed(self):
+        # §15: NaN volume 等核心数值列 fail closed (不再 fillna 后放行)
+        rows = raw_bao_rows(n=2)
+        rows[0][7] = ""  # volume 空串 -> coerce NaN
+        raw = pd.DataFrame(rows, columns=FIELDS)
+        with self.assertRaises(RuntimeError):
+            normalize_baostock_5m_frame(raw, "600000", BAOSTOCK_5M_SOURCE, "none")
 
     # -------------------------------------------------------------- validator
+    def test_fetch_5min_baostock_partial_window_strict_clip(self):
+        # §4/§43: baostock API 只支持按日参数; normalize 后必须再次严格裁剪
+        # start<=datetime<=end — 10:00..11:00 的请求不得交付 09:35 / 15:00 等
+        # 区间外 bar (partial-window future-bar 泄漏防护)
+        rows = [
+            ["2026-05-06", "20260506093500001", "sh.600000",
+             "10.00", "10.10", "9.90", "10.01", "1000", "10000"],
+            ["2026-05-06", "20260506100000000", "sh.600000",
+             "10.00", "10.10", "9.90", "10.02", "1000", "10000"],
+            ["2026-05-06", "20260506105500000", "sh.600000",
+             "10.00", "10.10", "9.90", "10.03", "1000", "10000"],
+            ["2026-05-06", "20260506110000000", "sh.600000",
+             "10.00", "10.10", "9.90", "10.04", "1000", "10000"],
+            ["2026-05-06", "20260506110500000", "sh.600000",
+             "10.00", "10.10", "9.90", "10.05", "1000", "10000"],
+            ["2026-05-06", "20260506150000000", "sh.600000",
+             "10.00", "10.10", "9.90", "10.06", "1000", "10000"],
+        ]
+        fake = FakeBaostock([make_bao_query(rows=rows, n=6)])
+        self._install_fake(fake)
+        frame, _ = self.provider.fetch_5min_history(
+            "600000", "2026-05-06 10:00:00", "2026-05-06 11:00:00",
+            adjust="none", source=BAOSTOCK_5M_SOURCE)
+        times = frame["datetime"].dt.strftime("%H:%M:%S").tolist()
+        self.assertEqual(times, ["10:00:00", "10:55:00", "11:00:00"])
+        for outside in ("09:35:00", "11:05:00", "15:00:00"):
+            self.assertNotIn(outside, times)
+
+    def test_fetch_5min_baostock_invalid_ohlc_fails_closed(self):
+        # §43: invalid OHLC (high < open) 经 fetch 全链路 fail closed, 不做
+        # silent drop / 静默修正
+        rows = raw_bao_rows(n=2)
+        rows[0][3] = "12.0"  # open > high
+        fake = FakeBaostock([make_bao_query(rows=rows, n=2)])
+        self._install_fake(fake)
+        with self.assertRaises(RuntimeError):
+            self.provider.fetch_5min_history(
+                "600000", "2026-05-06 09:00:00", "2026-05-06 15:30:00",
+                adjust="none", source=BAOSTOCK_5M_SOURCE)
+
+    def test_fetch_5min_baostock_negative_volume_fails_closed(self):
+        rows = raw_bao_rows(n=2)
+        rows[0][7] = "-5"
+        fake = FakeBaostock([make_bao_query(rows=rows, n=2)])
+        self._install_fake(fake)
+        with self.assertRaises(RuntimeError):
+            self.provider.fetch_5min_history(
+                "600000", "2026-05-06 09:00:00", "2026-05-06 15:30:00",
+                adjust="none", source=BAOSTOCK_5M_SOURCE)
+
+    def test_suspension_placeholder_explicit_classification(self):
+        # §43: 停牌占位 (OHLC 全 0) 与一般坏行严格分类, 常量可审计
+        self.assertEqual(ds.BAOSTOCK_SUSPENSION_PLACEHOLDER,
+                         "baostock_suspension_placeholder")
+        self.assertEqual(ds.INVALID_MARKET_BAR, "invalid_market_bar")
+        # 全 0 占位被显式移除 (行为已由 test_baostock_fetch_suspension_zero_bars_dropped
+        # 覆盖); 下面验证"部分 0"行不是占位, 会被 normalize fail closed:
+        rows = raw_bao_rows(n=1)
+        rows[0][5] = "0.0"  # low=0 但并非 OHLC 全 0 -> 不是停牌占位
+        fake = FakeBaostock([make_bao_query(rows=rows, n=1)])
+        self._install_fake(fake)
+        with self.assertRaises(RuntimeError):
+            self.provider.fetch_5min_history(
+                "600000", "2026-05-06 09:00:00", "2026-05-06 15:30:00",
+                adjust="none", source=BAOSTOCK_5M_SOURCE)
+
     def test_validate_ok_full_48bar_day(self):
+        # 48 bar 覆盖 09:35..15:00 每 5 分钟一格 (正式 D1 规则), datetime 唯一
         rows = []
         for i in range(48):
+            minute_of_day = 9 * 60 + 35 + i * 5
+            hh = minute_of_day // 60
+            mm = minute_of_day % 60
+            t17 = f"20260506{hh:02d}{mm:02d}00{i:03d}"
             rows.append([
-                "2026-05-06", f"20260506093500{i:03d}", "sh.600000",
+                "2026-05-06", t17, "sh.600000",
                 "10.00", "10.10", "9.90", "10.02", "1000", "10000",
             ])
         raw = pd.DataFrame(rows, columns=FIELDS)
         norm = normalize_baostock_5m_frame(raw, "600000", BAOSTOCK_5M_SOURCE, "none")
+        self.assertEqual(len(norm), 48)
         validate_normalized_5m_frame(norm)  # 不 raise
 
     def test_validate_rejects_duplicate_datetime(self):
+        # normalize 之后 (datetime 唯一) 手工制造重复 -> validator 拒绝
         rows = raw_bao_rows(n=3)
-        rows[2] = list(rows[1])
         raw = pd.DataFrame(rows, columns=FIELDS)
         norm = normalize_baostock_5m_frame(raw, "600000", BAOSTOCK_5M_SOURCE, "none")
         norm.loc[norm.index[-1], "datetime"] = norm.loc[norm.index[0], "datetime"]
@@ -484,6 +579,25 @@ class BaostockSourceTestCase(unittest.TestCase):
         # 直连 echo 收到原始载荷, 未经过 SOCKS 握手
         self.assertEqual(echo.first_bytes, [b"ping"])
         self.assertEqual(proxy.targets, [])
+
+    def test_socks5_proxy_domain_bind_reply_length(self):
+        # §33 bug 回归: ATYP=0x03 (domain) bind 回复的 length 字节已在 recv(1)
+        # 消费, 剩余待消费 = domain bytes + 2; 旧实现多算一个 length byte ->
+        # recv 多等一个不存在的字节直至超时 (挂起)。修复后握手完成, echo 可达。
+        proxy = FakeSocks5Server(bind_atyp=0x03)
+        self.addCleanup(proxy.stop)
+        ds.set_baostock_socks5_proxy("127.0.0.1", proxy.port)
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.settimeout(8)
+        try:
+            s.connect((ds.BAOSTOCK_SERVER_HOST, ds.BAOSTOCK_SERVER_PORT))
+            s.sendall(b"ping")
+            self.assertEqual(s.recv(16), b"ping")  # 证明 bind 回复已完整消费
+        finally:
+            s.close()
+        self.assertEqual(proxy.targets,
+                         [(ds.BAOSTOCK_SERVER_HOST, ds.BAOSTOCK_SERVER_PORT)])
+        self.assertIn(b"ping", proxy.payloads)
 
     def test_socks5_proxy_clear_restores_original_connect(self):
         echo = PlainEchoServer()

@@ -31,6 +31,14 @@ BAOSTOCK_5M_ADJUSTFLAG_NO_ADJUST = "3"
 # 的 10030 数据端口已退役, 0.8.x 客户端将无法登录)。
 BAOSTOCK_SERVER_HOST = "public-api.baostock.com"
 BAOSTOCK_SERVER_PORT = 10030
+# baostock 停牌日行为: 对停牌日返回 OHLC 全 0 的占位 bar (Sina 则省略该日)。
+# 该行为已被适配器验证并显式分类为 BAOSTOCK_SUSPENSION_PLACEHOLDER (见
+# _fetch_5min_baostock); 与一般坏行 INVALID_MARKET_BAR 严格区分, 不混入
+# bad-data cleaning。任何非占位坏行 (unparseable datetime / NaN OHLC /
+# NaN volume / NaN amount / 重复 datetime / 负价格 / high<open 等) 一律 fail
+# closed (raise), 不做 silent drop。
+BAOSTOCK_SUSPENSION_PLACEHOLDER = "baostock_suspension_placeholder"
+INVALID_MARKET_BAR = "invalid_market_bar"
 
 LISTING_METADATA_SOURCE = "eastmoney_stock_info_f189"
 SUSPENSION_STATUS_SOURCE = "eastmoney_RPT_CUSTOM_SUSPEND_DATA_INTERFACE_via_akshare"
@@ -240,6 +248,19 @@ class MarketDataProvider:
         frame = normalize_baostock_5m_frame(frame, normalized, source, adjust)
         if frame.empty:
             raise RuntimeError(f"{normalized} normalized baostock_5m frame is empty")
+        # §12/§13: baostock API 只支持 start_date/end_date (按日粒度), normalize
+        # 后必须再次严格裁剪到调用方 datetime 区间 —— 与 sina_5m 对外 datetime
+        # contract 一致 (sina 在 _fetch_5min_sina 内裁剪)。防止 partial-window
+        # 请求 (如 10:00..11:00) 泄漏区间外 bar (如 09:35 / 15:00) 给调用方:
+        # 实盘 14:00 请求到当前时间时, 14:05~15:00 的未来 bar 绝不能交付。
+        start_ts = pd.Timestamp(start_datetime)
+        end_ts = pd.Timestamp(end_datetime)
+        frame = frame[(frame["datetime"] >= start_ts) & (frame["datetime"] <= end_ts)]
+        if frame.empty:
+            raise RuntimeError(
+                f"{normalized} baostock_5m frame empty after strict datetime clip "
+                f"[{start_datetime}, {end_datetime}]")
+        frame = frame.reset_index(drop=True)
         validate_normalized_5m_frame(frame)
         return frame, source
 
@@ -461,9 +482,11 @@ class MarketDataProvider:
         if not rows:
             raise RuntimeError(f"baostock 5m response is empty for {bs_code}")
         frame = pd.DataFrame(rows, columns=list(rs.fields))
-        # baostock 对停牌日返回 OHLC 全为 0 的占位 bar (Sina 则省略该日)。
-        # 这些占位行不是真实成交, 与 D1 的"缺日=停牌"语义冲突, 丢弃之。
-        # 仅当 open/high/low/close 四项全为 0 时判定为占位; 不做任何价格调整。
+        # BAOSTOCK_SUSPENSION_PLACEHOLDER: baostock 对停牌日返回 OHLC 全为 0 的
+        # 占位 bar (Sina 则省略该日)。这些占位行不是真实成交, 与 D1 的"缺日=停牌"
+        # 语义冲突, 显式分类移除。仅当 open/high/low/close 四项全为 0 时判定为
+        # 占位 (OHLC 全 0 之外的任何行视为 INVALID_MARKET_BAR, 交给 normalize /
+        # validate fail closed, 不做 silent drop); 不做任何价格调整。
         if {"open", "high", "low", "close"}.issubset(frame.columns):
             zero_ohlc = (
                 pd.to_numeric(frame["open"], errors="coerce").fillna(-1).eq(0)
@@ -691,16 +714,36 @@ def normalize_baostock_5m_frame(
     adjust: str,
 ) -> pd.DataFrame:
     """baostock 原始 5m 行 (date/time/code/open/high/low/close/volume/amount)
-    -> 统一 normalized 5m contract (与 normalize_5min_frame 同 schema)。
+    -> 统一 normalized 5m contract (与 normalize_5min_frame 同 schema), **fail
+    closed** (INVALID_MARKET_BAR)。
 
     原始值均为字符串; volume=股, amount=元 (baostock 单位); 不做任何价格校准。
+    §14/§15: 任何原始坏行一律 raise RuntimeError, 禁止 silent drop:
+    - unparseable date/time datetime (coerce 后 NaT)
+    - NaN open/high/low/close/volume/amount (coerce 后仍 NaN)
+    - 重复 (code, datetime)
+    停牌占位 bar (OHLC 全 0) 已在 _fetch_5min_baostock 按
+    BAOSTOCK_SUSPENSION_PLACEHOLDER 分类移除, 不在此处混为一般坏行。
+    负价格 / high<open / low>open / 负 volume/amount 由
+    validate_normalized_5m_frame 在 normalize 之后 fail closed。
     """
     result = frame.copy()
+    try:
+        time_part = result["time"].map(parse_baostock_time17)
+    except (KeyError, ValueError) as exc:
+        raise RuntimeError(
+            f"baostock rows with unparseable time string: {exc}; "
+            f"{INVALID_MARKET_BAR} -> fail closed") from exc
     result["datetime"] = pd.to_datetime(
-        result["date"].astype(str) + " " + result["time"].map(parse_baostock_time17),
+        result["date"].astype(str) + " " + time_part,
         format="%Y-%m-%d %H:%M:%S",
         errors="coerce",
     )
+    bad_dt = result["datetime"].isna()
+    if bad_dt.any():
+        raise RuntimeError(
+            f"baostock rows with unparseable datetime ({int(bad_dt.sum())} rows); "
+            f"{INVALID_MARKET_BAR} -> fail closed")
     result["code"] = normalize_stock_code(code)
     result["market"] = detect_market(code)
     result["trade_date"] = result["datetime"].dt.strftime("%Y-%m-%d")
@@ -720,11 +763,21 @@ def normalize_baostock_5m_frame(
         if column not in result.columns:
             result[column] = None
         result[column] = pd.to_numeric(result[column], errors="coerce")
+    for column in ("open", "high", "low", "close", "volume", "amount"):
+        bad = result[column].isna()
+        if bad.any():
+            raise RuntimeError(
+                f"baostock rows with NaN {column} ({int(bad.sum())} rows); "
+                f"{INVALID_MARKET_BAR} -> fail closed")
+    dup = result["datetime"].duplicated()
+    if dup.any():
+        raise RuntimeError(
+            f"baostock rows with duplicate parsed datetime ({int(dup.sum())} rows); "
+            f"{INVALID_MARKET_BAR} -> fail closed (no silent drop)")
     result["source"] = source
     result["adjust"] = adjust or "none"
     result["interval"] = NORMALIZED_5M_INTERVAL
-    result = result.dropna(subset=["datetime", "open", "high", "low", "close"])
-    result = result.drop_duplicates(["code", "datetime"]).sort_values("datetime").reset_index(drop=True)
+    result = result.sort_values("datetime").reset_index(drop=True)
     return result[list(NORMALIZED_5M_COLUMNS)]
 
 
@@ -853,7 +906,12 @@ def _socks5_connect(
             remain = 6
         elif atyp == 0x03:
             length = sock.recv(1)
-            remain = 1 + int(length[0]) + 2
+            if not length:
+                raise RuntimeError("socks5 domain bind reply missing length byte")
+            # 注意: length 字节已在上面 recv(1) 消费, 剩余待消费 = domain bytes
+            # (length 个) + port (2 个)。不要再次多计算一个 length byte, 否则
+            # recv 会多等一个永远不来的字节直至超时 (ATYP=domain bind 挂起 bug)。
+            remain = int(length[0]) + 2
         elif atyp == 0x04:
             remain = 18
         else:
