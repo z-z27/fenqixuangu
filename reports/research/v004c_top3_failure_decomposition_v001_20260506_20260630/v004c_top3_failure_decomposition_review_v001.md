@@ -2,6 +2,12 @@
 
 **输入**: Ridge OOF rows = 233 | GBDT OOF rows = 233 | OOF signal dates = 29 | exact event identity = PASS | max signal_date = 2026-06-30 | July NOT accessed | model training performed = NO
 
+## Stored Rank Audit (§8)
+
+- Ridge stored `upside_rank` available: YES | mismatch vs recomputed: 0 (score 列与 rank 展示列一致)
+- GBDT stored `gbdt_rank` available: YES | mismatch vs recomputed: 199 / 233
+> 注: GBDT diagnostic OOF 的 `gbdt_rank` 展示列存在对齐错误 (rank 值按排序后顺序赋给未排序行); 其 `gbdt_oof_score` 列本身正确, 本任务全部指标使用重算 rank, 不受影响; 历史资产不回写。
+
 ## 1. Why Is Top3 Failing?
 
 Ridge Top3:

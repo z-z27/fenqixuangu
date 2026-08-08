@@ -361,6 +361,16 @@ def build_pipeline() -> dict[str, bytes]:
                  f"max signal_date = 2026-06-30 | July NOT accessed | "
                  f"model training performed = NO")
     lines.append("")
+    lines.append("## Stored Rank Audit (§8)")
+    lines.append("")
+    lines.append(f"- Ridge stored `upside_rank` available: YES | mismatch vs "
+                 f"recomputed: {ridge_mismatch} (score 列与 rank 展示列一致)")
+    lines.append(f"- GBDT stored `gbdt_rank` available: YES | mismatch vs "
+                 f"recomputed: {gbdt_mismatch} / 233")
+    lines.append("> 注: GBDT diagnostic OOF 的 `gbdt_rank` 展示列存在对齐错误 "
+                 "(rank 值按排序后顺序赋给未排序行); 其 `gbdt_oof_score` 列本身"
+                 "正确, 本任务全部指标使用重算 rank, 不受影响; 历史资产不回写。")
+    lines.append("")
     lines.append("## 1. Why Is Top3 Failing?")
     lines.append("")
     for model_name in ("Ridge", "GBDT"):
