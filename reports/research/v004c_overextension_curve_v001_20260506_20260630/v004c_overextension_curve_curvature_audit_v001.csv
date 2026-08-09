@@ -1,0 +1,6 @@
+﻿feature,linear_feature,negative_fold_pct,positive_fold_pct,mean_quad_beta,median_quad_beta,valid_turning_point_fold_pct,median_turning_point,p25_turning_point,p75_turning_point,folds,purpose
+quad_close_ma10,rank_d1_close_ma10_pct,0,1,0.0364152528108,0.0353133992878,0,,,,21,STRUCTURAL_AUDIT_ONLY
+quad_low_ma10,rank_d1_low_ma10_pct,0,1,0.0531714618764,0.0568104385483,0,,,,21,STRUCTURAL_AUDIT_ONLY
+quad_trend_hold,rank_trend_hold_score,0,1,0.0221635169556,0.0253096610228,0,,,,21,STRUCTURAL_AUDIT_ONLY
+quad_close_vwap,rank_d1_close_vwap_pct,0,1,0.0295289356514,0.0303007998813,0,,,,21,STRUCTURAL_AUDIT_ONLY
+quad_log_base_price,rank_log_candidate_base_price,0,1,0.0538691166303,0.0557271241823,0,,,,21,STRUCTURAL_AUDIT_ONLY
