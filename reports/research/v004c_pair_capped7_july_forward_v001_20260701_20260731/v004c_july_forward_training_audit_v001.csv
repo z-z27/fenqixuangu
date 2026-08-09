@@ -1,0 +1,26 @@
+﻿metric,value
+training_snapshot_date,2026-07-01
+eligible_historical_rows,307
+eligible_historical_dates,37
+latest_eligible_signal_date,2026-06-26
+latest_label_available_date,2026-06-30
+stage1_training_rows,307
+stage2_meta_dates,37
+stage2_meta_rows,268
+stage2_pair_count,994
+crossfit_stage1_models_fitted,37
+self_label_leakage_rows,0
+july_training_rows,0
+august_training_rows,0
+june_immature_label_rows,337
+june_folds_with_immature_labels,21
+snapshot_identity_rows,160
+rebuilt_through_july29_rows,166
+snapshot_missing_from_rebuild,0
+identity_only_additions_through_july29,6
+july30_31_rows,12
+stage1_fitted_count,1
+stage2_fitted_count,1
+prediction_lock_sha256,725ffa3e386034233bb6f2cca1fdeff13a31a286b5c3621043c85c5fd5333a08
+label_availability_rule,label_available_date < 2026-07-01
+forward_stress_class,SEMI_OOT_CHRONOLOGICAL
