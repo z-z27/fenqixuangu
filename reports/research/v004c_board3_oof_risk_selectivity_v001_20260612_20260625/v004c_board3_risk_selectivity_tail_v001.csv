@@ -1,0 +1,3 @@
+﻿tail,eligible_dates,eligible_rows,flagged_rows,unflagged_rows,flagged_loss,flagged_pnt,flagged_target7,unflagged_loss,unflagged_pnt,unflagged_target7,flagged_loss_rate,flagged_pnt_rate,flagged_target7_rate,unflagged_loss_rate,unflagged_pnt_rate,unflagged_target7_rate,eligible_loss_rate,eligible_pnt_rate,eligible_target7_rate,loss_enrichment,loss_relative_risk,loss_capture_rate,pnt_removal_rate,winner_removal_rate,selectivity_gap
+BOTTOM_HALF,5,16,8,8,3,3,2,1,5,2,0.375,0.375,0.25,0.125,0.625,0.25,0.25,0.5,0.25,0.125,1.5,0.75,0.375,0.5,0.25
+WORST_ONE,5,16,5,11,2,1,2,2,7,2,0.4,0.2,0.4,0.181818181818,0.636363636364,0.181818181818,0.25,0.5,0.25,0.15,1.6,0.5,0.125,0.5,0

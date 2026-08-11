@@ -1,0 +1,9 @@
+﻿signal_date,candidate_count,target7,pnt,loss,highest_score_code,highest_score_outcome,lowest_score_code,lowest_score_outcome,bottom_half_rows,bottom_half_loss,bottom_half_pnt,bottom_half_target7,upper_half_rows,upper_half_loss,upper_half_pnt,upper_half_target7
+2026-06-12,1,0,0,1,000048,LOSS,000048,LOSS,0,0,0,0,0,0,0,0
+2026-06-16,2,0,1,1,000510,LOSS,601958,PNT,1,0,1,0,1,1,0,0
+2026-06-17,1,0,0,1,605198,LOSS,605198,LOSS,0,0,0,0,0,0,0,0
+2026-06-18,8,1,5,2,002080,PNT,600110,LOSS,4,2,2,0,4,0,3,1
+2026-06-22,2,1,1,0,002989,PNT,002141,TARGET7,1,0,0,1,1,0,1,0
+2026-06-23,1,1,0,0,000811,TARGET7,000811,TARGET7,0,0,0,0,0,0,0,0
+2026-06-24,2,0,1,1,002068,PNT,600851,LOSS,1,1,0,0,1,0,1,0
+2026-06-25,2,2,0,0,603938,TARGET7,605069,TARGET7,1,0,0,1,1,0,0,1
