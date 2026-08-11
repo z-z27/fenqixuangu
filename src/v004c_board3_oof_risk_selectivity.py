@@ -594,9 +594,11 @@ def _metric_summary(
     finite = finite[np.isfinite(finite)]
     return {
         "estimate": float(estimate), "valid_resamples": int(len(finite)),
+        "min": float(np.min(finite)) if len(finite) else np.nan,
         "p2.5": float(np.quantile(finite, .025)) if len(finite) else np.nan,
         "p50": float(np.quantile(finite, .50)) if len(finite) else np.nan,
         "p97.5": float(np.quantile(finite, .975)) if len(finite) else np.nan,
+        "max": float(np.max(finite)) if len(finite) else np.nan,
         "direction_probability": float(np.mean(predicate(finite))) if len(finite) else np.nan,
     }
 

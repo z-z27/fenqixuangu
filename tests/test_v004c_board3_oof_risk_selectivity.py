@@ -204,6 +204,9 @@ def test_bootstrap_samples_dates_and_lodo_never_refits(built):
     assert (counts.sum(axis=1) == 8).all()
     assert context["bootstrap"]["BOTTOM_HALF_SELECTIVITY_GAP"]["valid_resamples"] <= 20_000
     assert context["lodo"]["BOTTOM_HALF_SELECTIVITY_GAP"]["valid_resamples"] == 8
+    lodo_gap = context["lodo"]["BOTTOM_HALF_SELECTIVITY_GAP"]
+    assert lodo_gap["min"] <= lodo_gap["p50"] <= lodo_gap["max"]
+    assert {"min", "p50", "max"}.issubset(context["robustness"].columns)
 
 
 def test_formal_gates_and_partial_stop(built):
