@@ -1,0 +1,11 @@
+﻿feature_a,feature_b,rho,abs_rho,near_redundant
+rank_d1_close_ma10_pct,rank_d1_low_ma10_pct,0.854184525152,0.854184525152,True
+rank_d1_close_ma10_pct,days_since_d0_le1,0.223836092526,0.223836092526,False
+rank_d1_close_ma10_pct,rank_trend_hold_score,0.641611438743,0.641611438743,False
+rank_d1_close_ma10_pct,inter_total_active,0.572481445821,0.572481445821,False
+rank_d1_low_ma10_pct,days_since_d0_le1,0.194224988266,0.194224988266,False
+rank_d1_low_ma10_pct,rank_trend_hold_score,0.721837249533,0.721837249533,False
+rank_d1_low_ma10_pct,inter_total_active,0.657033196188,0.657033196188,False
+days_since_d0_le1,rank_trend_hold_score,0.349755861144,0.349755861144,False
+days_since_d0_le1,inter_total_active,0.102961848303,0.102961848303,False
+rank_trend_hold_score,inter_total_active,0.638577449244,0.638577449244,False
