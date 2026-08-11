@@ -1,0 +1,9 @@
+﻿record_type,board_group,rank_slot,rows,target7_count,loss_count,auc_stage1_for_target7,auc_stage1_for_nonloss,target7_mean_rank,target7_median_rank,loss_mean_rank,loss_median_rank,target7_median_rank_percentile,loss_median_rank_percentile,target7_recall_at_3,loss_inclusion_at_3,target7_recall_at_5,loss_inclusion_at_5,target7_recall_at_10,loss_inclusion_at_10,target7_rate,loss_rate,mean_capped_return
+BOARD_SUMMARY,BOARD2,,130,44,33,0.403276955603,0.472977194627,7,7,6.27272727273,5,0.571428571429,0.642857142857,0.272727272727,0.242424242424,0.431818181818,0.515151515152,0.772727272727,0.848484848485,,,
+RANK_SLOT,BOARD2,1,11,2,2,,,,,,,,,,,,,,,0.181818181818,0.181818181818,0.0353249016842
+RANK_SLOT,BOARD2,2,10,4,1,,,,,,,,,,,,,,,0.4,0.1,0.0472983536328
+RANK_SLOT,BOARD2,3,15,6,5,,,,,,,,,,,,,,,0.4,0.333333333333,0.00694130859446
+BOARD_SUMMARY,BOARD3,,25,9,8,0.541666666667,0.264705882353,3.66666666667,4,1.875,2,0.214285714286,0.0714285714286,0.444444444444,1,0.777777777778,1,1,1,,,
+RANK_SLOT,BOARD3,1,6,1,3,,,,,,,,,,,,,,,0.166666666667,0.5,0.0197519381374
+RANK_SLOT,BOARD3,2,7,3,3,,,,,,,,,,,,,,,0.428571428571,0.428571428571,0.0218120842724
+RANK_SLOT,BOARD3,3,2,0,2,,,,,,,,,,,,,,,0,1,-0.02949415921
