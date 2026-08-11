@@ -500,6 +500,8 @@ def _univariate_base(
         b3 = population[population["board_group"].eq("BOARD3")]
         daily_feature = daily[daily["feature"].eq(feature)]
         pairs = pair_table[pair_table["feature"].eq(feature)]
+        valid_feature_gaps = daily_feature["feature_gap"].dropna()
+        valid_contribution_gaps = daily_feature["contribution_gap"].dropna()
         response: dict[str, Any] = {}
         for board, subset in (("board2", b2), ("board3", b3)):
             response[f"{board}_target7_auc"] = binary_auc(subset["target7"], subset[contribution])
@@ -523,10 +525,10 @@ def _univariate_base(
                 np.r_[np.zeros(len(b2), dtype=int), np.ones(len(b3), dtype=int)],
                 np.r_[b2[feature].to_numpy(float), b3[feature].to_numpy(float)],
             ),
-            "same_date_feature_gap_positive_pct": float(daily_feature["feature_gap"].gt(0).mean()),
+            "same_date_feature_gap_positive_pct": float(valid_feature_gaps.gt(0).mean()),
             "mean_daily_contribution_gap": contribution_gap,
             "median_daily_contribution_gap": float(daily_feature["contribution_gap"].median()),
-            "contribution_gap_positive_date_pct": float(daily_feature["contribution_gap"].gt(0).mean()),
+            "contribution_gap_positive_date_pct": float(valid_contribution_gaps.gt(0).mean()),
             **response,
             "delta_target7_auc": response["board3_target7_auc"] - response["board2_target7_auc"],
             "delta_nonloss_auc": response["board3_nonloss_auc"] - response["board2_nonloss_auc"],

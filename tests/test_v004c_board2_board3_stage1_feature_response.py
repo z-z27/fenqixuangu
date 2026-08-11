@@ -185,6 +185,8 @@ def test_output_schema_and_primary_bh_only(built):
     assert set(context["univariate"].feature) == set(audit.FROZEN_FEATURE_COLUMNS)
     assert set(context["pairs"].endpoint) == {"NONLOSS", "TARGET7"}
     assert len(context["daily"]) == 17 * 18
+    close = context["univariate"].set_index("feature").loc["rank_d1_close_ma10_pct"]
+    assert close.same_date_feature_gap_positive_pct == pytest.approx(12 / 14)
     target_rows = context["robustness"][
         context["robustness"]["metric"].eq("DELTA_TARGET7_AUC")
         & context["robustness"]["section"].eq("PERMUTATION")

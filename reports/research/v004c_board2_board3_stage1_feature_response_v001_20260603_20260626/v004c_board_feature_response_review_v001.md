@@ -33,16 +33,16 @@
 ## 5. Board Feature Exposure
 | Feature | B2 median | B3 median | B3-vs-B2 Cliff | Same-date positive gap |
 |---|---:|---:|---:|---:|
-| rank_d1_close_ma10_pct | 0.500000 | 0.866667 | 0.498154 | 70.5882% |
-| inter_close_low | 0.263889 | 0.694444 | 0.452923 | 64.7059% |
-| inter_low_active | 0.239636 | 0.506667 | 0.447385 | 70.5882% |
-| inter_close_trend | 0.285714 | 0.551020 | 0.440923 | 76.4706% |
-| rank_d1_low_ma10_pct | 0.514706 | 0.833333 | 0.400000 | 70.5882% |
-| rank_active_money_score | 0.516667 | 0.666667 | 0.342462 | 70.5882% |
-| rank_d1_close_vwap_pct | 0.514706 | 0.777778 | 0.302462 | 58.8235% |
-| inter_total_active | 0.232743 | 0.337778 | 0.285538 | 64.7059% |
-| rank_trend_hold_score | 0.583333 | 0.714286 | 0.251692 | 70.5882% |
-| inter_total_trend | 0.232743 | 0.437500 | 0.162462 | 52.9412% |
+| rank_d1_close_ma10_pct | 0.500000 | 0.866667 | 0.498154 | 85.7143% |
+| inter_close_low | 0.263889 | 0.694444 | 0.452923 | 78.5714% |
+| inter_low_active | 0.239636 | 0.506667 | 0.447385 | 85.7143% |
+| inter_close_trend | 0.285714 | 0.551020 | 0.440923 | 92.8571% |
+| rank_d1_low_ma10_pct | 0.514706 | 0.833333 | 0.400000 | 85.7143% |
+| rank_active_money_score | 0.516667 | 0.666667 | 0.342462 | 85.7143% |
+| rank_d1_close_vwap_pct | 0.514706 | 0.777778 | 0.302462 | 71.4286% |
+| inter_total_active | 0.232743 | 0.337778 | 0.285538 | 78.5714% |
+| rank_trend_hold_score | 0.583333 | 0.714286 | 0.251692 | 85.7143% |
+| inter_total_trend | 0.232743 | 0.437500 | 0.162462 | 64.2857% |
 ## 6. Board Contribution Exposure
 - Board3-Board2 mean/median daily total logit gap: **0.105937 / 0.129375**; positive dates **13**.
 | Driver | Mean daily gap | Median | Beta median | B2 NONLOSS AUC | B3 NONLOSS AUC | Category | Pass |
