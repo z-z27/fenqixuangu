@@ -1,0 +1,7 @@
+﻿month,oof_dates,oof_rows,nonloss_auc,pair_concordance,bottom_loss_capture,bottom_winner_removal,bottom_selectivity_gap,month_support_weak
+2026-01,0,0,,,,,,True
+2026-02,5,6,0.5,,0.5,,,True
+2026-03,13,24,0.664285714286,0.8,0.75,0.333333333333,0.416666666667,False
+2026-04,14,20,0.862745098039,,,0.333333333333,,False
+2026-05,14,30,0.48,0.333333333333,0.5,0.636363636364,-0.136363636364,False
+2026-06,14,25,0.889705882353,0.928571428571,0.75,0.75,0,False
