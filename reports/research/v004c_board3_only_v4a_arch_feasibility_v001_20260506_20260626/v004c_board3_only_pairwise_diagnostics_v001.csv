@@ -1,0 +1,7 @@
+﻿model,endpoint,informative_dates,informative_pairs,concordant,discordant,ties,concordance,pair_support_weak
+UNIFIED,TARGET7_VS_NONTARGET,2,8,4,4,0,0.5,True
+UNIFIED,NONLOSS_VS_LOSS,3,14,3,11,0,0.214285714286,False
+UNIFIED,TARGET7_VS_LOSS,1,2,0,2,0,0,True
+BOARD3_ONLY,TARGET7_VS_NONTARGET,2,8,5,3,0,0.625,True
+BOARD3_ONLY,NONLOSS_VS_LOSS,3,14,13,1,0,0.928571428571,False
+BOARD3_ONLY,TARGET7_VS_LOSS,1,2,2,0,0,1,True
