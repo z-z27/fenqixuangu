@@ -1,0 +1,11 @@
+﻿metric,may_june_reference,july_forward,direction_consistent,comment
+Top2 mean capped,0.033316,0.0158986835407,True,frozen historical reference; not pooled
+Top3 mean capped,0.023096,0.0196527763165,True,frozen historical reference; not pooled
+Top2 minus Top3,0.01022,-0.00375409277586,False,frozen historical reference; not pooled
+Top2 negative-date rate,0.0588235294118,0.391304347826,True,frozen historical reference; not pooled
+Top3 negative-date rate,0.235294117647,0.285714285714,True,frozen historical reference; not pooled
+Top2 worst day,-0.0141,-0.0875373619234,True,frozen historical reference; not pooled
+Top3 worst day,-0.067688,-0.0635404545889,True,frozen historical reference; not pooled
+Rank1 capped,0.029829,0.0172026207819,True,frozen historical reference; not pooled
+Rank2 capped,0.036804,0.0145947462994,True,frozen historical reference; not pooled
+Rank3 capped,0.002655,0.0187819716304,True,frozen historical reference; not pooled
