@@ -1,0 +1,4 @@
+﻿source,historical_interface,live_interface,historical_fields,live_fields,semantic_shift,risk
+SINA,no historical auction interface confirmed,hq.sinajs.cn current quote,none,open cumulative volume/amount L1-L5,UNKNOWN,no same-source historical auction series
+STOCK_EASTMONEY,pre-min latest day; hist 1m recent five days only,pre-min current-session prospective; stock/get and ulist current quote,recent price/volume/amount rows only,same endpoint family plus current quote,UNKNOWN_PENDING_LIVE_WINDOW,likely same upstream rows but 09:25/09:26 timing not observed live
+AKSHARE,stock_zh_a_hist_pre_min_em latest day; hist_min period=1 recent five days,same wrappers called in current session,formatted Eastmoney rows,formatted Eastmoney rows/current L1-L5,UNKNOWN_PENDING_LIVE_WINDOW,wrapper does not supply a stable archival contract or auction semantic flags

@@ -1,0 +1,6 @@
+﻿item,status,source,coverage_note
+FULL_MARKET_TOTAL_AMOUNT,NO,historical daily cache amount,median row coverage=0.000000
+MEDIAN_TURNOVER_RATE,NO,historical daily cache turnover_rate,median row coverage=0.000000
+HISTORICAL_LIQUIDITY_AVAILABLE,NO,coverage-only note; not a context variable,No liquidity factor constructed.
+INDEX_SOURCE_AVAILABLE,NO,,No index series opened or used.
+HISTORICAL_LIMIT_DOWN_POOL,NOT_AVAILABLE,,No pct_chg approximation was used.

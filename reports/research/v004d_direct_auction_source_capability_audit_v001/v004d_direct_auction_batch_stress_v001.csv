@@ -1,0 +1,16 @@
+﻿source,test_mode,candidate_count,request_count,latency_ms,returned_count,missing_or_error_count,batch_supported,rate_limit_observed,status,interpretation
+SINA,NON_TRADING_DAY_BATCH_REACHABILITY_NOT_LIVE_LATENCY,5,1,215,5,0,YES,NO,PASS,proves request shape/parse only; cannot prove 09:25 freshness or completeness
+SINA,NON_TRADING_DAY_BATCH_REACHABILITY_NOT_LIVE_LATENCY,10,1,193,10,0,YES,NO,PASS,proves request shape/parse only; cannot prove 09:25 freshness or completeness
+SINA,NON_TRADING_DAY_BATCH_REACHABILITY_NOT_LIVE_LATENCY,20,1,202,20,0,YES,NO,PASS,proves request shape/parse only; cannot prove 09:25 freshness or completeness
+SINA,NON_TRADING_DAY_BATCH_REACHABILITY_NOT_LIVE_LATENCY,30,1,207,30,0,YES,NO,PASS,proves request shape/parse only; cannot prove 09:25 freshness or completeness
+SINA,NON_TRADING_DAY_BATCH_REACHABILITY_NOT_LIVE_LATENCY,50,1,197,50,0,YES,NO,PASS,proves request shape/parse only; cannot prove 09:25 freshness or completeness
+STOCK_EASTMONEY,NON_TRADING_DAY_BATCH_REACHABILITY_NOT_LIVE_LATENCY,5,1,2651,0,5,YES,UNRESOLVED,TRANSIENT_TRANSPORT_FAILURE,proves request shape/parse only; cannot prove 09:25 freshness or completeness
+STOCK_EASTMONEY,NON_TRADING_DAY_BATCH_REACHABILITY_NOT_LIVE_LATENCY,10,1,2695,0,10,YES,UNRESOLVED,TRANSIENT_TRANSPORT_FAILURE,proves request shape/parse only; cannot prove 09:25 freshness or completeness
+STOCK_EASTMONEY,NON_TRADING_DAY_BATCH_REACHABILITY_NOT_LIVE_LATENCY,20,1,333,20,0,YES,NO,PASS,proves request shape/parse only; cannot prove 09:25 freshness or completeness
+STOCK_EASTMONEY,NON_TRADING_DAY_BATCH_REACHABILITY_NOT_LIVE_LATENCY,30,1,376,30,0,YES,NO,PASS,proves request shape/parse only; cannot prove 09:25 freshness or completeness
+STOCK_EASTMONEY,NON_TRADING_DAY_BATCH_REACHABILITY_NOT_LIVE_LATENCY,50,1,318,50,0,YES,NO,PASS,proves request shape/parse only; cannot prove 09:25 freshness or completeness
+AKSHARE_PRE_MIN,STATIC_WRAPPER_CAPABILITY_NOT_LIVE_LATENCY,5,5,,,,NO,NOT_TESTED,SINGLE_SYMBOL_ONLY,would require sequential calls; not executed outside the real live window
+AKSHARE_PRE_MIN,STATIC_WRAPPER_CAPABILITY_NOT_LIVE_LATENCY,10,10,,,,NO,NOT_TESTED,SINGLE_SYMBOL_ONLY,would require sequential calls; not executed outside the real live window
+AKSHARE_PRE_MIN,STATIC_WRAPPER_CAPABILITY_NOT_LIVE_LATENCY,20,20,,,,NO,NOT_TESTED,SINGLE_SYMBOL_ONLY,would require sequential calls; not executed outside the real live window
+AKSHARE_PRE_MIN,STATIC_WRAPPER_CAPABILITY_NOT_LIVE_LATENCY,30,30,,,,NO,NOT_TESTED,SINGLE_SYMBOL_ONLY,would require sequential calls; not executed outside the real live window
+AKSHARE_PRE_MIN,STATIC_WRAPPER_CAPABILITY_NOT_LIVE_LATENCY,50,50,,,,NO,NOT_TESTED,SINGLE_SYMBOL_ONLY,would require sequential calls; not executed outside the real live window

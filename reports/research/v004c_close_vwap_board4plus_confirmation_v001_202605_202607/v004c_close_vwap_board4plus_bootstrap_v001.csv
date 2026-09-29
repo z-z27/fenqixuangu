@@ -1,0 +1,2 @@
+﻿stock_signal,regime_variable,sampling_unit,seed,resamples,valid_resamples,observed_delta_high_minus_low,bootstrap_delta_p2_5,bootstrap_delta_p50,bootstrap_delta_p97_5,P_delta_lt_zero,P_delta_gt_zero,fixed_relation_only
+d1_close_to_vwap_raw,board4plus_count,SIGNAL_DATE,20260829,20000,20000,-0.2761134980307912,-0.4554667963311055,-0.27822747083163746,-0.09214416708712492,0.99815,0.00185,YES

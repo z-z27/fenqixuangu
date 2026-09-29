@@ -1,0 +1,17 @@
+﻿field,eastmoney_raw_field,raw_source_available,raw_source,normalize_stock_universe_preserved,normalize_stock_universe_action,historical_daily_schema_available,historical_daily_non_null_rate,notes
+latest_price,f2,True,raw Eastmoney spot,False,DROPPED,False,0.0,
+pct_chg,f3,True,raw Eastmoney spot,False,DROPPED,True,0.999684697309417,
+change,f4,True,raw Eastmoney spot,False,DROPPED,True,0.999684697309417,
+volume,f5,True,raw Eastmoney spot,False,DROPPED,True,0.9997241101457399,
+amount,f6,True,raw Eastmoney spot,False,DROPPED,True,0.0,
+amplitude,f7,True,raw Eastmoney spot,False,DROPPED,True,0.999684697309417,
+turnover_rate,f8,True,raw Eastmoney spot,False,DROPPED,True,0.0,
+code,f12,True,raw Eastmoney spot,True,PRESERVED,False,1.0,
+name,f14,True,raw Eastmoney spot,True,PRESERVED,False,0.0,
+high,f15,True,raw Eastmoney spot,False,DROPPED,True,1.0,
+low,f16,True,raw Eastmoney spot,False,DROPPED,True,1.0,
+open,f17,True,raw Eastmoney spot,False,DROPPED,True,1.0,
+prev_close,f18,True,raw Eastmoney spot,False,DROPPED,False,0.0,
+total_market_cap,f20,True,raw Eastmoney spot,True,PRESERVED,False,0.0,Static universe snapshot only; not date-level history.
+float_market_cap,f21,True,raw Eastmoney spot,True,PRESERVED,False,0.0,Static universe snapshot only; not date-level history.
+industry,f100,True,raw Eastmoney spot,True,PRESERVED,False,0.0,Static universe snapshot only; not date-level history.

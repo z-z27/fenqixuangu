@@ -1,0 +1,5 @@
+﻿source,field,historical_or_live,available,is_0925_final_match,is_virtual_or_cumulative,semantic_state,evidence
+DAILY_UNADJUSTED_CACHE,volume|amount,HISTORICAL,FULL_DAY_ONLY,NO,FULL_DAY_CUMULATIVE,CLEAR_NOT_USABLE,Daily row represents the full trading day
+SINA_OR_BAOSTOCK_5M,09:35 volume|amount,HISTORICAL,YES_WHERE_CACHED,NO,09:30-09:35 BAR_INCLUDING_CONTINUOUS_TRADING,CLEAR_NOT_USABLE,Earliest normalized bar timestamp is 09:35
+AKSHARE_EASTMONEY_PRE_MIN,volume|amount,LIVE_PROSPECTIVE,CURRENT_SESSION_ONLY,UNPROVEN,UNRESOLVED,SEMANTICS_UNRESOLVED,Wrapper exposes fields but no explicit matched-only contract
+EASTMONEY_SPOT_OR_BID_ASK,volume|amount,LIVE_PROSPECTIVE,CURRENT_SNAPSHOT,UNPROVEN,GENERAL_QUOTE_CUMULATIVE,SEMANTICS_UNRESOLVED,Must be sampled after 09:25 and reconciled; source timestamp absent

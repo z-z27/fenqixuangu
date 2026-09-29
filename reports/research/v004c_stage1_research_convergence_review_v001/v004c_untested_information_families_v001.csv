@@ -1,0 +1,2 @@
+﻿priority_rank,family,plain_name,mechanism,mechanism_clarity,data_ready,overlap_with_failed_info,expected_complexity,temporal_risk,why_not_previously_tested,authorization_boundary,eligible
+1,PRE_BREAK_BOARD_DAY_SEAL_PATH,断板前2/3连板日的个股级封板/回封路径质量,用D0及前序连板日的分钟路径描述封板是否顺畅、是否反复开合及板上供给质量；这些信息在D1收盘时已知，并可能影响断板后修复潜力。,HIGH,PARTIAL,LOW,LOW,MEDIUM,既有53F/board audits侧重D1断板日路径、板数/近况计数和date-level生态；未见直接的stock-level pre-break board-day seal-path audit。,只授权blind coverage/lineage + fixed descriptive information audit；不得建模、搜索分钟窗口或阈值。,YES

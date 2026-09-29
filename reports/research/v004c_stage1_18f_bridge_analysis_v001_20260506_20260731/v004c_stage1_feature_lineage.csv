@@ -1,0 +1,19 @@
+﻿feature_name,raw_source,formula,transform,parent_features,information_availability_time,daily_cross_sectional,interaction
+rank_d1_close_ma10_pct,canonical generate_signal / raw__d1_close_ma10_pct,(D1 close / MA10 - 1) * 100,"within signal_date: pandas rank(pct=True, method='average'); missing rank -> 0.5",d1_close_ma10_pct,D1_CLOSE,YES,NO
+rank_d1_low_ma10_pct,canonical generate_signal / raw__d1_low_ma10_pct,(D1 low / MA10 - 1) * 100,"within signal_date: pandas rank(pct=True, method='average'); missing rank -> 0.5",d1_low_ma10_pct,D1_CLOSE,YES,NO
+rank_trend_hold_score,canonical generate_signal / raw__trend_hold_score,src.signal_engine.score_trend_hold,"within signal_date: pandas rank(pct=True, method='average'); missing rank -> 0.5",trend_hold_score,D1_CLOSE,YES,NO
+rank_total_score,canonical generate_signal / raw__total_score,src.signal_engine.score_total with frozen StrategyConfig,"within signal_date: pandas rank(pct=True, method='average'); missing rank -> 0.5",total_score,D1_CLOSE,YES,NO
+rank_theme_score,canonical generate_signal / raw__theme_score,src.theme_score.score_theme over five-calendar-day limit-up pool,"within signal_date: pandas rank(pct=True, method='average'); missing rank -> 0.5",theme_score,D1_CLOSE,YES,NO
+rank_days_since_d0,canonical generate_signal / raw__days_since_d0,calendar days from canonical D0 to D1,"within signal_date: pandas rank(pct=True, method='average'); missing rank -> 0.5",days_since_d0,D1_CLOSE,YES,NO
+rank_log_candidate_base_price,canonical generate_signal / raw__candidate_base_price,log(D1 close),"within signal_date: pandas rank(pct=True, method='average'); missing rank -> 0.5",candidate_base_price,D1_CLOSE,YES,NO
+rank_active_money_score,canonical generate_signal / raw__active_money_score,src.active_money.score_active_money,"within signal_date: pandas rank(pct=True, method='average'); missing rank -> 0.5",active_money_score,D1_CLOSE,YES,NO
+rank_d1_close_vwap_pct,canonical generate_signal / raw__d1_close_vwap_pct,(D1 close / D1 intraday VWAP - 1) * 100,"within signal_date: pandas rank(pct=True, method='average'); missing rank -> 0.5",d1_close_vwap_pct,D1_CLOSE,YES,NO
+inter_close_low,derived from frozen daily rank features,rank_d1_close_ma10_pct * rank_d1_low_ma10_pct,row-wise frozen interaction after daily rank construction,rank_d1_close_ma10_pct|rank_d1_low_ma10_pct,D1_CLOSE,NO,YES
+inter_close_trend,derived from frozen daily rank features,rank_d1_close_ma10_pct * rank_trend_hold_score,row-wise frozen interaction after daily rank construction,rank_d1_close_ma10_pct|rank_trend_hold_score,D1_CLOSE,NO,YES
+inter_total_trend,derived from frozen daily rank features,rank_total_score * rank_trend_hold_score,row-wise frozen interaction after daily rank construction,rank_total_score|rank_trend_hold_score,D1_CLOSE,NO,YES
+inter_total_active,derived from frozen daily rank features,rank_total_score * rank_active_money_score,row-wise frozen interaction after daily rank construction,rank_total_score|rank_active_money_score,D1_CLOSE,NO,YES
+inter_low_active,derived from frozen daily rank features,rank_d1_low_ma10_pct * rank_active_money_score,row-wise frozen interaction after daily rank construction,rank_d1_low_ma10_pct|rank_active_money_score,D1_CLOSE,NO,YES
+spread_close_low,derived from frozen daily rank features,rank_d1_close_ma10_pct - rank_d1_low_ma10_pct,row-wise frozen interaction after daily rank construction,rank_d1_close_ma10_pct|rank_d1_low_ma10_pct,D1_CLOSE,NO,YES
+days_since_d0_le1,canonical days_since_d0,int(days_since_d0 <= 1),row-wise Boolean bucket; missing -> 0,days_since_d0,D1,NO,NO
+days_since_d0_eq2,canonical days_since_d0,int(days_since_d0 == 2),row-wise Boolean bucket; missing -> 0,days_since_d0,D1,NO,NO
+days_since_d0_ge3,canonical days_since_d0,int(days_since_d0 >= 3),row-wise Boolean bucket; missing -> 0,days_since_d0,D1,NO,NO

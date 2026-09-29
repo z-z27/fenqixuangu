@@ -1,0 +1,3 @@
+﻿regime_state,fixed_cutoff,signal_date_count,target7_rows,loss_rows,informative_date_count,pair_count,within_date_pair_concordance,mean_signal_target7,mean_signal_loss,median_signal_target7,median_signal_loss,delta_high_minus_low
+LOW_REGIME,1.0,2,3,8,1,9,0.3333333333333333,-0.042604333333333334,-0.01735475,-0.050787,-0.014082999999999998,0.27777777777777785
+HIGH_REGIME,1.0,6,16,8,3,13,0.6111111111111112,0.0009741875000000059,-0.005210374999999988,0.003273,0.002511,0.27777777777777785

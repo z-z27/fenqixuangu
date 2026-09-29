@@ -1,0 +1,11 @@
+﻿component,status,count,coverage_or_value,source,notes
+CURRENT_UNIVERSE_SNAPSHOT,AVAILABLE_SINGLE_SNAPSHOT,1,3099.0,data/cache/universe/eastmoney_main_board_universe.pkl,Captured in August 2026; not a date-level May-August membership history.
+DATE_LEVEL_HISTORICAL_UNIVERSE_SNAPSHOTS,NOT_AVAILABLE,0,0.0,data/cache/universe,No one-snapshot-per-trade-date archive exists.
+LISTING_DATE_METADATA,PARTIAL,14,0.004194901581155212,data/cache/listing_metadata,Only cached codes can be excluded before known listing date.
+HISTORICAL_ST_NAME_STATUS,NOT_AVAILABLE,0,0.0,none,Current name filter cannot recover historical ST/name changes.
+HISTORICAL_SUSPENSION_STATUS,PARTIAL,16,16.0,data/cache/suspension_status,Sparse date snapshots; daily-bar absence remains observable but membership is not exact.
+DAILY_CACHE_CODE_COVERAGE,AVAILABLE_WITH_SCOPE_GAP,3051,0.9845111326234269,data/cache/daily_unadjusted + daily fallback,13 cached main-board codes are outside current universe; 61 current-universe codes have no daily cache.
+HISTORICAL_FLOAT_MARKET_CAP,NOT_AVAILABLE,0,0.0,daily cache schema,Only a static August snapshot has float market cap; M4 is not reconstructed.
+D1_AVAILABILITY_PROOF_M1_M2_M3,PASS,83,1.0,same-day unadjusted daily close/pct_chg cache,Uses only D1 date cross-section after D1 close; no later rows are used.
+D1_AVAILABILITY_PROOF_M4,FAIL_NO_HISTORICAL_CAP,0,0.0,none,Static current cap cannot prove point-in-time size membership.
+PCT_CHG_UNIT,PERCENTAGE_POINTS,228280,10.009354536950424,normalized daily cache,M3 uses fixed +3/-3 percentage-point cutoffs.

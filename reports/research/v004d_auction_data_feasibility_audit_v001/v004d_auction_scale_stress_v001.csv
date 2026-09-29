@@ -1,0 +1,6 @@
+﻿test_mode,candidate_count,repetitions,fetch_time_ms_median,parse_time_ms_median,feature_calc_time_ms_median,total_pipeline_time_ms_median,total_pipeline_time_ms_p95,core_field_completeness,interpretation
+OFFLINE_SYNTHETIC_DRY_RUN_NOT_LIVE,5,50,0.0,1.09195,4.55485,5.71075,6.682704999999999,1.0,Parser/join/calculation capacity only; excludes network fetch and cannot satisfy live gate
+OFFLINE_SYNTHETIC_DRY_RUN_NOT_LIVE,10,50,0.0,1.1145999999999998,4.5989,5.78035,6.64427,1.0,Parser/join/calculation capacity only; excludes network fetch and cannot satisfy live gate
+OFFLINE_SYNTHETIC_DRY_RUN_NOT_LIVE,15,50,0.0,1.08755,4.750249999999999,5.9064,6.5180549999999995,1.0,Parser/join/calculation capacity only; excludes network fetch and cannot satisfy live gate
+OFFLINE_SYNTHETIC_DRY_RUN_NOT_LIVE,20,50,0.0,1.0929,4.61695,5.740550000000001,6.668949999999999,1.0,Parser/join/calculation capacity only; excludes network fetch and cannot satisfy live gate
+OFFLINE_SYNTHETIC_DRY_RUN_NOT_LIVE,30,50,0.0,1.1072,4.85105,6.069599999999999,6.81418,1.0,Parser/join/calculation capacity only; excludes network fetch and cannot satisfy live gate

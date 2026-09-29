@@ -1,0 +1,2 @@
+﻿field,endpoint,observed,bootstrap_median,p2_5,p97_5,p_gt_0_5,sampling_unit,repetitions,seed,audit_status
+,,,,,,,SIGNAL_DATE,0,20260906,NOT_RUN_PHASE_A_FAMILY_GATE_FAILED

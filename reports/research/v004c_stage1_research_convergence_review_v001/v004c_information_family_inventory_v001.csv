@@ -1,0 +1,16 @@
+﻿family,classification,direct_test,evidence,finding,data_status,overlap_note
+价格相对位置（MA/VWAP/日内close-low位置）,ADEQUATELY_TESTED_BUT_UNSTABLE,YES,18F/7F chronological；53F GBDT/Ridge；unfinished-repair与S2 pair audit,局部方向存在，但T7-vs-LOSS跨月与forward不稳。,READY,核心已覆盖
+趋势与hold结构,ADEQUATELY_TESTED_BUT_UNSTABLE,YES,7F rank_trend_hold_score；53F OOF；coefficient stability,有时贡献，但不能稳定恢复Top3 alpha。,READY,核心已覆盖
+主题/板块属性,PARTIAL_INFORMATION_FOUND,YES,rank_theme_score在7F/S2与market-conditioned fixed signal audit,部分winner信息但不足以单独解决Rank2/3。,READY,静态theme score已覆盖；point-in-time peer breadth另见DATA_NOT_AVAILABLE
+主动资金/成交与量能结构,ADEQUATELY_TESTED_BUT_UNSTABLE,YES,rank_active_money_score；53F D1_VOLUME_ACTIVITY/CHIP/LATE_DAY；risk foundation,upside与tail方向混合，多重检验后无稳定risk foundation。,READY,核心已覆盖
+D1 intraday path / recovery / absorption / tail,ADEQUATELY_TESTED_BUT_UNSTABLE,YES,53F models；4-field unfinished repair；repair-state v2 July OOT,case机制明显但full population/forward不稳定。,READY,不要再扫描53F
+连板层级、stock board history与recent pool path,PARTIAL_INFORMATION_FOUND,YES,Board2/3 structure；Board3 geometry/model；53F BOARD_HISTORY/RECENT_7D_PATH,Board3 overpromotion真实，但专模/扩历史/ablation未形成稳定方案。,READY,层级计数已覆盖；不等于board-day微观封板路径
+D0 timing / days_since_d0,ADEQUATELY_TESTED_AND_WEAK,YES,18F contribution ablation A1,删除后Top3 membership与经济结果完全不变。,READY,已充分弱化
+局部board/break/candidate ecology,ADEQUATELY_TESTED_BUT_UNSTABLE,YES,regime audit；8x11 conditional；selection-aware confirmation；August OOT,生态差异真实、development条件关系存在，但selection risk与forward反向。,READY,禁止第二关系
+全市场broad strength,ADEQUATELY_TESTED_AND_WEAK,YES,coverage+lineage sensitivity+information audit,部分解释candidate environment，不解释S2 alpha或跨月不稳。,READY_M1_M2_M3,M4 size context不可用
+个股价格/市值规模,PARTIAL_INFORMATION_FOUND,YES,rank_log_candidate_base_price在7F/S2；历史float-cap coverage=0,价格级别已测试；point-in-time market-cap style未测试且无数据。,PARTIAL,不要把价格proxy当作历史市值
+sub-7 repair-strength / target information,ADEQUATELY_TESTED_BUT_UNSTABLE,YES,Top3 decomposition；raw repair pairwise；PAIR_CAPPED7 development+July,development内capped target有增量，July仍低于universe。,READY,目标路线已充分测试
+断板前2/3连板日的个股级封板/回封路径质量,NOT_DIRECTLY_TESTED,NO,53F仅含board-history计数/board-day volume rank；现有正式实验未直接审计D0及前序板日的分钟封板路径,机制上可能描述断板前筹码锁定、分歧与供给质量；必须先盲审数据覆盖与lineage。,PARTIAL,与D1断板日path和date-level board ecology本质不同
+point-in-time主题同伴/板块breadth,DATA_NOT_AVAILABLE,NO,mechanism foundation明确group block因无point-in-time membership snapshot不可用,不能用当前板块成员回构历史。,NO,不进入未测试高价值候选
+集合竞价、逐笔订单簿与封单深度,DATA_NOT_AVAILABLE,NO,现有正式数据为daily/5m与派生字段，未见point-in-time auction/order-book source,可能有机制，但当前数据不满足低成本/lineage条件。,NO,不授权外部数据获取
+历史全市场size-style / liquidity / index / formal limit-down,DATA_NOT_AVAILABLE,NO,broad-market coverage: M4=0，liquidity/index/limit-down均不可用,当前复杂度与数据预算不支持。,NO,不进入下一步

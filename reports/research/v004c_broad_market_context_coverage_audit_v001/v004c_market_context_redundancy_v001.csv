@@ -1,0 +1,17 @@
+﻿variable_1,variable_2,spearman_rho,overlap_dates,redundancy_status
+market_up_ratio,market_up_ratio,1.0,75,SELF
+market_up_ratio,market_median_return,0.9905398702061287,75,HIGH_REDUNDANCY
+market_up_ratio,market_tail_balance,0.9034423897581793,75,HIGH_REDUNDANCY
+market_up_ratio,size_style_spread,,0,NOT_COMPUTABLE
+market_median_return,market_up_ratio,0.9905398702061287,75,HIGH_REDUNDANCY
+market_median_return,market_median_return,1.0,75,SELF
+market_median_return,market_tail_balance,0.9209901154246011,75,HIGH_REDUNDANCY
+market_median_return,size_style_spread,,0,NOT_COMPUTABLE
+market_tail_balance,market_up_ratio,0.9034423897581793,75,HIGH_REDUNDANCY
+market_tail_balance,market_median_return,0.9209901154246011,75,HIGH_REDUNDANCY
+market_tail_balance,market_tail_balance,1.0,75,SELF
+market_tail_balance,size_style_spread,,0,NOT_COMPUTABLE
+size_style_spread,market_up_ratio,,0,NOT_COMPUTABLE
+size_style_spread,market_median_return,,0,NOT_COMPUTABLE
+size_style_spread,market_tail_balance,,0,NOT_COMPUTABLE
+size_style_spread,size_style_spread,,0,SELF

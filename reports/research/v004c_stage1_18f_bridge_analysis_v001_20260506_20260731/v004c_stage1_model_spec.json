@@ -1,0 +1,123 @@
+{
+  "model_id": "V4A_ARCH_TRANSFER_V4C",
+  "model_family": "WEIGHTED_L2_LOGISTIC",
+  "git_commit": "c6af1289f66f8c2cad610b9564573607ce57ac14",
+  "analysis_source_commit": "a9df61773bf3580b4cbb0b492b6174873e4126a5",
+  "snapshot_status": "CANONICAL_FROZEN_SNAPSHOT_RECONSTRUCTED_AND_JULY_LOCK_VERIFIED",
+  "new_model_trained": false,
+  "feature_search": false,
+  "hyperparameter_search": false,
+  "feature_count": 18,
+  "features": [
+    "rank_d1_close_ma10_pct",
+    "rank_d1_low_ma10_pct",
+    "rank_trend_hold_score",
+    "rank_total_score",
+    "rank_theme_score",
+    "rank_days_since_d0",
+    "rank_log_candidate_base_price",
+    "rank_active_money_score",
+    "rank_d1_close_vwap_pct",
+    "inter_close_low",
+    "inter_close_trend",
+    "inter_total_trend",
+    "inter_total_active",
+    "inter_low_active",
+    "spread_close_low",
+    "days_since_d0_le1",
+    "days_since_d0_eq2",
+    "days_since_d0_ge3"
+  ],
+  "intercept": 0.0073904329700413395,
+  "coefficients": {
+    "rank_d1_close_ma10_pct": 0.028381929500129365,
+    "rank_d1_low_ma10_pct": 0.03462922470874273,
+    "rank_trend_hold_score": 0.004000100647297399,
+    "rank_total_score": 0.014480527253889356,
+    "rank_theme_score": 0.0399111112533928,
+    "rank_days_since_d0": 0.014568697511732292,
+    "rank_log_candidate_base_price": 0.046516606517835804,
+    "rank_active_money_score": 0.03272657223332552,
+    "rank_d1_close_vwap_pct": 0.011629561448546454,
+    "inter_close_low": 0.03881801523378375,
+    "inter_close_trend": 0.0152070375869904,
+    "inter_total_trend": 0.019483982930336388,
+    "inter_total_active": 0.03522808685709867,
+    "inter_low_active": 0.04016981964407899,
+    "spread_close_low": -0.006247295208613493,
+    "days_since_d0_le1": 0.07524250021109626,
+    "days_since_d0_eq2": 9.0652745530704e-05,
+    "days_since_d0_ge3": -0.07533315295662699
+  },
+  "L2": 0.3,
+  "weights": {
+    "positive_class_weight": 1.5,
+    "date_weight": "1 / candidate rows on historical signal_date",
+    "tail_weight": {
+      "raw_repair_return_gte_0.12": 2.0,
+      "raw_repair_return_gte_0.10_and_lt_0.12": 1.5,
+      "otherwise": 1.0
+    },
+    "sample_weight_formula": "date_weight * positive_class_weight_if_target7 * tail_weight"
+  },
+  "missing_policy": {
+    "raw_numeric": "coerce invalid to NaN",
+    "daily_rank": "NaN rank filled with 0.5",
+    "final_model_feature": "remaining NaN filled with 0.0",
+    "candidate_base_price": "must be non-null and > 0"
+  },
+  "clipping": {
+    "model_features": "NONE",
+    "logit_for_sigmoid_numerical_stability": [
+      -35.0,
+      35.0
+    ],
+    "capped_return_7": "upper cap at 0.07; outcome only, never a model feature"
+  },
+  "standardization": "NONE",
+  "daily_percentile_rank_transform": {
+    "scope": "complete authoritative v004c Board2+Board3 candidate universe on each signal_date",
+    "implementation": "pandas Series.rank(pct=True, method='average')",
+    "tie_policy": "average",
+    "missing_fill": 0.5
+  },
+  "interaction_formulas": {
+    "inter_close_low": "rank_d1_close_ma10_pct * rank_d1_low_ma10_pct",
+    "inter_close_trend": "rank_d1_close_ma10_pct * rank_trend_hold_score",
+    "inter_total_trend": "rank_total_score * rank_trend_hold_score",
+    "inter_total_active": "rank_total_score * rank_active_money_score",
+    "inter_low_active": "rank_d1_low_ma10_pct * rank_active_money_score",
+    "spread_close_low": "rank_d1_close_ma10_pct - rank_d1_low_ma10_pct"
+  },
+  "candidate_definition": "authoritative v004c main-board universe: first non-limit-up D1 after exactly 2 or 3 consecutive limit-up trading days",
+  "label_definition": {
+    "raw_repair_return": "D3 high / D2 open - 1",
+    "target7": "int(raw_repair_return >= 0.07)",
+    "positive_non_target": "int(0 <= raw_repair_return < 0.07)",
+    "loss": "int(raw_repair_return < 0)",
+    "severe_loss": "int(raw_repair_return <= -0.05)",
+    "capped_return_7": "min(raw_repair_return, 0.07); no lower floor"
+  },
+  "training_period": {
+    "eligible_signal_date_start": "2026-05-06",
+    "eligible_signal_date_end": "2026-06-26",
+    "rows": 307,
+    "dates": 37
+  },
+  "training_asof": "2026-07-01",
+  "label_availability_rule": "label_available_date < 2026-07-01",
+  "score_semantics": {
+    "may_june": "retrospective application of the frozen as-of-2026-07-01 snapshot to the complete development universe",
+    "july": "forward frozen snapshot score, parity-checked against the existing archived July prediction lock"
+  },
+  "july_lock": {
+    "path": "reports/research/v004c_pair_capped7_july_forward_v001_20260701_20260731/v004c_july_forward_prediction_lock_v001.csv",
+    "sha256": "725ffa3e386034233bb6f2cca1fdeff13a31a286b5c3621043c85c5fd5333a08",
+    "rows": 178,
+    "dates": 23,
+    "score_reconstruction_max_abs_error": 4.959366251000574e-13,
+    "rank_mismatch_rows": 0
+  },
+  "august_outcome_rows_accessed": 0,
+  "august_outcomes_exported": 0
+}

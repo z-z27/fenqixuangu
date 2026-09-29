@@ -1,0 +1,57 @@
+﻿source,interface,horizon,requested_date,sample_code,auction_data_returned,returned_date,historical_depth_state,earliest_confirmed_date,latest_confirmed_date,lookback_contract,evidence_note
+SINA,hq.sinajs.cn quote,LATEST_TRADING_DAY,2026-09-04,000001,NO,,REALTIME_ONLY,,,none,no historical date argument
+SINA,hq.sinajs.cn quote,ABOUT_ONE_WEEK,2026-08-28,000001,NO,,REALTIME_ONLY,,,none,no historical date argument
+SINA,hq.sinajs.cn quote,ABOUT_ONE_MONTH,2026-08-07,000001,NO,,REALTIME_ONLY,,,none,no historical date argument
+SINA,hq.sinajs.cn quote,AUGUST_2026,2026-08-03,000001,NO,,REALTIME_ONLY,,,none,no historical date argument
+SINA,hq.sinajs.cn quote,JULY_2026,2026-07-20,000001,NO,,REALTIME_ONLY,,,none,no historical date argument
+SINA,hq.sinajs.cn quote,JUNE_2026,2026-06-15,000001,NO,,REALTIME_ONLY,,,none,no historical date argument
+SINA,hq.sinajs.cn quote,MAY_2026,2026-05-18,000001,NO,,REALTIME_ONLY,,,none,no historical date argument
+SINA,KLineData scale=5,LATEST_TRADING_DAY,2026-09-04,000001,NO,,NO_AUCTION_DATA,,,none,historical regular bars start 09:35
+SINA,KLineData scale=5,ABOUT_ONE_WEEK,2026-08-28,000001,NO,,NO_AUCTION_DATA,,,none,historical regular bars start 09:35
+SINA,KLineData scale=5,ABOUT_ONE_MONTH,2026-08-07,000001,NO,,NO_AUCTION_DATA,,,none,historical regular bars start 09:35
+SINA,KLineData scale=5,AUGUST_2026,2026-08-03,000001,NO,,NO_AUCTION_DATA,,,none,historical regular bars start 09:35
+SINA,KLineData scale=5,JULY_2026,2026-07-20,000001,NO,,NO_AUCTION_DATA,,,none,historical regular bars start 09:35
+SINA,KLineData scale=5,JUNE_2026,2026-06-15,000001,NO,,NO_AUCTION_DATA,,,none,historical regular bars start 09:35
+SINA,KLineData scale=5,MAY_2026,2026-05-18,000001,NO,,NO_AUCTION_DATA,,,none,historical regular bars start 09:35
+STOCK_EASTMONEY,trends2 iscr=1 ndays=1,LATEST_TRADING_DAY,2026-09-04,000001,YES,2026-09-04,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct latest-day premarket response; no date argument
+STOCK_EASTMONEY,trends2 iscr=1 ndays=1,ABOUT_ONE_WEEK,2026-08-28,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct latest-day premarket response; no date argument
+STOCK_EASTMONEY,trends2 iscr=1 ndays=1,ABOUT_ONE_MONTH,2026-08-07,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct latest-day premarket response; no date argument
+STOCK_EASTMONEY,trends2 iscr=1 ndays=1,AUGUST_2026,2026-08-03,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct latest-day premarket response; no date argument
+STOCK_EASTMONEY,trends2 iscr=1 ndays=1,JULY_2026,2026-07-20,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct latest-day premarket response; no date argument
+STOCK_EASTMONEY,trends2 iscr=1 ndays=1,JUNE_2026,2026-06-15,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct latest-day premarket response; no date argument
+STOCK_EASTMONEY,trends2 iscr=1 ndays=1,MAY_2026,2026-05-18,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct latest-day premarket response; no date argument
+STOCK_EASTMONEY,trends2 iscr=1 ndays=5,LATEST_TRADING_DAY,2026-09-04,000001,YES,2026-09-04,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct test still returned only 2026-09-04 and began 09:30
+STOCK_EASTMONEY,trends2 iscr=1 ndays=5,ABOUT_ONE_WEEK,2026-08-28,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct test still returned only 2026-09-04 and began 09:30
+STOCK_EASTMONEY,trends2 iscr=1 ndays=5,ABOUT_ONE_MONTH,2026-08-07,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct test still returned only 2026-09-04 and began 09:30
+STOCK_EASTMONEY,trends2 iscr=1 ndays=5,AUGUST_2026,2026-08-03,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct test still returned only 2026-09-04 and began 09:30
+STOCK_EASTMONEY,trends2 iscr=1 ndays=5,JULY_2026,2026-07-20,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct test still returned only 2026-09-04 and began 09:30
+STOCK_EASTMONEY,trends2 iscr=1 ndays=5,JUNE_2026,2026-06-15,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct test still returned only 2026-09-04 and began 09:30
+STOCK_EASTMONEY,trends2 iscr=1 ndays=5,MAY_2026,2026-05-18,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,direct test still returned only 2026-09-04 and began 09:30
+STOCK_EASTMONEY,push2his trends2 ndays=5 iscr=0,LATEST_TRADING_DAY,2026-09-04,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,source contract recent five trading days; runtime probe failed; not May-July
+STOCK_EASTMONEY,push2his trends2 ndays=5 iscr=0,ABOUT_ONE_WEEK,2026-08-28,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,source contract recent five trading days; runtime probe failed; not May-July
+STOCK_EASTMONEY,push2his trends2 ndays=5 iscr=0,ABOUT_ONE_MONTH,2026-08-07,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,source contract recent five trading days; runtime probe failed; not May-July
+STOCK_EASTMONEY,push2his trends2 ndays=5 iscr=0,AUGUST_2026,2026-08-03,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,source contract recent five trading days; runtime probe failed; not May-July
+STOCK_EASTMONEY,push2his trends2 ndays=5 iscr=0,JULY_2026,2026-07-20,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,source contract recent five trading days; runtime probe failed; not May-July
+STOCK_EASTMONEY,push2his trends2 ndays=5 iscr=0,JUNE_2026,2026-06-15,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,source contract recent five trading days; runtime probe failed; not May-July
+STOCK_EASTMONEY,push2his trends2 ndays=5 iscr=0,MAY_2026,2026-05-18,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,source contract recent five trading days; runtime probe failed; not May-July
+AKSHARE,stock_zh_a_hist_pre_min_em,LATEST_TRADING_DAY,2026-09-04,000001,YES,2026-09-04,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,official docs explicitly say most recent one trading day; no date parameter
+AKSHARE,stock_zh_a_hist_pre_min_em,ABOUT_ONE_WEEK,2026-08-28,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,official docs explicitly say most recent one trading day; no date parameter
+AKSHARE,stock_zh_a_hist_pre_min_em,ABOUT_ONE_MONTH,2026-08-07,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,official docs explicitly say most recent one trading day; no date parameter
+AKSHARE,stock_zh_a_hist_pre_min_em,AUGUST_2026,2026-08-03,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,official docs explicitly say most recent one trading day; no date parameter
+AKSHARE,stock_zh_a_hist_pre_min_em,JULY_2026,2026-07-20,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,official docs explicitly say most recent one trading day; no date parameter
+AKSHARE,stock_zh_a_hist_pre_min_em,JUNE_2026,2026-06-15,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,official docs explicitly say most recent one trading day; no date parameter
+AKSHARE,stock_zh_a_hist_pre_min_em,MAY_2026,2026-05-18,000001,NO,,LATEST_DAY_ONLY,2026-09-04,2026-09-04,1 trading day,official docs explicitly say most recent one trading day; no date parameter
+AKSHARE,stock_zh_a_hist_min_em period=1,LATEST_TRADING_DAY,2026-09-04,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,wrapper hard-codes ndays=5; runtime probe failed; not May-July
+AKSHARE,stock_zh_a_hist_min_em period=1,ABOUT_ONE_WEEK,2026-08-28,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,wrapper hard-codes ndays=5; runtime probe failed; not May-July
+AKSHARE,stock_zh_a_hist_min_em period=1,ABOUT_ONE_MONTH,2026-08-07,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,wrapper hard-codes ndays=5; runtime probe failed; not May-July
+AKSHARE,stock_zh_a_hist_min_em period=1,AUGUST_2026,2026-08-03,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,wrapper hard-codes ndays=5; runtime probe failed; not May-July
+AKSHARE,stock_zh_a_hist_min_em period=1,JULY_2026,2026-07-20,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,wrapper hard-codes ndays=5; runtime probe failed; not May-July
+AKSHARE,stock_zh_a_hist_min_em period=1,JUNE_2026,2026-06-15,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,wrapper hard-codes ndays=5; runtime probe failed; not May-July
+AKSHARE,stock_zh_a_hist_min_em period=1,MAY_2026,2026-05-18,000001,NO,,LIMITED_HISTORICAL,,,recent 5 trading days,wrapper hard-codes ndays=5; runtime probe failed; not May-July
+AKSHARE,stock_bid_ask_em,LATEST_TRADING_DAY,2026-09-04,000001,NO,,REALTIME_ONLY,,,none,current single-symbol quote; no date parameter
+AKSHARE,stock_bid_ask_em,ABOUT_ONE_WEEK,2026-08-28,000001,NO,,REALTIME_ONLY,,,none,current single-symbol quote; no date parameter
+AKSHARE,stock_bid_ask_em,ABOUT_ONE_MONTH,2026-08-07,000001,NO,,REALTIME_ONLY,,,none,current single-symbol quote; no date parameter
+AKSHARE,stock_bid_ask_em,AUGUST_2026,2026-08-03,000001,NO,,REALTIME_ONLY,,,none,current single-symbol quote; no date parameter
+AKSHARE,stock_bid_ask_em,JULY_2026,2026-07-20,000001,NO,,REALTIME_ONLY,,,none,current single-symbol quote; no date parameter
+AKSHARE,stock_bid_ask_em,JUNE_2026,2026-06-15,000001,NO,,REALTIME_ONLY,,,none,current single-symbol quote; no date parameter
+AKSHARE,stock_bid_ask_em,MAY_2026,2026-05-18,000001,NO,,REALTIME_ONLY,,,none,current single-symbol quote; no date parameter

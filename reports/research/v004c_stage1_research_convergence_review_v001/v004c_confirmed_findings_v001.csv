@@ -1,0 +1,15 @@
+﻿finding_id,finding,status,evidence,sources,conflict_note
+F01,Candidate universe本身存在明显oracle gap。,CONFIRMED,May-June full oracle Top3约6.1%，模型约2%-3%；July full oracle 5.45%而Stage1约1.97%。,upside_predictability|top3_failure_decomposition|pair_capped7_july,Oracle只证明机会空间，不证明可由D1识别。
+F02,Stage1主要问题不是完全没有机会，而是没有稳定抓住opportunity。,CONFIRMED,Top3 regret约73%-80%来自winner capture；S2有25/49可替换LOSS slots。,top3_failure_decomposition|s2_winner_loss,NONE
+F03,Rank1存在一定信息，主要breakdown在Rank1之后。,PARTIALLY_CONFIRMED,GBDT OOF Rank1有正excess、S2 Rank1 T7 45%；但current18F July Rank1低于universe且各期不稳定。,upside_predictability|s2_winner_loss|top2_july,不是稳定Rank1 alpha；只能称部分信息。
+F04,当前7F的Target7/LOSS separation时间稳定性不足。,CONFIRMED,S2 pair concordance 55.14%，仅4/7跨月同方向；Rank2/3 winner-loss混排。,s2_winner_loss,NONE
+F05,简单降低正则能改善训练拟合，但不能恢复稳定forward selection alpha。,CONFIRMED,S2优于S0并修复欠拟合；后续绝对forward alpha和winner-loss分离仍弱。,training_spec_sanity|s2_winner_loss,训练规格修复有效，不等于模型成功。
+F06,简单月份recency weighting失败。,CONFIRMED,May .5/June 1.0使July Top3 -0.61pp、T7 -1.64pp、LOSS +3.28pp。,recency_weighting,NONE
+F07,Board3不是唯一原因。,CONFIRMED,Board3 overpromotion存在但总体不天然更差；Board3 ablation伤winner；全体S2仍有winner-loss confusion。,board_structure|board3_ablation|s2_winner_loss,Board3是局部放大器，不是全局解释。
+F08,D1 path fields存在局部机制，但一般化不稳定。,CONFIRMED,case/Rank3错误结构明显，但四字段full-population均未过formal gate；repair-state July OOT被拒。,unfinished_repair|repair_state_july,NONE
+F09,local board/break regime difference真实存在。,CONFIRMED,May/June/July T7 41.60/32.95/25.26%，LOSS 18.63/26.69/35.62%，生态多维同步变化。,board_break_regime,描述差异不等于因果或ranking信息。
+F10,local regime不能稳定解决Stage1 ranking。,CONFIRMED,development关系存在但88选1 p=.3879；August方向反转且challenger全面不利。,regime_conditional|single_relation_confirmation|august_oot,早期development formal support被selection correction和forward结果显著削弱。
+F11,broad market strength影响candidate environment，但不能解释S2 selection alpha与时间不稳定。,PARTIALLY_CONFIRMED,fixed split T7/LOSS有6-7pp差，但continuous+split完整gate未过；M1-alpha rho=.070且0/5 temporal metrics改善。,broad_market_information,environment部分只能称partial；alpha不支持是明确的。
+F12,August regime-aware challenger正式样本不足，但方向性明显negative。,CONFIRMED,8 complete mature dates；关系反向；Top3 -0.7pp、T7 -12.5pp、LOSS/severe +4.2pp。,august_oot,必须同时保留INSUFFICIENT formal enum与negative directional evidence。
+F13,August holdout已经消费，不能再称fresh/untouched OOT。,CONFIRMED,August OOT review明确AUGUST_HOLDOUT_STATUS=CONSUMED。,august_oot,后续只可标DEVELOPMENT/AUXILIARY/HISTORICAL。
+F14,复杂模型未证明能解决现有信息不足。,CONFIRMED,固定GBDT train强但OOF Top3低于baseline；pairwise、repair-state interactions与rerank均未forward成立。,upside_predictability|pairwise|repair_state_july|reranker,不能由Logistic失败推导需要模型zoo。

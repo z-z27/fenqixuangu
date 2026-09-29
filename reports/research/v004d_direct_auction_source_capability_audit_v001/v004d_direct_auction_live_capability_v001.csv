@@ -1,0 +1,6 @@
+﻿source,interface,audit_timestamp,non_trading_day_reachability,live_timing_validation,earliest_reliable_time,candidate_fields,core_auction_semantics,batch_support,status
+SINA,hq.sinajs.cn quote,2026-09-06,PASS_SINGLE_AND_BATCH,PENDING_TRADING_DAY,UNKNOWN,open cumulative volume/amount L1-L5 timestamp,UNRESOLVED,YES_AT_LEAST_50,PARTIAL
+STOCK_EASTMONEY,trends2 iscr=1 ndays=1,2026-09-06,PASS_ONE_SYMBOL_WITH_TRANSIENT_FAILURES,PENDING_TRADING_DAY,LIKELY_09:26_ROW_BUT_NOT_LIVE_VALIDATED,final-price-like state provisional volume/amount timestamp,PARTIAL,NO_SINGLE_SECID,PARTIAL
+STOCK_EASTMONEY,ulist.np/get current batch,2026-09-06,PASS_N20_N30_N50_TRANSIENT_FAILURE_N5_N10,PENDING_TRADING_DAY,UNKNOWN,open cumulative volume/amount current quote,UNRESOLVED_AT_0925,YES_AT_LEAST_50,PARTIAL
+AKSHARE,stock_zh_a_hist_pre_min_em,2026-09-06,PASS_ONCE_THEN_TRANSIENT_FAILURE,PENDING_TRADING_DAY,UNKNOWN,time OHLC volume amount latest,PARTIAL_SAME_UPSTREAM_AS_EASTMONEY,NO,PARTIAL
+AKSHARE,stock_bid_ask_em,2026-09-06,FAIL_JSON_DECODE,PENDING_TRADING_DAY,UNKNOWN,L1-L5 current quote by source contract,UNRESOLVED,NO,UNRESOLVED

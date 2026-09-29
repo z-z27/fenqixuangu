@@ -1,0 +1,6 @@
+﻿source,interface,timestamp,field,observed_value,unit,semantic_class,validation,confidence,modeling_eligible
+EASTMONEY_PRE_MIN,trends2 iscr=1 ndays=1,2026-09-04 09:26,f56 volume,5094.0,hands (100 shares),PROVISIONAL_FINAL_OPENING_MATCH,nonzero before continuous trading; amount arithmetic is exact,MEDIUM_ONE_SAMPLE,NO_NOT_YET
+EASTMONEY_PRE_MIN,trends2 iscr=1 ndays=1,2026-09-04 09:26,f57 amount,6041484.0,CNY,PROVISIONAL_FINAL_OPENING_MATCH,volume*100*price=6041484.00; exact observed amount=6041484.00,MEDIUM_ONE_SAMPLE,NO_NOT_YET
+EASTMONEY_CURRENT_QUOTE,stock/get f47/f48,post-close snapshot,volume and amount,814373;969948436.21,hands; CNY,FULL_DAY_CUMULATIVE_AT_OBSERVED_TIME,post-close values include continuous trading and cannot be called auction-only,HIGH,NO_AS_AUCTION_VOLUME_AMOUNT
+SINA_CURRENT_QUOTE,hq.sinajs.cn,post-close snapshot,volume and amount,81437295;969948436.210,shares; CNY,FULL_DAY_CUMULATIVE_AT_OBSERVED_TIME,not auction-isolated; exact 09:25 behavior pending,HIGH_FOR_CUMULATIVE_LOW_FOR_AUCTION,NO_AS_AUCTION_VOLUME_AMOUNT
+AKSHARE_PRE_MIN,stock_zh_a_hist_pre_min_em,latest trading day rows,成交量/成交额,wrapper columns,hands; CNY per official docs,UPSTREAM_ROW_VALUES_WITHOUT_EXPLICIT_AUCTION_FLAG,same Eastmoney endpoint; wrapper does not change semantic ambiguity,MEDIUM,NO_NOT_YET

@@ -1,0 +1,5 @@
+﻿code,trade_date,source,source_timestamp,candidate_final_auction_price,official_open_reference,absolute_difference,exact_match,within_0_01,evidence_type,lineage_status
+000001,2026-09-04,EASTMONEY_PRE_MIN,2026-09-04 09:25,11.86,11.86,0.0,1.0,1.0,preopen supplier state close,MATCH_ON_ONE_CODE_DATE_NOT_SUFFICIENT_FOR_READY
+000001,2026-09-04,EASTMONEY_PRE_MIN,2026-09-04 09:26,11.86,11.86,0.0,1.0,1.0,opening-match-like row close,MATCH_ON_ONE_CODE_DATE_NOT_SUFFICIENT_FOR_READY
+000001,2026-09-04,SINA_CURRENT_QUOTE,2026-09-04 15:36:00,11.86,11.86,0.0,1.0,1.0,post-close open field,MATCH_ON_ONE_CODE_DATE_NOT_SUFFICIENT_FOR_READY
+SUMMARY,2026-09-04,ALL_PRICE_OBSERVATIONS,,,11.86,0.0,1.0,1.0,3 response fields but only 1 independent code-date,PARTIAL

@@ -1,0 +1,4 @@
+﻿omitted_month,included_months,low_informative_dates,low_pairs,low_concordance,high_informative_dates,high_pairs,high_concordance,delta_high_minus_low,same_direction_as_full
+MAY,JUNE+JULY,18,120,0.582010582010582,10,95,0.30678571428571433,-0.27522486772486765,True
+JUNE,MAY+JULY,11,115,0.6246536796536796,13,96,0.27188644688644686,-0.3527672327672327,True
+JULY,MAY+JUNE,13,105,0.5752564102564102,15,111,0.35777777777777775,-0.21747863247863242,True

@@ -1,0 +1,18 @@
+﻿route,formal_basis,failure_type,scope,source
+继续调18F legacy architecture,18F PARTIAL + July Stage1 alpha failure + ablation non-monotone,INFORMATION_FAILURE|TEMPORAL_INSTABILITY,不再调18F系数、interaction或subset,v4a_transfer|18f_ablation|top2_july
+current7F继续L2/tail/positive-weight参数搜索,S2修复已完成且任务明确freeze one spec,MODEL_SPEC_FAILURE_RESOLVED,S2只作reference，不追加S4/S5,training_spec_sanity
+simple recency/month weighting,RECENCY_SIGNAL_NOT_SUPPORTED,HYPOTHESIS_NOT_SUPPORTED|FORWARD_FAILURE,不搜索更多month multiplier/window,recency_weighting
+53F GBDT/nonlinear model zoo,NONLINEAR_OOF_SIGNAL_PRESENT=NO,TEMPORAL_INSTABILITY,不追加GBDT/XGB/RF/NN,upside_predictability
+PAIR_CAPPED7 / pairwise Stage2,July FORWARD_STRESS_SIGNAL=PARTIAL且PRIMARY_FAILURE=STAGE2_RERANK_FAILURE,FORWARD_FAILURE,不重跑objective/lambda/reranker,pair_capped7_july
+raw repair-strength pairwise objective,REPAIR_OBJECTIVE_DEV_SIGNAL=ABSENT,HYPOTHESIS_NOT_SUPPORTED,不改target后重试同一53F,repair_pairwise
+v4a Top10 residual reranker,RERANKER_SIGNAL=ABSENT,MODEL_SPEC_FAILURE,不追加Stage2/reranker,v4a_top10_reranker
+D1 risk protector / veto/backfill,RISK_INFORMATION_FOUNDATION=NOT_ESTABLISHED; RISK_PROTECTOR_SIGNAL=ABSENT,INFORMATION_FAILURE,不调risk threshold或训练新protector,risk_information|limited_risk
+Board3-only model/risk policy,Board3-only/risk均PARTIAL且不稳,DATA_LIMITATION|INFORMATION_FAILURE,不恢复Board3模型、veto或cross-board merge,board3_only|board3_risk
+Jan-Jun Board3 old-history extension,HISTORY_EXTENSION_EFFECT=HARMFUL; TEMPORAL_COMPATIBILITY=DRIFTED,TEMPORAL_INSTABILITY,不删月份、不调窗口、不加recency,board3_history
+Board3 confirmed-harmful contribution ablation,ABLATION_MECHANISM_SIGNAL=ABSENT,HYPOTHESIS_NOT_SUPPORTED,不重复三贡献删除/Board3压制,board3_ablation
+unfinished-repair 4字段直接结构修正,CASE_CONDITIONAL_ONLY,HYPOTHESIS_NOT_SUPPORTED|TEMPORAL_INSTABILITY,不构造unfinished repair score,unfinished_repair
+repair-state nonlinear interaction model,REJECT_REPAIR_STATE_V002_OOT,FORWARD_FAILURE,不扩展OPEN/DIVERGENCE/RECLAIM interactions,repair_state_july
+close/VWAP × board4plus interaction,selection-adjusted risk + August方向反转/negative,SELECTION_BIAS_RISK|FORWARD_FAILURE,不改sign/cutoff后重试,single_relation_confirmation|august_oot
+第二强local regime relation,最强关系未通过selection-aware/forward证据,SELECTION_BIAS_RISK,不测试88关系第二名/替代regime,single_relation_confirmation|august_oot
+broad-market-strength ranking factor扩展,只部分解释candidate environment；alpha/time instability gates失败,HYPOTHESIS_NOT_SUPPORTED_FOR_SELECTION_ALPHA,不加指数/liquidity/更多market factor救假设,broad_market_information
+original-v4a direct transfer旧归档比较,ORIGINAL_V4A_PROVENANCE=BLOCKED/benchmark INVALID,LINEAGE_LIMITATION,无新严格归档资产时不得重述/重跑,original_v4a_direct_transfer

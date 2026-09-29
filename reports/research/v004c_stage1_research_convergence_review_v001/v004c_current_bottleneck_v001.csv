@@ -1,0 +1,22 @@
+﻿item,value,evidence
+CURRENT_STAGE1_BOTTLENECK,现有D1-known表征无法跨时间稳定地区分Target7与LOSS，尤其在Rank2/Rank3发生winner-loss混排。,S2 pair 55.14%；Rank2/3混排；July alpha failure；53F nonlinear OOF failure
+MODEL_FORM_LIMITATION,NOT_SUPPORTED,GBDT、pairwise、repair-state interactions和reranker均未稳定泛化；没有证据证明换更复杂model能解决。
+CURRENT_INFORMATION_LIMITATION,SUPPORTED,7F raw/rank都弱且不稳；固定53F GBDT train-OOF gap明显；winner capture是主要regret。
+BROADER_D1_INFORMATION_LIMITATION,[待核验],高价值常见family大多覆盖，但pre-break board-day seal path未直接测试。
+HIGH_VALUE_UNTESTED_INFORMATION_FAMILY,PRE_BREAK_BOARD_DAY_SEAL_PATH,D1-known、机制清晰、与D1 break-day path/date-level ecology低重叠；数据ready仅PARTIAL。
+STAGE1_RESEARCH_STATE,ONE_NARROW_INFORMATION_AUDIT_JUSTIFIED,只剩一个窄、盲、低复杂度information audit有资格。
+NEXT_ACTION,BLIND_PRE_BREAK_BOARD_DAY_SEAL_PATH_INFORMATION_AUDIT,先证明历史D0/board-day minute覆盖和固定描述信息；不得训练model。
+AUGUST_HOLDOUT_STATUS,CONSUMED,regime-aware August OOT已读取并给出formal verdict。
+S2_ROLE,REFERENCE_BASELINE_ONLY,S2是training-spec sanity的最好预注册规格，但winner-loss attribution=INFORMATION_LIMIT_DOMINANT。
+S2_FEATURE_COUNT,7,rank_d1_close_ma10_pct|rank_d1_low_ma10_pct|rank_trend_hold_score|rank_theme_score|rank_log_candidate_base_price|rank_active_money_score|rank_d1_close_vwap_pct
+S2_L2,0.10,S2_NO_TAIL_L2_010
+S2_POSITIVE_WEIGHT,1.50,frozen training-spec
+S2_TAIL_BONUS,OFF,7/10/12% Target7同等tail weighting
+S2_TRAINING_WINDOW,2026-05-06..2026-07-29 mature as-of 2026-08-01; 485 rows / 60 dates,training-spec and S2 attribution reviews
+L2_TUNING_AUTHORIZED,NOT_AUTHORIZED,fixed S0-S3 sanity completed
+MONTH_WEIGHT_TUNING_AUTHORIZED,NOT_AUTHORIZED,RECENCY_SIGNAL_NOT_SUPPORTED
+TAIL_WEIGHT_TUNING_AUTHORIZED,NOT_AUTHORIZED,tail bonus mismatch already repaired
+FEATURE_SUBSET_TUNING_AUTHORIZED,NOT_AUTHORIZED,7F preregistered; no further subset search
+FACTOR_ANALYSIS_4_STATE_DISCOVERY,NOT_FOUND_IN_WORKSPACE,Repository-wide filename/content search on 2026-09-02 found no readable artifact; formal reviews used.
+PRIMARY_OBJECTIVE,Target7 = 1[D3 high / D2 open - 1 >= 7%],frozen v004c contract
+SECONDARY_OBJECTIVE,Preserve Target7 while controlling LOSS and severe LOSS,frozen v004c contract

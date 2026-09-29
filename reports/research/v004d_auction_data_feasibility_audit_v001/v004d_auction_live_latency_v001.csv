@@ -1,0 +1,2 @@
+﻿test_mode,audit_asof,request_timestamp,response_timestamp,latency_ms,candidate_count,success_count,missing_count,stale_count,error_count,retry_count,whole_pool_complete_timestamp,earliest_reliable_live_data_time,live_core_field_completeness,p95_total_pipeline_time_seconds,live_gate_pass,reason
+PENDING_REAL_TRADING_DAY_VALIDATION,2026-09-06,,,,,,,,,,,PENDING_REAL_TRADING_DAY_VALIDATION,,,0,Audit date is Sunday; no 09:25-09:30 real trading-window observation was fabricated

@@ -1,0 +1,17 @@
+﻿field,historical_availability,live_availability,semantics,semantic_state
+auction_price,DAILY_OPEN_EQUIVALENT_ONLY,PROSPECTIVE_SPOT_OPEN,"Final 09:25 clearing price should equal official open, but no independent historical auction snapshot exists",PARTIAL
+auction_pct_change,DERIVABLE_FROM_PRICE_AND_D1_CLOSE_FOR_QA,DERIVABLE,QA-only arithmetic; no threshold or predictive use in this audit,PARTIAL
+auction_volume,NOT_AVAILABLE,PROSPECTIVE_CUMULATIVE_QUOTE_FIELD,Not archived; live field must be proven as 09:25 matched volume rather than virtual/cumulative supplier value,UNRESOLVED
+auction_amount,NOT_AVAILABLE,PROSPECTIVE_CUMULATIVE_QUOTE_FIELD,Not archived; live field must be proven as 09:25 matched amount,UNRESOLVED
+bid1_price,NOT_AVAILABLE,AKSHARE_BID_ASK_PROSPECTIVE,Current level-1 price; wrapper has no source timestamp,UNRESOLVED
+bid1_volume,NOT_AVAILABLE,AKSHARE_BID_ASK_PROSPECTIVE,Current level-1 volume; unmatched-buy interpretation not established,UNRESOLVED
+ask1_price,NOT_AVAILABLE,AKSHARE_BID_ASK_PROSPECTIVE,Current level-1 price; wrapper has no source timestamp,UNRESOLVED
+ask1_volume,NOT_AVAILABLE,AKSHARE_BID_ASK_PROSPECTIVE,Current level-1 volume; unmatched-sell interpretation not established,UNRESOLVED
+bid2_to_bid5,NOT_AVAILABLE,AKSHARE_BID_ASK_PROSPECTIVE,Level 2-5 quote ladder; current-only and no historical replay,UNRESOLVED
+ask2_to_ask5,NOT_AVAILABLE,AKSHARE_BID_ASK_PROSPECTIVE,Level 2-5 quote ladder; current-only and no historical replay,UNRESOLVED
+matched_volume,NOT_AVAILABLE,NOT_EXPLICITLY_EXPOSED,Must not be inferred from general quote volume,NOT_AVAILABLE
+unmatched_buy_volume,NOT_AVAILABLE,NOT_EXPLICITLY_EXPOSED,Must not be inferred from bid1 volume,NOT_AVAILABLE
+unmatched_sell_volume,NOT_AVAILABLE,NOT_EXPLICITLY_EXPOSED,Must not be inferred from ask1 volume,NOT_AVAILABLE
+reference_or_virtual_match_price,NOT_AVAILABLE,PRE_MIN_LAST_COLUMN_SEMANTICS_UNCONFIRMED,AKShare labels the eighth pre-min field as latest price; virtual-match semantics are not documented in repository code,UNRESOLVED
+state_0915_0920,NOT_HISTORICALLY_AVAILABLE,PRE_MIN_1M_ROWS_PROSPECTIVE,Order cancellation is permitted; rows cannot be treated as ordinary trades,UNRESOLVED
+state_0920_0925,NOT_HISTORICALLY_AVAILABLE,PRE_MIN_1M_ROWS_PROSPECTIVE,Order cancellation prohibited by market phase; supplier row aggregation semantics still need validation,UNRESOLVED

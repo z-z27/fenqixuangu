@@ -1,0 +1,52 @@
+{
+  "model_id": "FINAL_REDUCED7F_STAGE1",
+  "model_family": "WEIGHTED_L2_LOGISTIC",
+  "purpose": "FROZEN_COEFFICIENTS_FOR_POSSIBLE_LATER_AUGUST_FINAL_HOLDOUT_ONLY",
+  "in_sample_performance_used_as_evidence": false,
+  "git_commit": "a9df61773bf3580b4cbb0b492b6174873e4126a5",
+  "feature_count": 7,
+  "feature_order": [
+    "rank_d1_close_ma10_pct",
+    "rank_d1_low_ma10_pct",
+    "rank_trend_hold_score",
+    "rank_theme_score",
+    "rank_log_candidate_base_price",
+    "rank_active_money_score",
+    "rank_d1_close_vwap_pct"
+  ],
+  "intercept": 0.024561152320507727,
+  "coefficients": {
+    "rank_d1_close_ma10_pct": 0.014487993230375687,
+    "rank_d1_low_ma10_pct": 0.007611812719496793,
+    "rank_trend_hold_score": -0.011628536492149403,
+    "rank_theme_score": 0.028344451830476555,
+    "rank_log_candidate_base_price": 0.040761774406353375,
+    "rank_active_money_score": 0.028036978661411662,
+    "rank_d1_close_vwap_pct": 0.008729706488413178
+  },
+  "L2": 0.3,
+  "positive_weight": 1.5,
+  "standardization": "NONE",
+  "PCA": "NONE",
+  "missing_policy": "reuse exact bridge frozen features; no missing 7F accepted by learner",
+  "sample_weight_rules": {
+    "date_weight": "1 / candidate rows on historical signal_date",
+    "positive_class_weight": "1.5 when target7 else 1.0",
+    "tail_weight": {
+      "raw_repair_return_gte_0.12": 2.0,
+      "raw_repair_return_gte_0.10_and_lt_0.12": 1.5,
+      "otherwise": 1.0
+    },
+    "formula": "date_weight * positive_class_weight * tail_weight",
+    "sum_weight": 84.5970339623397
+  },
+  "target": "target7 = int(raw_repair_return >= 0.07)",
+  "training_rows": 485,
+  "training_dates": 60,
+  "training_start_signal_date": "2026-05-06",
+  "training_end_signal_date": "2026-07-29",
+  "training_asof": "2026-08-01",
+  "label_availability_rule": "label_available_date < 2026-08-01",
+  "max_label_available_date": "2026-07-31",
+  "august_signal_date_outcome_rows_accessed": 0
+}
