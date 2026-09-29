@@ -34,6 +34,9 @@ reports/rb_*/
 reports/top3_diagnostics/
 reports/v005_*/
 reports/*.zip
+# reports/*.zip 只匹配 reports/ 的直接子项; 研究产物的 zip 打包在同名解压目录旁,
+# 内容重复且不纳入版本控制 (仓库迄今 0 个跟踪的 zip)。
+reports/research/**/*.zip
 /*.zip
 !reports/manual_models/
 !reports/manual_models/*.json
