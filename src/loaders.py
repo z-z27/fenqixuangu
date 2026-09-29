@@ -17,6 +17,7 @@ from .code_utils import is_main_board_code, normalize_stock_code
 from .config import DataConfig, get_data_config
 from .data_sources import MarketDataProvider, SUSPENSION_STATUS_COLUMNS
 from .indicators import enrich_5min_indicators, enrich_daily_indicators
+from .trading_calendar import NonTradingDayError, get_trading_calendar
 
 
 MAIN_BOARD_LIMIT_RATIO = Decimal("1.10")
@@ -68,6 +69,8 @@ class MarketDataService:
         self.suspension_status_cache = FrameCache(
             self.config.cache_dir / "suspension_status", "suspension_status"
         )
+        # 权威交易日历 (构造无 IO; 首次查询才按需加载/落盘缓存)。
+        self.trading_calendar = get_trading_calendar(self.config)
 
     def collect_limit_ups(
         self,
@@ -82,11 +85,21 @@ class MarketDataService:
         errors: list[str] = []
         anchor = pd.Timestamp(trade_date or datetime.now().strftime("%Y-%m-%d"))
         daily_force = force_refresh if force_daily_refresh is None else bool(force_daily_refresh)
-        for offset in range(max(1, lookback_days)):
-            current = anchor - pd.Timedelta(days=offset)
-            if current.weekday() >= 5:
-                continue
-            date_text = current.strftime("%Y-%m-%d")
+        # lookback_days 仍然是**自然日**窗口 (首版设计: 5 自然日覆盖周末与短假期),
+        # 这里只把窗口内的非交易日剔出去, 不改变窗口长度。修复前用
+        # `current.weekday() >= 5` 只能识别周末, 节假日 (如 2026-09-25 中秋节)
+        # 会被当成交易日 -> 涨停池空 -> 回退到全市场日线回扫 (3099 只) 且结果
+        # 必然为空。日历不可用时 TradingCalendarError 直接上抛 (fail closed),
+        # 绝不退回 weekday() 猜一个。
+        window_start = (anchor - pd.Timedelta(days=max(1, lookback_days) - 1)).strftime("%Y-%m-%d")
+        window_end = anchor.strftime("%Y-%m-%d")
+        trading_dates = self.trading_calendar.trading_days(window_start, window_end)
+        if not trading_dates:
+            raise NonTradingDayError(
+                f"lookback window {window_start}..{window_end} contains no trading day "
+                f"(calendar source: {self.trading_calendar.source})"
+            )
+        for date_text in trading_dates:
             cache_key = date_text
             cached = None if force_refresh else self.limit_up_cache.read(cache_key)
             if cached is not None and not cached.empty:
@@ -113,7 +126,12 @@ class MarketDataService:
             frames.append(frame)
 
         if not frames:
-            raise RuntimeError("no limit-up data collected: " + " | ".join(errors))
+            # 走到这里说明窗口内**有**交易日, 但每一天都取数失败 (真正的故障),
+            # 与「窗口全是非交易日」严格区分 (后者由上面的 NonTradingDayError 覆盖)。
+            raise RuntimeError(
+                f"no limit-up data collected for trading days {window_start}..{window_end} "
+                f"({len(trading_dates)} trading day(s)): " + " | ".join(errors)
+            )
 
         result = pd.concat(frames, ignore_index=True)
         result = result.sort_values(["trade_date", "code"]).drop_duplicates(["trade_date", "code"], keep="last")

@@ -22,6 +22,7 @@ from src.history_samples import (
     _standardize_raw_source_pool,
     run_history_sample_generation,
 )
+from src.trading_calendar import NonTradingDayError
 from src.universe_audit import stage_identity
 from src.v005_fixed_grid_holdout import _load_history_universe_context
 
@@ -208,6 +209,52 @@ class HistoryGenerationBoundaryIntegrationTests(unittest.TestCase):
                 "2026-07-10=daily_scan_date_seen_zero",
             )
             canonical = config.snapshot_dir / "history_universe" / "2026-07-10" / "canonical"
+            self.assertFalse(canonical.exists())
+
+    def test_exchange_calendar_proof_marks_holiday_non_trading(self) -> None:
+        """权威日历判定非交易日时, 证明方法记为 exchange_calendar (零日线扫描)。"""
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            config = SimpleNamespace(
+                reports_dir=root / "reports",
+                snapshot_dir=root / "snapshots",
+            )
+            service = _HistoryService(
+                {
+                    "2026-09-25": NonTradingDayError(
+                        "lookback window 2026-09-25..2026-09-25 contains no trading day "
+                        "(calendar source: akshare_sina_trade_dates)"
+                    )
+                }
+            )
+            with (
+                mock.patch("src.history_samples.get_data_config", return_value=config),
+                mock.patch("src.history_samples.MarketDataService", return_value=service),
+                mock.patch(
+                    "src.history_samples._cached_daily_proves_non_trading",
+                    return_value=False,
+                ),
+            ):
+                candidates, _, run_log, _, *_ = run_history_sample_generation(
+                    start_date="2026-09-25",
+                    end_date="2026-09-25",
+                    lookback_days=1,
+                    force_refresh=True,
+                    universe_snapshot_mode="create-or-verify",
+                )
+            self.assertTrue(candidates.empty)
+            self.assertEqual(run_log.iloc[0]["status"], "skipped_non_trading")
+            stable = config.reports_dir / "history_samples" / "2026-09-25_2026-09-25"
+            audit = pd.read_csv(
+                stable / "history_universe_audit_2026-09-25_2026-09-25.csv"
+            ).iloc[0]
+            self.assertEqual(audit["snapshot_status"], "PROVEN_NON_TRADING_DATE")
+            self.assertEqual(
+                audit["lookback_non_trading_proof_methods"],
+                "2026-09-25=exchange_calendar",
+            )
+            self.assertEqual(str(audit["lookback_unresolved_dates"]), "nan")
+            canonical = config.snapshot_dir / "history_universe" / "2026-09-25" / "canonical"
             self.assertFalse(canonical.exists())
 
     def test_existing_canonical_cannot_be_reclassified_as_non_trading(self) -> None:

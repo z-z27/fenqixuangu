@@ -31,6 +31,7 @@ from .config import get_data_config
 from .loaders import MarketDataService
 from .provenance import runtime_provenance
 from .report import write_data_quality_reports, write_signal_reports
+from .trading_calendar import NonTradingDayError
 from .universe_audit import (
     UNIVERSE_SNAPSHOT_MODES,
     UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
@@ -1775,6 +1776,20 @@ def _collect_limitups_for_history_sample(
             )
         except Exception as exc:
             message = str(exc)
+            if isinstance(exc, NonTradingDayError):
+                # 权威交易日历直接判定非交易日 (零网络开销): 无需 3099 只个股的
+                # 日线扫描。按异常类型而非 message 正则判定, 因此不受
+                # collect_limit_ups 的错误包装影响。
+                known_missing.add(date_text)
+                known_non_trading.add(date_text)
+                resolved_non_trading.add(date_text)
+                non_trading_proof_methods[date_text] = "exchange_calendar"
+                unresolved_dates.discard(date_text)
+                print(
+                    f"[history-samples] skip non-trading date from trading calendar {date_text}",
+                    flush=True,
+                )
+                continue
             if _is_daily_scan_non_trading_error(message):
                 known_missing.add(date_text)
                 known_non_trading.add(date_text)
