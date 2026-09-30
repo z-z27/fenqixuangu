@@ -15,7 +15,7 @@ from .loaders import (
     _keep_recent_trade_days,
     _merge_minute_amount,
 )
-from .signal_engine import generate_signal
+from .legacy_calendar_semantics import generate_legacy_calendar_signal
 from .v004a import (
     DEFAULT_CLOSE_RETURN_COLUMN,
     DEFAULT_HIGH_RETURN_COLUMN,
@@ -322,7 +322,7 @@ def reconstruct_forward_raw_row(root: Path, event: Mapping[str, Any]) -> dict[st
     )
     daily = enrich_daily_indicators(daily_recent, full_daily=daily_history)
     minute = enrich_5min_indicators(minute_recent)
-    signal = generate_signal(
+    signal = generate_legacy_calendar_signal(
         code=code,
         name=str(event.get("name", "")),
         daily=daily,

@@ -12,7 +12,7 @@ import pandas as pd
 from .config import get_data_config, get_strategy_config
 from .indicators import enrich_5min_indicators, enrich_daily_indicators
 from .loaders import _filter_to_end_date, _keep_recent_trade_days, _merge_minute_amount
-from .signal_engine import generate_signal
+from .legacy_calendar_semantics import generate_legacy_calendar_signal
 from .v004a import (
     BASE_INTERACTION_SPECS,
     BASE_RANK_SPECS,
@@ -307,7 +307,7 @@ def reconstruct_canonical_raw_row(
     minute = enrich_5min_indicators(minute_recent)
     if str(daily.iloc[-1]["date"]) != signal_date:
         raise RuntimeError(f"FATAL: canonical daily latest date mismatch {code}@{signal_date}")
-    signal = generate_signal(
+    signal = generate_legacy_calendar_signal(
         code=code,
         name=str(event.get("name", "")),
         daily=daily,
