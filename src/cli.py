@@ -5,7 +5,10 @@ import sys
 
 import pandas as pd
 
-from .backtester import DEFAULT_ENTRY_PRICE_MODE, run_full_history_backtest, run_history_backtest, run_top3_signal_backtest
+from .backtester import (
+    DEFAULT_ENTRY_PRICE_MODE, _covered_limit_up_codes, _exact_consecutive_boards,
+    run_full_history_backtest, run_history_backtest, run_top3_signal_backtest,
+)
 from .config import get_data_config
 from .data_acceptance import run_data_acceptance
 from .daily_ranking import DEFAULT_DAILY_RANKING_MODEL, DEFAULT_DAILY_TOP_N, apply_daily_research_ranking
@@ -25,6 +28,7 @@ from .v004c_d1_dataset import DatasetValidationError, run_v004c_d1_dataset_build
 from .report import write_data_quality_reports, write_signal_reports
 from .research_models import run_factor_analysis
 from .signal_engine import generate_signal
+from .trading_calendar import CALENDAR_SEMANTICS_VERSION, TradingCalendarError
 from .v004a import (
     DEFAULT_INITIAL_TRAIN_DAYS as DEFAULT_V004A_INITIAL_TRAIN_DAYS,
     DEFAULT_L2_GRID as DEFAULT_V004A_L2_GRID,
@@ -156,7 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--entry-price-mode", choices=["zone_max", "confirmation_close"], default=DEFAULT_ENTRY_PRICE_MODE)
 
     p = sub.add_parser("backtest-history", help="backtest multiple daily signal files and write full records")
-    p.add_argument("--signals-dir", default="reports/daily_signals")
+    p.add_argument("--signals-dir", default=f"reports/daily_signals/{CALENDAR_SEMANTICS_VERSION}")
     p.add_argument("--start-date", required=True)
     p.add_argument("--end-date", required=True)
     p.add_argument("--top-n", type=int, default=3)
@@ -347,10 +351,7 @@ def warmup_limitups(args) -> int:
     service = MarketDataService()
     rows: list[dict[str, object]] = []
 
-    for current in pd.date_range(args.start_date, args.end_date, freq="D"):
-        if current.weekday() >= 5:
-            continue
-        date_text = current.strftime("%Y-%m-%d")
+    for date_text in service.trading_calendar.trading_days(args.start_date, args.end_date):
         row: dict[str, object] = {
             "date": date_text,
             "status": "failed",
@@ -386,7 +387,7 @@ def warmup_limitups(args) -> int:
         rows.append(row)
 
     report = pd.DataFrame(rows)
-    out_dir = get_data_config().reports_dir / "warmup"
+    out_dir = get_data_config().reports_dir / "warmup" / CALENDAR_SEMANTICS_VERSION
     out_dir.mkdir(parents=True, exist_ok=True)
     out_path = out_dir / f"limitup_warmup_{args.start_date}_{args.end_date}.csv"
     report.to_csv(out_path, index=False, encoding="utf-8-sig")
@@ -416,12 +417,12 @@ def generate_signals(args) -> int:
     pool = load_limitup_file(args.limitup_file)
     signals, quality_rows = _build_signals(service, pool, args.days, args.max_codes, args.force_refresh)
     ranked_signals, ranking_meta = apply_daily_research_ranking(signals, model_file=args.ranking_model, top_n=args.top_n)
-    output_dir = get_data_config().reports_dir / "daily_signals"
+    output_dir = get_data_config().reports_dir / "daily_signals" / CALENDAR_SEMANTICS_VERSION
     trade_date = _latest_trade_date(pool)
     csv_path, md_path = write_signal_reports(ranked_signals, output_dir, trade_date=trade_date)
     quality_csv_path, quality_md_path = write_data_quality_reports(
         quality_rows,
-        get_data_config().reports_dir / "data_quality",
+        get_data_config().reports_dir / "data_quality" / CALENDAR_SEMANTICS_VERSION,
         trade_date=trade_date,
     )
     print(f"signals: {len(signals)}")
@@ -445,12 +446,12 @@ def run_daily(args) -> int:
     )
     signals, quality_rows = _build_signals(service, pool, args.days, args.max_codes, args.force_refresh)
     ranked_signals, ranking_meta = apply_daily_research_ranking(signals, model_file=args.ranking_model, top_n=args.top_n)
-    output_dir = get_data_config().reports_dir / "daily_signals"
+    output_dir = get_data_config().reports_dir / "daily_signals" / CALENDAR_SEMANTICS_VERSION
     trade_date = _latest_trade_date(pool)
     csv_path, md_path = write_signal_reports(ranked_signals, output_dir, trade_date=trade_date)
     quality_csv_path, quality_md_path = write_data_quality_reports(
         quality_rows,
-        get_data_config().reports_dir / "data_quality",
+        get_data_config().reports_dir / "data_quality" / CALENDAR_SEMANTICS_VERSION,
         trade_date=trade_date,
     )
     print(f"limit-up rows: {len(pool)}")
@@ -979,6 +980,7 @@ def _build_signals(
     as_of_date = _latest_trade_date(pool)
     signals = []
     quality_rows = []
+    board_day_codes = _covered_limit_up_codes(pool)
     for code in codes:
         code_pool = pool[pool["code"].astype(str) == code].sort_values("trade_date")
         if code_pool.empty:
@@ -992,9 +994,17 @@ def _build_signals(
             quality = dict(bars.quality)
             quality.update({"name": name, "trade_date": as_of_date, "d0_date": d0_date})
             quality_rows.append(quality)
-            signal = generate_signal(code, name, bars.daily, bars.minute_5m, pool, d0_date=d0_date)
+            signal = generate_signal(
+                code, name, bars.daily, bars.minute_5m, pool,
+                d0_date=d0_date, trading_calendar=service.trading_calendar,
+                consecutive_boards_override=_exact_consecutive_boards(
+                    service, code, d0_date, board_day_codes, force_refresh=force_refresh
+                ),
+            )
             signals.append(signal)
         except Exception as exc:
+            if isinstance(exc, TradingCalendarError):
+                raise
             if isinstance(exc, DataQualityError):
                 quality = dict(exc.quality)
                 quality.update({"name": name, "trade_date": as_of_date, "d0_date": d0_date, "error": str(exc)})

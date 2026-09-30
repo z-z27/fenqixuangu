@@ -125,6 +125,11 @@ class MarketDataService:
                 frame.to_csv(raw_path, index=False, encoding="utf-8-sig")
             frames.append(frame)
 
+        if errors:
+            raise RuntimeError(
+                f"incomplete limit-up pool for trading days {window_start}..{window_end}: "
+                + " | ".join(errors)
+            )
         if not frames:
             # 走到这里说明窗口内**有**交易日, 但每一天都取数失败 (真正的故障),
             # 与「窗口全是非交易日」严格区分 (后者由上面的 NonTradingDayError 覆盖)。
@@ -136,6 +141,7 @@ class MarketDataService:
         result = pd.concat(frames, ignore_index=True)
         result = result.sort_values(["trade_date", "code"]).drop_duplicates(["trade_date", "code"], keep="last")
         result = result.reset_index(drop=True)
+        result.attrs["trading_dates_covered"] = tuple(trading_dates)
         if write_processed:
             out_path = self.config.processed_dir / "recent_limitups.csv"
             result.to_csv(out_path, index=False, encoding="utf-8-sig")

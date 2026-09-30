@@ -12,8 +12,8 @@
 ------------------------
 ``lookback_days`` 仍然是**自然日**, 与首版设计一致 (5 自然日用于覆盖周末与
 短假期)。本模块**不改变窗口长度**, 只负责把窗口内的非交易日剔出去 ——
-因此 ``collect_limit_ups`` 的返回值与修复前逐字节一致 (节假日本来就不产出
-行, 只是过去要付出几小时网络代价才发现这件事)。
+因此 ``collect_limit_ups`` 的自然日窗口边界不变；窗口内的实际处理日期由
+交易日历决定。来源失败时现在拒绝发布不完整的窗口结果。
 
 数据源级联 (按顺序, 首个「成功拉取且覆盖目标区间」者胜出)
 --------------------------------------------------------
@@ -37,6 +37,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from bisect import bisect_left, bisect_right
 from importlib import import_module
 from pathlib import Path
 from typing import Callable, Iterable
@@ -49,6 +50,7 @@ from .config import DataConfig
 AKSHARE_SINA_SOURCE = "akshare_sina_trade_dates"
 BAOSTOCK_SOURCE = "baostock_query_trade_dates"
 CACHED_DAILY_SOURCE = "cached_daily_cross_section"
+CALENDAR_SEMANTICS_VERSION = "trading_sessions_v1"
 
 # 级联顺序即优先级; 见模块 docstring。
 TRADING_CALENDAR_SOURCES: tuple[str, ...] = (
@@ -116,7 +118,7 @@ class TradingCalendar:
         self.config = config
         self.sources = tuple(sources)
         self.root = Path(config.cache_dir) / "trade_calendar"
-        self.fetchers = dict(fetchers) if fetchers else self._default_fetchers()
+        self.fetchers = dict(fetchers) if fetchers is not None else self._default_fetchers()
         self._lock = threading.Lock()
         self._dates: list[str] | None = None
         self._date_set: set[str] | None = None
@@ -143,10 +145,22 @@ class TradingCalendar:
             frame = pd.read_pickle(data_path)
         except Exception:
             return None
-        if frame is None or frame.empty or "trade_date" not in frame.columns:
+        if (
+            not isinstance(meta, dict)
+            or not isinstance(frame, pd.DataFrame)
+            or frame.empty
+            or "trade_date" not in frame.columns
+        ):
             return None
         dates = _normalize_dates(frame["trade_date"].tolist())
         if not dates:
+            return None
+        if (
+            meta.get("source") != source
+            or meta.get("start") != dates[0]
+            or meta.get("end") != dates[-1]
+            or meta.get("count") != len(dates)
+        ):
             return None
         return dates, meta
 
@@ -267,9 +281,73 @@ class TradingCalendar:
             return None
 
     def trading_days(self, start: str, end: str) -> list[str]:
+        """Return actual sessions in the inclusive interval; reversed ranges are invalid."""
+        start = self._required_date(start)
+        end = self._required_date(end)
+        if start > end:
+            raise ValueError("trading_days requires start <= end")
         self.ensure(start, end)
         assert self._dates is not None
-        return [date for date in self._dates if start <= date <= end]
+        return self._dates[bisect_left(self._dates, start):bisect_right(self._dates, end)]
+
+    @staticmethod
+    def _required_date(value: object) -> str:
+        normalized = _normalize_date(value)
+        if normalized is None:
+            raise TradingCalendarError(f"无法解析日期: {value!r}")
+        return normalized
+
+    def session_distance(self, start: str, end: str) -> int:
+        """Number of actual sessions from start to end (0 on the same session).
+
+        Both endpoints must be sessions. Reversed dates, missing coverage and
+        non-session endpoints raise rather than approximating with weekdays.
+        """
+        start = self._required_date(start)
+        end = self._required_date(end)
+        if start > end:
+            raise ValueError("session_distance requires start <= end")
+        self.ensure(start, end)
+        assert self._dates is not None and self._date_set is not None
+        if start not in self._date_set or end not in self._date_set:
+            raise TradingCalendarError(f"session_distance endpoints must be trading days: {start}, {end}")
+        return bisect_left(self._dates, end) - bisect_left(self._dates, start)
+
+    def are_consecutive_sessions(self, previous: str, next_date: str) -> bool:
+        """True only when next_date immediately follows previous in market time."""
+        return self.session_distance(previous, next_date) == 1
+
+    def previous_trading_day(self, date_text: str) -> str:
+        """Nearest session strictly before date_text; fail if coverage is insufficient."""
+        target = self._required_date(date_text)
+        self.ensure(target, target)
+        assert self._dates is not None
+        index = bisect_left(self._dates, target)
+        if index:
+            return self._dates[index - 1]
+        start = (pd.Timestamp(target) - pd.Timedelta(days=32)).strftime("%Y-%m-%d")
+        self.ensure(start, target)
+        assert self._dates is not None
+        index = bisect_left(self._dates, target)
+        if not index:
+            raise TradingCalendarError(f"no previous trading day covered before {target}")
+        return self._dates[index - 1]
+
+    def next_trading_day(self, date_text: str) -> str:
+        """Nearest session strictly after date_text; fail if coverage is insufficient."""
+        target = self._required_date(date_text)
+        self.ensure(target, target)
+        assert self._dates is not None
+        index = bisect_right(self._dates, target)
+        if index < len(self._dates):
+            return self._dates[index]
+        end = (pd.Timestamp(target) + pd.Timedelta(days=32)).strftime("%Y-%m-%d")
+        self.ensure(target, end)
+        assert self._dates is not None
+        index = bisect_right(self._dates, target)
+        if index == len(self._dates):
+            raise TradingCalendarError(f"no next trading day covered after {target}")
+        return self._dates[index]
 
     # --------------------------------------------------------------- 取数实现
 
@@ -329,7 +407,7 @@ class TradingCalendar:
                 frame = pd.read_pickle(path)
             except Exception:
                 continue
-            if frame is None or frame.empty or "date" not in frame.columns:
+            if not isinstance(frame, pd.DataFrame) or frame.empty or "date" not in frame.columns:
                 continue
             try:
                 values = pd.to_datetime(frame["date"], errors="coerce").dropna()

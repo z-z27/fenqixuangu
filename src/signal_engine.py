@@ -12,10 +12,13 @@ from .graph_quality import score_graph_quality
 from .indicators import build_key_zones
 from .support_quality import score_support_quality
 from .theme_score import score_theme
+from .trading_calendar import TradingCalendar, TradingCalendarError, get_trading_calendar
 
 
 @dataclass
 class Signal:
+    """days_since_d0 counts exchange sessions; consecutive_boards counts adjacent sessions."""
+
     trade_date: str
     code: str
     name: str
@@ -57,15 +60,22 @@ def generate_signal(
     limit_up_pool: pd.DataFrame,
     config: StrategyConfig | None = None,
     d0_date: str = "",
+    trading_calendar: TradingCalendar | None = None,
+    consecutive_boards_override: int | None = None,
 ) -> Signal:
     cfg = config or get_strategy_config()
     trade_date = str(daily.iloc[-1]["date"]) if daily is not None and not daily.empty else ""
 
     days_since_d0 = 0
+    calendar = trading_calendar or get_trading_calendar()
     if d0_date and trade_date:
-        days_since_d0 = (pd.Timestamp(trade_date) - pd.Timestamp(d0_date)).days
+        days_since_d0 = calendar.session_distance(d0_date, trade_date)
 
-    consecutive_boards = _count_consecutive_boards(limit_up_pool, code, d0_date)
+    consecutive_boards = (
+        int(consecutive_boards_override)
+        if consecutive_boards_override is not None
+        else _count_consecutive_boards(limit_up_pool, code, d0_date, calendar)
+    )
 
     graph_score, graph_reasons = score_graph_quality(daily)
     active_score, active_reasons = score_active_money(daily, minute)
@@ -297,21 +307,39 @@ def _format_optional(value: float | None) -> str:
     return "" if value is None else f"{float(value):.2f}"
 
 
-def _count_consecutive_boards(limit_up_pool: pd.DataFrame, code: str, d0_date: str) -> int:
-    if not d0_date or limit_up_pool is None or limit_up_pool.empty:
+def _count_consecutive_boards(
+    limit_up_pool: pd.DataFrame,
+    code: str,
+    d0_date: str,
+    trading_calendar: TradingCalendar | None = None,
+) -> int:
+    if not d0_date:
         return 0
+    if limit_up_pool is None or limit_up_pool.empty:
+        raise TradingCalendarError(f"consecutive_boards has no limit-up history for {d0_date}")
+    covered = set(map(str, limit_up_pool.attrs.get("trading_dates_covered", ())))
+    if not covered or d0_date not in covered:
+        raise TradingCalendarError(
+            f"consecutive_boards requires explicit limit-up session coverage for {d0_date}"
+        )
     code_pool = limit_up_pool[limit_up_pool["code"].astype(str) == code]
     dates = sorted(code_pool["trade_date"].dropna().astype(str).unique().tolist())
     if not dates or d0_date not in dates:
-        return 0
+        raise TradingCalendarError(f"D0 limit-up row missing from covered pool: {code}@{d0_date}")
     d0_idx = dates.index(d0_date)
+    calendar = trading_calendar or get_trading_calendar()
     count = 1
     for i in range(d0_idx - 1, -1, -1):
-        gap = (pd.Timestamp(dates[i + 1]) - pd.Timestamp(dates[i])).days
-        if gap <= 2:
+        if calendar.are_consecutive_sessions(dates[i], dates[i + 1]):
             count += 1
         else:
             break
+    first_board_date = dates[d0_idx - count + 1]
+    preceding_session = calendar.previous_trading_day(first_board_date)
+    if preceding_session not in covered:
+        raise TradingCalendarError(
+            f"consecutive_boards history does not cover prior session {preceding_session}"
+        )
     return count
 
 

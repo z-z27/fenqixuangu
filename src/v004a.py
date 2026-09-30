@@ -219,6 +219,11 @@ def annotate_v004a_input_eligibility(raw: pd.DataFrame) -> pd.DataFrame:
     high = pd.to_numeric(frame[DEFAULT_HIGH_RETURN_COLUMN], errors="coerce")
     close = pd.to_numeric(frame[DEFAULT_CLOSE_RETURN_COLUMN], errors="coerce")
     base_price = pd.to_numeric(frame["candidate_base_price"], errors="coerce")
+    missing_target_label = (
+        frame[DEFAULT_TARGET_COLUMN].isna()
+        if DEFAULT_TARGET_COLUMN in frame.columns
+        else pd.Series(False, index=frame.index)
+    )
     if "requested_signal_date" in frame.columns:
         requested = frame["requested_signal_date"].fillna("").astype(str)
         mismatch = requested.ne(frame["signal_date"])
@@ -237,6 +242,7 @@ def annotate_v004a_input_eligibility(raw: pd.DataFrame) -> pd.DataFrame:
         ("not_eligible", ~eligible),
         ("missing_high_return", high.isna()),
         ("missing_close_return", close.isna()),
+        ("missing_target_label", missing_target_label),
         ("invalid_base_price", base_price.isna() | base_price.le(0)),
         ("signal_date_mismatch", mismatch),
         ("duplicate_signal_code", duplicate_keys),
@@ -282,7 +288,6 @@ def prepare_v004a_samples(raw: pd.DataFrame, target_return_pct: float = DEFAULT_
         frame["graph_quality_score"] = 0.0
     frame["graph_quality_score"] = pd.to_numeric(frame["graph_quality_score"], errors="coerce").fillna(0.0)
     frame["eligible_for_trade"] = _bool_series(frame["eligible_for_trade"])
-    frame[DEFAULT_TARGET_COLUMN] = _bool_series(frame[DEFAULT_TARGET_COLUMN])
 
     days_since_missing_column = "days_since_d0" not in frame.columns
     if days_since_missing_column:
@@ -309,6 +314,7 @@ def prepare_v004a_samples(raw: pd.DataFrame, target_return_pct: float = DEFAULT_
     filtered = frame[frame["v004a_scorable_bool"].fillna(False).astype(bool)].copy()
     if filtered.empty:
         raise RuntimeError("no v004a rows remain after eligible/return/base-price filters")
+    filtered[DEFAULT_TARGET_COLUMN] = _bool_series(filtered[DEFAULT_TARGET_COLUMN])
 
     filtered["log_candidate_base_price"] = np.log(filtered["candidate_base_price"].astype(float))
     rank_specs = [*BASE_RANK_SPECS, *present_optional_specs]

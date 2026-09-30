@@ -15,7 +15,7 @@ from .backtester import (
     _future_end_date,
     _future_trade_dates,
     _invalid_distance_pct,
-    _iter_weekdays,
+    _iter_trading_days,
     _latest_trade_date_from_pool,
     _normalise_minute_frame,
     _path_metrics_by_horizon,
@@ -31,7 +31,7 @@ from .config import get_data_config
 from .loaders import MarketDataService
 from .provenance import runtime_provenance
 from .report import write_data_quality_reports, write_signal_reports
-from .trading_calendar import NonTradingDayError
+from .trading_calendar import CALENDAR_SEMANTICS_VERSION, NonTradingDayError, TradingCalendarError
 from .universe_audit import (
     UNIVERSE_SNAPSHOT_MODES,
     UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
@@ -147,6 +147,7 @@ HISTORY_CANDIDATE_COLUMNS = [
     "invalid_price",
     "candidate_base_price",
     "candidate_evaluable",
+    "label_evaluation_reason",
     "future_trade_days_available",
     "d2_trade_date",
     "d3_trade_date",
@@ -295,7 +296,11 @@ def run_history_sample_generation(
         )
     service = MarketDataService()
     data_config = get_data_config()
-    stable_run_root = data_config.reports_dir / "history_samples" / f"{start_date}_{end_date}"
+    stable_run_root = (
+        data_config.reports_dir / "history_samples" / CALENDAR_SEMANTICS_VERSION
+        / f"{start_date}_{end_date}"
+    )
+    corrected_snapshot_root = Path(data_config.snapshot_dir) / CALENDAR_SEMANTICS_VERSION
     run_root = _create_history_attempt_dir(stable_run_root)
     candidate_rows: list[dict[str, Any]] = []
     run_rows: list[dict[str, Any]] = []
@@ -305,7 +310,9 @@ def run_history_sample_generation(
     minute_cache: dict[str, pd.DataFrame | None] = {}
     missing_limitup_dates: set[str] = set()
     proven_non_trading_dates: set[str] = set()
-    requested_dates = _iter_weekdays(start_date, end_date)
+    requested_dates = _iter_trading_days(start_date, end_date, service.trading_calendar)
+    if not requested_dates:
+        raise NonTradingDayError(f"no trading sessions in historical range {start_date}..{end_date}")
     total_dates = len(requested_dates)
 
     for date_index, requested_date in enumerate(requested_dates, 1):
@@ -371,13 +378,12 @@ def run_history_sample_generation(
                 flush=True,
             )
             if actual_date != requested_date:
-                proven_non_trading = (
-                    requested_date in proven_non_trading_dates
-                    or _cached_daily_proves_non_trading(service, requested_date)
-                )
+                # requested_dates came from the exchange calendar. Missing pool
+                # rows cannot reclassify that session as a holiday.
+                proven_non_trading = not service.trading_calendar.is_trading_day(requested_date)
                 if proven_non_trading:
                     canonical_dir = (
-                        Path(data_config.snapshot_dir)
+                        corrected_snapshot_root
                         / "history_universe"
                         / requested_date
                         / "canonical"
@@ -616,7 +622,7 @@ def run_history_sample_generation(
                 snapshot_status, canonical_manifest_path, _ = create_or_verify_snapshot(
                     requested_signal_date=requested_date,
                     stages=stages,
-                    snapshot_root=data_config.snapshot_dir,
+                    snapshot_root=corrected_snapshot_root,
                     run_output_dir=run_root,
                     mode=universe_snapshot_mode,
                 )
@@ -702,7 +708,7 @@ def run_history_sample_generation(
                 universe_audit_rows.append(audit_row)
                 audit_appended = True
             print(f"[history-samples] {date_index}/{total_dates} failed {requested_date}: {exc}", flush=True)
-            if universe_snapshot_mode != "off":
+            if universe_snapshot_mode != "off" or isinstance(exc, TradingCalendarError):
                 run_rows.append(run_row)
                 _write_partial_history_universe_failure(
                     run_root=run_root,
@@ -1272,8 +1278,8 @@ def _create_history_attempt_dir(stable_run_root: Path) -> Path:
     stable_run_root = Path(stable_run_root)
     attempts_root = stable_run_root / "attempts"
     attempts_root.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    attempt_root = attempts_root / f"{timestamp}-{uuid.uuid4().hex}"
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    attempt_root = attempts_root / f"{timestamp}-{uuid.uuid4().hex[:8]}"
     attempt_root.mkdir(parents=False, exist_ok=False)
     return attempt_root
 
@@ -1654,6 +1660,7 @@ def _write_history_universe_outputs(
     public_root = Path(published_output_dir) if published_output_dir is not None else Path(output_dir)
     public_membership_path = public_root / membership_path.name
     manifest = {
+        "calendar_semantics_version": CALENDAR_SEMANTICS_VERSION,
         "universe_snapshot_schema_version": UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
         "start_date": str(start_date),
         "end_date": str(end_date),
@@ -1716,19 +1723,17 @@ def _collect_limitups_for_history_sample(
         current = anchor - pd.Timedelta(days=offset)
         date_text = current.strftime("%Y-%m-%d")
         expected_dates.append(date_text)
-        if current.weekday() >= 5:
+        if not service.trading_calendar.is_trading_day(date_text):
             known_missing.add(date_text)
             known_non_trading.add(date_text)
             resolved_non_trading.add(date_text)
-            non_trading_proof_methods[date_text] = "weekend"
+            non_trading_proof_methods[date_text] = "exchange_calendar"
             continue
 
         if date_text in known_non_trading:
-            resolved_non_trading.add(date_text)
-            non_trading_proof_methods[date_text] = "known_calendar"
-            unresolved_dates.discard(date_text)
-            print(f"[history-samples] skip proven non-trading date {date_text}", flush=True)
-            continue
+            raise UniverseAuditError(
+                f"known non-trading classification conflicts with trading calendar: {date_text}"
+            )
 
         cached: pd.DataFrame | None = None
         if not force_refresh:
@@ -1757,15 +1762,6 @@ def _collect_limitups_for_history_sample(
             unresolved_dates.add(date_text)
             print(f"[history-samples] skip pre-window missing limit-up cache {date_text}", flush=True)
             continue
-        if _cached_daily_proves_non_trading(service, date_text):
-            known_missing.add(date_text)
-            known_non_trading.add(date_text)
-            resolved_non_trading.add(date_text)
-            non_trading_proof_methods[date_text] = "cached_daily_cross_section"
-            unresolved_dates.discard(date_text)
-            print(f"[history-samples] skip non-trading date from cached daily data {date_text}", flush=True)
-            continue
-
         try:
             frame = service.collect_limit_ups(
                 trade_date=date_text,
@@ -1775,29 +1771,13 @@ def _collect_limitups_for_history_sample(
                 workers=workers,
             )
         except Exception as exc:
+            if isinstance(exc, TradingCalendarError):
+                raise
             message = str(exc)
-            if isinstance(exc, NonTradingDayError):
-                # 权威交易日历直接判定非交易日 (零网络开销): 无需 3099 只个股的
-                # 日线扫描。按异常类型而非 message 正则判定, 因此不受
-                # collect_limit_ups 的错误包装影响。
-                known_missing.add(date_text)
-                known_non_trading.add(date_text)
-                resolved_non_trading.add(date_text)
-                non_trading_proof_methods[date_text] = "exchange_calendar"
-                unresolved_dates.discard(date_text)
-                print(
-                    f"[history-samples] skip non-trading date from trading calendar {date_text}",
-                    flush=True,
-                )
-                continue
-            if _is_daily_scan_non_trading_error(message):
-                known_missing.add(date_text)
-                known_non_trading.add(date_text)
-                resolved_non_trading.add(date_text)
-                non_trading_proof_methods[date_text] = "daily_scan_date_seen_zero"
-                unresolved_dates.discard(date_text)
-                print(f"[history-samples] skip non-trading date after daily scan {date_text}", flush=True)
-                continue
+            if isinstance(exc, NonTradingDayError) or _is_daily_scan_non_trading_error(message):
+                # A source claiming "closed" contradicts the calendar result
+                # above. It may instead be a data outage; fail closed.
+                message = f"trading calendar/source conflict: {message}"
             unresolved_dates.add(date_text)
             errors.append(f"{date_text}: {type(exc).__name__}: {message}")
             continue
@@ -1821,6 +1801,7 @@ def _collect_limitups_for_history_sample(
         result = result.sort_values(["trade_date", "code"], kind="mergesort").reset_index(drop=True)
     else:
         result = pd.DataFrame(columns=["trade_date", "code"])
+    result.attrs["trading_dates_covered"] = tuple(sorted(data_dates))
     if not frames and unresolved_dates and not strict:
         suffix = "" if not errors else ": " + " | ".join(errors[:5])
         raise RuntimeError(f"no limit-up data collected for history sample lookback ending {requested_date}{suffix}")
@@ -1857,26 +1838,8 @@ def _rows_for_trade_date(frame: pd.DataFrame, trade_date: str) -> pd.DataFrame:
 
 
 def _cached_daily_proves_non_trading(service: MarketDataService, date_text: str, sample_size: int = 50) -> bool:
-    target = pd.Timestamp(date_text)
-    covered = 0
-    for cache in (service.daily_unadjusted_cache, service.daily_cache):
-        paths = sorted(cache.root.glob("*.pkl"), key=lambda path: path.stat().st_mtime, reverse=True)
-        for path in paths:
-            try:
-                frame = pd.read_pickle(path)
-            except Exception:
-                continue
-            if frame is None or frame.empty or "date" not in frame.columns:
-                continue
-            dates = pd.to_datetime(frame["date"], errors="coerce").dropna()
-            if dates.empty or dates.max() < target:
-                continue
-            covered += 1
-            if bool((dates == target).any()):
-                return False
-            if covered >= int(sample_size):
-                return True
-    return covered >= 10
+    """Compatibility helper; non-trading proof now comes only from TradingCalendar."""
+    return not service.trading_calendar.is_trading_day(date_text)
 
 
 def evaluate_history_candidate_only(
@@ -1940,6 +1903,7 @@ def evaluate_history_candidate_only(
         "invalid_price": invalid_price,
         "candidate_base_price": None,
         "candidate_evaluable": False,
+        "label_evaluation_reason": "",
         "future_trade_days_available": 0,
         "reasons": signal_row.get("reasons", ""),
         "key_zones_json": signal_row.get("key_zones_json", ""),
@@ -1950,12 +1914,25 @@ def evaluate_history_candidate_only(
     result["candidate_base_price"] = base_price
     minute = _read_minute_from_cache(code, service, minute_cache)
     if minute is None or minute.empty or "trade_date" not in minute.columns or "datetime" not in minute.columns:
+        result["label_evaluation_reason"] = "missing_minute_cache"
         return _finalise_targets(result, target_return_pct, secondary_target_return_pct)
 
     minute = _normalise_minute_frame(minute)
-    future_dates = _future_trade_dates(minute, signal_date)
-    result["future_trade_days_available"] = len(future_dates)
+    future_dates = _future_trade_dates(minute, signal_date, service.trading_calendar)
+    result["future_trade_days_available"] = len(set(minute["trade_date"]) & set(future_dates))
+    d2_date = service.trading_calendar.next_trading_day(signal_date)
+    d3_date = service.trading_calendar.next_trading_day(d2_date)
+    result["d2_trade_date"] = d2_date
+    result["d3_trade_date"] = d3_date
+    observed_dates = set(minute["trade_date"].astype(str))
+    missing_early_sessions = [date for date in (d2_date, d3_date) if date not in observed_dates]
+    if missing_early_sessions:
+        result["label_evaluation_reason"] = (
+            "missing_minute_session:" + ",".join(missing_early_sessions)
+        )
+        return _finalise_targets(result, target_return_pct, secondary_target_return_pct)
     if not future_dates:
+        result["label_evaluation_reason"] = "missing_future_minute_data"
         return _finalise_targets(result, target_return_pct, secondary_target_return_pct)
 
     result.update(_d2open_d3_metrics(code, service, minute, future_dates))
@@ -1969,6 +1946,10 @@ def evaluate_history_candidate_only(
     result.update(candidate_metrics)
     if base_price is not None and _to_float(result.get("candidate_d3_max_return_pct")) is not None:
         result["candidate_evaluable"] = True
+    elif base_price is None:
+        result["label_evaluation_reason"] = "missing_candidate_base_price"
+    else:
+        result["label_evaluation_reason"] = "incomplete_d2_d3_metrics"
     return _finalise_targets(result, target_return_pct, secondary_target_return_pct)
 
 
@@ -2280,6 +2261,8 @@ def _d2open_d3_metrics(
 
     d2_rows = minute[minute["trade_date"].astype(str) == d2_date].sort_values("datetime")
     d3_rows = minute[minute["trade_date"].astype(str) == d3_date].sort_values("datetime")
+    if d2_rows.empty or d3_rows.empty:
+        return result
     d2_open = _first_numeric(d2_rows, "open")
     if d2_open is None:
         d2_open = _daily_price_for_date(code, service, d2_date, "open")
@@ -2300,12 +2283,16 @@ def _d2open_d3_metrics(
 
 def _finalise_targets(result: dict[str, Any], target_return_pct: float, secondary_target_return_pct: float) -> dict[str, Any]:
     d3_max = _to_float(result.get("candidate_d3_max_return_pct"))
-    result["target7"] = bool(d3_max is not None and d3_max >= float(target_return_pct))
-    result["target10"] = bool(d3_max is not None and d3_max >= float(secondary_target_return_pct))
+    result["target7"] = None if d3_max is None else bool(d3_max >= float(target_return_pct))
+    result["target10"] = None if d3_max is None else bool(d3_max >= float(secondary_target_return_pct))
     d2open_d3high = _to_float(result.get("d2open_d3high_return_pct"))
     d2open_d3close = _to_float(result.get("d2open_d3close_return_pct"))
-    result["target7_d2open_d3high"] = bool(d2open_d3high is not None and d2open_d3high >= float(target_return_pct))
-    result["target7_d2open_d3close"] = bool(d2open_d3close is not None and d2open_d3close >= float(target_return_pct))
+    result["target7_d2open_d3high"] = (
+        None if d2open_d3high is None else bool(d2open_d3high >= float(target_return_pct))
+    )
+    result["target7_d2open_d3close"] = (
+        None if d2open_d3close is None else bool(d2open_d3close >= float(target_return_pct))
+    )
     return result
 
 

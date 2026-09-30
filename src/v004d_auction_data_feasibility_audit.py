@@ -26,6 +26,8 @@ from zoneinfo import ZoneInfo
 import numpy as np
 import pandas as pd
 
+from .trading_calendar import get_trading_calendar
+
 
 TASK_NAME = "v004d_auction_data_feasibility_audit_v001"
 OUTPUT_DIRNAME = TASK_NAME
@@ -672,9 +674,9 @@ def build_dry_run_timing(repetitions: int = 50) -> tuple[pd.DataFrame, pd.DataFr
 
 def _validate_live_window(now: datetime) -> None:
     local = now.astimezone(ZoneInfo(TIMEZONE))
-    if local.weekday() >= 5 or not (clock_time(9, 25) <= local.time() <= clock_time(9, 30)):
+    if not get_trading_calendar().is_trading_day(local.strftime("%Y-%m-%d")) or not (clock_time(9, 25) <= local.time() <= clock_time(9, 30)):
         raise LiveWindowError(
-            "real live latency audit is only valid on a weekday between 09:25:00 and 09:30:00 Asia/Shanghai"
+            "real live latency audit is only valid on a trading day between 09:25:00 and 09:30:00 Asia/Shanghai"
         )
 
 

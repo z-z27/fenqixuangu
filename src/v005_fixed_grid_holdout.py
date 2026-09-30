@@ -12,6 +12,7 @@ from .daily_ranking import load_ranking_model
 from .history_samples import HISTORY_CANDIDATE_COLUMNS, HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS
 from .policy_config import frozen_policy_input_checks, get_default_policy, normalized_sha256, validate_model_dates_for_signal_date
 from .provenance import file_sha256, runtime_provenance
+from .trading_calendar import CALENDAR_SEMANTICS_VERSION, get_trading_calendar
 from .ranking_backtest import validate_ranking_model
 from .v004a import (
     DEFAULT_TARGET_RETURN_PCT,
@@ -615,15 +616,20 @@ def _load_history_universe_context(
         raise UniverseAuditError("history universe manifest requested_dates contains duplicates")
     if len(manifest_generated_dates) != len(set(manifest_generated_dates)):
         raise UniverseAuditError("history universe manifest generated_dates contains duplicates")
-    expected_requested_dates = [
-        timestamp.strftime("%Y-%m-%d")
-        for timestamp in pd.date_range(
-            pd.Timestamp(str(manifest.get("start_date", ""))),
-            pd.Timestamp(str(manifest.get("end_date", ""))),
-            freq="D",
+    semantics = str(manifest.get("calendar_semantics_version", ""))
+    if semantics == CALENDAR_SEMANTICS_VERSION:
+        expected_requested_dates = get_trading_calendar().trading_days(
+            str(manifest.get("start_date", "")), str(manifest.get("end_date", ""))
         )
-        if timestamp.weekday() < 5
-    ]
+    elif not semantics:
+        # Legacy manifests were produced by weekday enumeration. Keep their
+        # historical validation contract without applying it to new snapshots.
+        expected_requested_dates = pd.bdate_range(
+            str(manifest.get("start_date", "")),
+            str(manifest.get("end_date", "")),
+        ).strftime("%Y-%m-%d").tolist()
+    else:
+        raise UniverseAuditError(f"unknown calendar semantics version: {semantics}")
     if set(manifest_requested_dates) != set(expected_requested_dates):
         raise UniverseAuditError(
             "history universe manifest requested_dates is incomplete for start/end range: "

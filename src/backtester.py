@@ -11,6 +11,10 @@ from .indicators import enrich_5min_indicators
 from .loaders import DataQualityError, MarketDataService
 from .report import write_data_quality_reports, write_signal_reports
 from .signal_engine import Signal, generate_signal
+from .trading_calendar import (
+    CALENDAR_SEMANTICS_VERSION, NonTradingDayError, TradingCalendar, TradingCalendarError,
+    get_trading_calendar,
+)
 
 
 DEFAULT_TOP_N = 3
@@ -19,7 +23,8 @@ DEFAULT_ENTRY_PRICE_MODE = "confirmation_close"
 EXECUTION_MODEL_VERSION = "conservative_confirmation_close_v1"
 LEGACY_ZONE_MAX_EXECUTION_MODEL_VERSION = "legacy_zone_max_v0"
 HISTORY_HORIZONS = (2, 3, 5, 10)
-LISTING_HISTORY_PROOF_METHOD = "weekday_upper_bound_v1"
+UNVERIFIED_CALENDAR_SEMANTICS = "unverified_calendar_semantics"
+LISTING_HISTORY_PROOF_METHOD = "trading_calendar_sessions_v2"
 LISTING_HISTORY_ELIGIBLE_FAILURE_CODES = frozenset(
     {"daily_history_shortfall", "missing_latest_daily_ma"}
 )
@@ -131,7 +136,10 @@ def run_top3_signal_backtest(
     trades = pd.DataFrame(rows)
     summary = build_top3_summary(trades, top_n=top_n, target_return_pct=target_return_pct)
     trade_date = _signals_trade_date(signals)
-    output_dir = get_data_config().reports_dir / "backtest_results"
+    output_dir = (
+        get_data_config().reports_dir / "backtest_results"
+        / _input_calendar_semantics_namespace(signals_file)
+    )
     csv_path, md_path = write_top3_backtest_reports(trades, summary, output_dir, trade_date)
     return trades, summary, csv_path, md_path
 
@@ -154,12 +162,15 @@ def run_full_history_backtest(
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, Path, Path, Path, Path, Path, Path, Path]:
     service = MarketDataService()
     reports_dir = get_data_config().reports_dir
-    run_root = reports_dir / "backtest_runs" / f"{start_date}_{end_date}"
+    run_root = reports_dir / "backtest_runs" / CALENDAR_SEMANTICS_VERSION / f"{start_date}_{end_date}"
     signal_frames: list[pd.DataFrame] = []
     run_rows: list[dict[str, Any]] = []
     future_fetch_rows: list[dict[str, Any]] = []
 
-    for requested_date in _iter_weekdays(start_date, end_date):
+    requested_dates = _iter_trading_days(start_date, end_date, service.trading_calendar)
+    if not requested_dates:
+        raise NonTradingDayError(f"no trading sessions in backtest range {start_date}..{end_date}")
+    for requested_date in requested_dates:
         run_row = _empty_full_run_row(requested_date)
         try:
             pool = service.collect_limit_ups(
@@ -234,6 +245,8 @@ def run_full_history_backtest(
                 }
             )
         except Exception as exc:
+            if isinstance(exc, TradingCalendarError):
+                raise
             run_row["status"] = "failed"
             run_row["error"] = str(exc)
         run_rows.append(run_row)
@@ -365,7 +378,10 @@ def run_history_backtest(
         entry_price_mode=entry_price_mode,
     )
     factor_stats = build_history_factor_stats(trades)
-    output_dir = get_data_config().reports_dir / "backtest_results"
+    output_dir = (
+        get_data_config().reports_dir / "backtest_results"
+        / _input_calendar_semantics_namespace(signals_dir)
+    )
     trade_csv, summary_csv, factor_csv, md_path = write_history_backtest_reports(
         trades,
         summary,
@@ -390,6 +406,7 @@ def build_signals_for_pool(
         codes = codes[: int(max_codes)]
     signals: list[Signal] = []
     quality_rows: list[dict[str, Any]] = []
+    board_day_codes = _covered_limit_up_codes(pool)
     for code in codes:
         code_pool = pool[pool["code"].astype(str) == code].sort_values("trade_date")
         if code_pool.empty:
@@ -403,8 +420,17 @@ def build_signals_for_pool(
             quality = dict(bars.quality)
             quality.update({"name": name, "trade_date": as_of_date, "d0_date": d0_date})
             quality_rows.append(quality)
-            signals.append(generate_signal(code, name, bars.daily, bars.minute_5m, pool, d0_date=d0_date))
+            consecutive_boards = _exact_consecutive_boards(
+                service, code, d0_date, board_day_codes, force_refresh=force_refresh
+            )
+            signals.append(generate_signal(
+                code, name, bars.daily, bars.minute_5m, pool,
+                d0_date=d0_date, trading_calendar=service.trading_calendar,
+                consecutive_boards_override=consecutive_boards,
+            ))
         except Exception as exc:
+            if isinstance(exc, TradingCalendarError):
+                raise
             if isinstance(exc, DataQualityError):
                 quality = dict(exc.quality)
                 quality.update(
@@ -463,6 +489,59 @@ def build_signals_for_pool(
             else:
                 quality_rows.append(_failed_quality_row(code, name, as_of_date, d0_date, exc))
     return signals, quality_rows
+
+
+def _covered_limit_up_codes(pool: pd.DataFrame) -> dict[str, set[str]]:
+    """Use only dates explicitly covered by the pool's collection provenance."""
+    covered = [str(date) for date in pool.attrs.get("trading_dates_covered", ())]
+    result = {date: set() for date in covered}
+    if covered and not pool.empty:
+        for date, rows in pool.groupby("trade_date"):
+            date = str(date)
+            if date not in result:
+                raise TradingCalendarError(f"limit-up row lies outside covered sessions: {date}")
+            result[date] = set(rows["code"].astype(str).str.zfill(6))
+    return result
+
+
+def _exact_consecutive_boards(
+    service: MarketDataService,
+    code: str,
+    d0_date: str,
+    board_day_codes: dict[str, set[str]],
+    *,
+    force_refresh: bool = False,
+) -> int:
+    """Load each preceding market session until the stock's first non-board day.
+
+    `board_day_codes` is shared across stocks in a signal-date run, so a prior
+    session is fetched at most once even if many candidates need its history.
+    """
+    if not d0_date:
+        return 0
+    normalized_code = str(code).zfill(6)
+    count = 1
+    previous = service.trading_calendar.previous_trading_day(d0_date)
+    while True:
+        if previous not in board_day_codes:
+            try:
+                previous_pool = service.collect_limit_ups(
+                    trade_date=previous, lookback_days=1,
+                    force_refresh=force_refresh, write_processed=False,
+                )
+            except NonTradingDayError as exc:
+                raise TradingCalendarError(
+                    f"limit-up source disagrees with calendar for {previous}"
+                ) from exc
+            if not {"trade_date", "code"}.issubset(previous_pool.columns):
+                raise TradingCalendarError(f"prior-session limit-up pool lacks date/code: {previous}")
+            if not previous_pool.empty and not previous_pool["trade_date"].astype(str).eq(previous).all():
+                raise TradingCalendarError(f"prior-session limit-up pool date mismatch: {previous}")
+            board_day_codes[previous] = set(previous_pool["code"].astype(str).str.zfill(6))
+        if normalized_code not in board_day_codes[previous]:
+            return count
+        count += 1
+        previous = service.trading_calendar.previous_trading_day(previous)
 
 
 def prefetch_future_bars_for_signals(
@@ -700,8 +779,8 @@ def evaluate_history_signal(
         return result
 
     minute = _normalise_minute_frame(minute)
-    future_dates = _future_trade_dates(minute, signal_date)
-    result["future_trade_days_available"] = len(future_dates)
+    future_dates = _future_trade_dates(minute, signal_date, service.trading_calendar)
+    result["future_trade_days_available"] = len(set(minute["trade_date"]) & set(future_dates))
     if not future_dates:
         result["data_reason"] = "missing future 5m data"
         result["failure_reason"] = "data_issue"
@@ -715,11 +794,19 @@ def evaluate_history_signal(
         hold_days=hold_days,
     )
     result.update(candidate_metrics)
-    if base_price is not None:
+    if base_price is not None and _to_float(result.get("candidate_d3_max_return_pct")) is not None:
         result["candidate_evaluable"] = True
 
     if not bool(signal_row.get("selected_for_execution")):
         result["failure_reason"] = ""
+        return result
+
+    required_early_days = min(2, max(1, int(hold_days)))
+    if len(future_dates) < required_early_days or not set(future_dates[:required_early_days]).issubset(
+        set(minute["trade_date"].astype(str))
+    ):
+        result["data_reason"] = "missing D2/D3 5m rows"
+        result["failure_reason"] = "data_issue"
         return result
 
     d2_date = future_dates[0]
@@ -1169,7 +1256,14 @@ def _path_metrics_by_horizon(
     start_ts = pd.Timestamp(start_time) if start_time else None
     for horizon in HISTORY_HORIZONS:
         window_days = max(1, min(int(hold_days), int(horizon) - 1))
-        rows = minute[minute["trade_date"].astype(str).isin(future_dates[:window_days])].copy()
+        required_dates = future_dates[:window_days]
+        if len(required_dates) != window_days:
+            continue
+        rows = minute[minute["trade_date"].astype(str).isin(required_dates)].copy()
+        if not set(required_dates).issubset(set(rows["trade_date"].astype(str))):
+            # A stock data gap cannot turn a later observed session into a
+            # complete D2/D3 (or longer) cumulative outcome.
+            continue
         if start_ts is not None:
             rows = rows[pd.to_datetime(rows["datetime"], errors="coerce") > start_ts].copy()
         if rows.empty:
@@ -1309,9 +1403,24 @@ def _normalise_minute_frame(minute: pd.DataFrame) -> pd.DataFrame:
     return result[result["datetime"].notna() & result["trade_date"].notna()].sort_values("datetime").reset_index(drop=True)
 
 
-def _future_trade_dates(minute: pd.DataFrame, signal_date: str) -> list[str]:
-    dates = sorted(minute["trade_date"].dropna().astype(str).unique().tolist())
-    return [date for date in dates if date > signal_date]
+def _future_trade_dates(
+    minute: pd.DataFrame, signal_date: str,
+    trading_calendar: TradingCalendar | None = None,
+) -> list[str]:
+    """Market sessions through the last observed minute date, including missing bars.
+
+    A suspension or data gap must not turn the next observed stock bar into D2.
+    """
+    calendar = trading_calendar or get_trading_calendar()
+    observed = sorted(minute["trade_date"].dropna().astype(str).unique().tolist())
+    if not observed or observed[-1] <= signal_date:
+        return []
+    if not calendar.is_trading_day(signal_date):
+        raise TradingCalendarError(f"signal date is not a trading session: {signal_date}")
+    sessions = calendar.trading_days(signal_date, observed[-1])
+    if not {date for date in observed if date >= signal_date}.issubset(set(sessions)):
+        raise TradingCalendarError("minute data contains a date outside the trading calendar")
+    return [date for date in sessions if date > signal_date]
 
 
 def _date_from_signal_filename(path: Path) -> str:
@@ -1405,9 +1514,19 @@ def _empty_full_run_row(requested_date: str) -> dict[str, Any]:
     }
 
 
-def _iter_weekdays(start_date: str, end_date: str) -> list[str]:
-    dates = pd.date_range(pd.Timestamp(start_date), pd.Timestamp(end_date), freq="D")
-    return [date.strftime("%Y-%m-%d") for date in dates if date.weekday() < 5]
+def _iter_trading_days(
+    start_date: str, end_date: str, trading_calendar: TradingCalendar | None = None,
+) -> list[str]:
+    return (trading_calendar or get_trading_calendar()).trading_days(start_date, end_date)
+
+
+def _input_calendar_semantics_namespace(path: str | Path) -> str:
+    """Only a versioned input path may produce a corrected-semantics report."""
+    return (
+        CALENDAR_SEMANTICS_VERSION
+        if CALENDAR_SEMANTICS_VERSION in Path(path).parts
+        else UNVERIFIED_CALENDAR_SEMANTICS
+    )
 
 
 def _latest_trade_date_from_pool(pool: pd.DataFrame) -> str:
@@ -1430,10 +1549,9 @@ def _future_end_date(signal_date: str, hold_days: int) -> str:
 
 
 def _latest_possible_market_date() -> str:
-    current = pd.Timestamp.now().normalize()
-    while current.weekday() >= 5:
-        current -= pd.Timedelta(days=1)
-    return current.strftime("%Y-%m-%d")
+    today = pd.Timestamp.now().strftime("%Y-%m-%d")
+    calendar = get_trading_calendar()
+    return today if calendar.is_trading_day(today) else calendar.previous_trading_day(today)
 
 
 def _listing_history_exclusion_decision(
@@ -1483,7 +1601,7 @@ def _listing_history_exclusion_decision(
             "listing_metadata_error": "listing_date is later than signal_date",
         }
 
-    maximum_days = maximum_possible_weekday_trade_days(listing_date, normalized_signal_date)
+    maximum_days = len(service.trading_calendar.trading_days(listing_date, normalized_signal_date))
     common = {
         "listing_date": listing_date,
         "listing_date_source": source,
@@ -1724,14 +1842,6 @@ def _append_quality_hard_failure(
     quality["status"] = "failed"
 
 
-def maximum_possible_weekday_trade_days(listing_date: str, signal_date: str) -> int:
-    start = pd.Timestamp(listing_date)
-    end = pd.Timestamp(signal_date)
-    if start > end:
-        return 0
-    return int(len(pd.bdate_range(start=start, end=end, inclusive="both")))
-
-
 def _hard_failure_code_set(quality: dict[str, Any]) -> set[str]:
     raw = quality.get("hard_failure_codes")
     if isinstance(raw, (list, tuple, set, frozenset)):
@@ -1916,7 +2026,7 @@ def evaluate_top_signal(
         result["data_reason"] = "5m cache missing date columns"
         return result
 
-    d2_date = _next_trade_date(minute, signal_date)
+    d2_date = _next_trade_date(minute, signal_date, service.trading_calendar)
     if not d2_date:
         result["data_reason"] = "missing D2 5m data"
         return result
@@ -2094,12 +2204,17 @@ def build_top3_backtest_markdown(trades: pd.DataFrame, summary: pd.DataFrame, tr
     return "\n".join(lines)
 
 
-def _next_trade_date(minute: pd.DataFrame, signal_date: str) -> str:
+def _next_trade_date(
+    minute: pd.DataFrame, signal_date: str,
+    trading_calendar: TradingCalendar | None = None,
+) -> str:
     dates = sorted(pd.to_datetime(minute["trade_date"], errors="coerce").dropna().dt.strftime("%Y-%m-%d").unique().tolist())
-    for date in dates:
-        if date > signal_date:
-            return date
-    return ""
+    if not dates or dates[-1] <= signal_date:
+        return ""
+    calendar = trading_calendar or get_trading_calendar()
+    if not calendar.is_trading_day(signal_date):
+        raise TradingCalendarError(f"signal date is not a trading session: {signal_date}")
+    return calendar.next_trading_day(signal_date)
 
 
 def _signals_trade_date(signals: pd.DataFrame) -> str:
