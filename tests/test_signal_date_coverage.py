@@ -210,6 +210,7 @@ class SignalDateCoverageDecisionTests(unittest.TestCase):
         self.assertTrue(quality["daily_has_requested_date"])
         self.assertTrue(quality["minute_has_requested_date"])
         service = SimpleNamespace(
+            trading_calendar=mock.Mock(),
             get_stock_bars=mock.Mock(
                 return_value=SimpleNamespace(
                     quality=quality,
@@ -219,7 +220,10 @@ class SignalDateCoverageDecisionTests(unittest.TestCase):
             )
         )
         expected_signal = object()
-        with mock.patch("src.backtester.generate_signal", return_value=expected_signal) as generate:
+        with (
+            mock.patch("src.backtester.generate_signal", return_value=expected_signal) as generate,
+            mock.patch("src.backtester._exact_consecutive_boards", return_value=1),
+        ):
             signals, rows = build_signals_for_pool(service, _pool(), SIGNAL_DATE, days=10)
         self.assertEqual(signals, [expected_signal])
         self.assertEqual(rows[0]["status"], "ok")

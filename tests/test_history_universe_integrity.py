@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from contextlib import redirect_stderr
 from io import StringIO
@@ -22,7 +22,7 @@ from src.history_samples import (
     _standardize_raw_source_pool,
     run_history_sample_generation,
 )
-from src.trading_calendar import NonTradingDayError
+from src.trading_calendar import CALENDAR_SEMANTICS_VERSION, NonTradingDayError
 from src.universe_audit import stage_identity
 from src.v005_fixed_grid_holdout import _load_history_universe_context
 
@@ -45,6 +45,7 @@ class _HistoryService:
         self.collected = collected
         self.limit_up_cache = _LimitUpCache(cached)
         self.collect_calls: list[str] = []
+        self.trading_calendar = _FixtureCalendar()
 
     def collect_limit_ups(self, trade_date: str, **_: object) -> pd.DataFrame:
         self.collect_calls.append(trade_date)
@@ -54,6 +55,19 @@ class _HistoryService:
         if value is None:
             raise RuntimeError(f"unresolved {trade_date}")
         return value.copy()
+
+
+class _FixtureCalendar:
+    """Synthetic session list for legacy snapshot tests; production uses TradingCalendar."""
+
+    def __init__(self, holidays: set[str] | None = None) -> None:
+        self.holidays = holidays or set()
+
+    def trading_days(self, start: str, end: str) -> list[str]:
+        return [date for date in pd.bdate_range(start, end).strftime("%Y-%m-%d") if date not in self.holidays]
+
+    def is_trading_day(self, date_text: str) -> bool:
+        return date_text in self.trading_days(date_text, date_text)
 
 
 def _limitup_frame(trade_date: str, code: str = "000001") -> pd.DataFrame:
@@ -146,30 +160,20 @@ class HistoryGenerationBoundaryIntegrationTests(unittest.TestCase):
                     return_value=False,
                 ),
             ):
-                candidates, _, run_log, _, *_ = run_history_sample_generation(
-                    start_date="2026-07-10",
-                    end_date="2026-07-10",
-                    lookback_days=1,
-                    universe_snapshot_mode="create-or-verify",
-                )
+                with self.assertRaisesRegex(RuntimeError, "LOOKBACK_UNRESOLVED"):
+                    run_history_sample_generation(
+                        start_date="2026-07-10",
+                        end_date="2026-07-10",
+                        lookback_days=1,
+                        universe_snapshot_mode="create-or-verify",
+                    )
 
-            self.assertTrue(candidates.empty)
-            self.assertEqual(run_log.iloc[0]["status"], "skipped_non_trading")
-            stable = config.reports_dir / "history_samples" / "2026-07-10_2026-07-10"
+            stable = config.reports_dir / "history_samples" / CALENDAR_SEMANTICS_VERSION / "2026-07-10_2026-07-10"
             audit = pd.read_csv(
-                stable / "history_universe_audit_2026-07-10_2026-07-10.csv"
+                next((stable / "attempts").iterdir()) / "history_universe_audit_2026-07-10_2026-07-10.csv"
             ).iloc[0]
-            self.assertEqual(audit["generation_status"], "non_trading")
-            self.assertEqual(audit["snapshot_status"], "PROVEN_NON_TRADING_DATE")
-            manifest = json.loads(
-                (stable / "history_universe_manifest_2026-07-10_2026-07-10.json").read_text(
-                    encoding="utf-8"
-                )
-            )
-            self.assertTrue(manifest["candidate_universe_snapshot_complete"])
-            self.assertEqual(manifest["requested_dates"], ["2026-07-10"])
-            self.assertEqual(manifest["generated_dates"], [])
-            canonical = config.snapshot_dir / "history_universe" / "2026-07-10" / "canonical"
+            self.assertEqual(audit["snapshot_status"], "LOOKBACK_UNRESOLVED")
+            canonical = config.snapshot_dir / CALENDAR_SEMANTICS_VERSION / "history_universe" / "2026-07-10" / "canonical"
             self.assertFalse(canonical.exists())
 
     def test_force_refresh_keeps_daily_scan_non_trading_proof(self) -> None:
@@ -190,25 +194,20 @@ class HistoryGenerationBoundaryIntegrationTests(unittest.TestCase):
                     return_value=False,
                 ),
             ):
-                candidates, _, run_log, _, *_ = run_history_sample_generation(
-                    start_date="2026-07-10",
-                    end_date="2026-07-10",
-                    lookback_days=1,
-                    force_refresh=True,
-                    universe_snapshot_mode="create-or-verify",
-                )
-            self.assertTrue(candidates.empty)
-            self.assertEqual(run_log.iloc[0]["status"], "skipped_non_trading")
-            stable = config.reports_dir / "history_samples" / "2026-07-10_2026-07-10"
+                with self.assertRaisesRegex(RuntimeError, "LOOKBACK_UNRESOLVED"):
+                    run_history_sample_generation(
+                        start_date="2026-07-10",
+                        end_date="2026-07-10",
+                        lookback_days=1,
+                        force_refresh=True,
+                        universe_snapshot_mode="create-or-verify",
+                    )
+            stable = config.reports_dir / "history_samples" / CALENDAR_SEMANTICS_VERSION / "2026-07-10_2026-07-10"
             audit = pd.read_csv(
-                stable / "history_universe_audit_2026-07-10_2026-07-10.csv"
+                next((stable / "attempts").iterdir()) / "history_universe_audit_2026-07-10_2026-07-10.csv"
             ).iloc[0]
-            self.assertEqual(audit["snapshot_status"], "PROVEN_NON_TRADING_DATE")
-            self.assertEqual(
-                audit["lookback_non_trading_proof_methods"],
-                "2026-07-10=daily_scan_date_seen_zero",
-            )
-            canonical = config.snapshot_dir / "history_universe" / "2026-07-10" / "canonical"
+            self.assertEqual(audit["snapshot_status"], "LOOKBACK_UNRESOLVED")
+            canonical = config.snapshot_dir / CALENDAR_SEMANTICS_VERSION / "history_universe" / "2026-07-10" / "canonical"
             self.assertFalse(canonical.exists())
 
     def test_exchange_calendar_proof_marks_holiday_non_trading(self) -> None:
@@ -227,6 +226,7 @@ class HistoryGenerationBoundaryIntegrationTests(unittest.TestCase):
                     )
                 }
             )
+            service.trading_calendar = _FixtureCalendar({"2026-09-25"})
             with (
                 mock.patch("src.history_samples.get_data_config", return_value=config),
                 mock.patch("src.history_samples.MarketDataService", return_value=service),
@@ -235,26 +235,16 @@ class HistoryGenerationBoundaryIntegrationTests(unittest.TestCase):
                     return_value=False,
                 ),
             ):
-                candidates, _, run_log, _, *_ = run_history_sample_generation(
-                    start_date="2026-09-25",
-                    end_date="2026-09-25",
-                    lookback_days=1,
-                    force_refresh=True,
-                    universe_snapshot_mode="create-or-verify",
-                )
-            self.assertTrue(candidates.empty)
-            self.assertEqual(run_log.iloc[0]["status"], "skipped_non_trading")
-            stable = config.reports_dir / "history_samples" / "2026-09-25_2026-09-25"
-            audit = pd.read_csv(
-                stable / "history_universe_audit_2026-09-25_2026-09-25.csv"
-            ).iloc[0]
-            self.assertEqual(audit["snapshot_status"], "PROVEN_NON_TRADING_DATE")
-            self.assertEqual(
-                audit["lookback_non_trading_proof_methods"],
-                "2026-09-25=exchange_calendar",
-            )
-            self.assertEqual(str(audit["lookback_unresolved_dates"]), "nan")
-            canonical = config.snapshot_dir / "history_universe" / "2026-09-25" / "canonical"
+                with self.assertRaisesRegex(NonTradingDayError, "no trading sessions"):
+                    run_history_sample_generation(
+                        start_date="2026-09-25",
+                        end_date="2026-09-25",
+                        lookback_days=1,
+                        force_refresh=True,
+                        universe_snapshot_mode="create-or-verify",
+                    )
+            self.assertEqual(service.collect_calls, [])
+            canonical = config.snapshot_dir / CALENDAR_SEMANTICS_VERSION / "history_universe" / "2026-09-25" / "canonical"
             self.assertFalse(canonical.exists())
 
     def test_existing_canonical_cannot_be_reclassified_as_non_trading(self) -> None:
@@ -264,7 +254,7 @@ class HistoryGenerationBoundaryIntegrationTests(unittest.TestCase):
                 reports_dir=root / "reports",
                 snapshot_dir=root / "snapshots",
             )
-            canonical = config.snapshot_dir / "history_universe" / "2026-07-10" / "canonical"
+            canonical = config.snapshot_dir / CALENDAR_SEMANTICS_VERSION / "history_universe" / "2026-07-10" / "canonical"
             canonical.mkdir(parents=True)
             (canonical / "manifest.json").write_text("{}", encoding="utf-8")
             service = _HistoryService(
@@ -278,19 +268,20 @@ class HistoryGenerationBoundaryIntegrationTests(unittest.TestCase):
                     return_value=False,
                 ),
             ):
-                with self.assertRaisesRegex(RuntimeError, "SNAPSHOT_STATUS_CONFLICT"):
+                with self.assertRaisesRegex(RuntimeError, "LOOKBACK_UNRESOLVED"):
                     run_history_sample_generation(
                         start_date="2026-07-10",
                         end_date="2026-07-10",
                         lookback_days=1,
                         universe_snapshot_mode="create-or-verify",
                     )
-            stable = config.reports_dir / "history_samples" / "2026-07-10_2026-07-10"
+            stable = config.reports_dir / "history_samples" / CALENDAR_SEMANTICS_VERSION / "2026-07-10_2026-07-10"
             attempt = next((stable / "attempts").iterdir())
             audit = pd.read_csv(
                 attempt / "history_universe_audit_2026-07-10_2026-07-10.csv"
             ).iloc[0]
-            self.assertEqual(audit["snapshot_status"], "SNAPSHOT_STATUS_CONFLICT")
+            self.assertEqual(audit["snapshot_status"], "LOOKBACK_UNRESOLVED")
+            self.assertTrue(canonical.exists())
 
     def test_zero_candidate_trading_date_is_complete_and_manifest_verifies(self) -> None:
         with TemporaryDirectory() as temp:
@@ -327,11 +318,12 @@ class HistoryGenerationBoundaryIntegrationTests(unittest.TestCase):
             self.assertEqual(int(audit["candidate_row_count"]), 0)
             self.assertEqual(audit["generation_status"], "generated")
             manifest_path = stable / "history_universe_manifest_2026-07-10_2026-07-10.json"
-            context = _load_history_universe_context(
-                samples_path=candidates_path,
-                raw_samples=persisted,
-                explicit_manifest_path=manifest_path,
-            )
+            with mock.patch("src.v005_fixed_grid_holdout.get_trading_calendar", return_value=service.trading_calendar):
+                context = _load_history_universe_context(
+                    samples_path=candidates_path,
+                    raw_samples=persisted,
+                    explicit_manifest_path=manifest_path,
+                )
             self.assertTrue(context["snapshot_complete"])
             self.assertTrue(context["snapshot_verified"])
 
@@ -377,7 +369,7 @@ class HistoryGenerationBoundaryIntegrationTests(unittest.TestCase):
                         lookback_days=1,
                         universe_snapshot_mode="create-or-verify",
                     )
-            stable = config.reports_dir / "history_samples" / "2026-07-10_2026-07-10"
+            stable = config.reports_dir / "history_samples" / CALENDAR_SEMANTICS_VERSION / "2026-07-10_2026-07-10"
             attempt = next((stable / "attempts").iterdir())
             quality = pd.read_csv(attempt / "data_quality" / "data_quality_2026-07-10.csv")
             self.assertEqual(quality.iloc[0]["code"], 1)
@@ -438,7 +430,7 @@ class StrictLookbackResolutionTests(unittest.TestCase):
         )
         self.assertEqual(
             cold_result.non_trading_proof_methods,
-            ("2026-07-04=weekend", "2026-07-05=weekend"),
+            ("2026-07-04=exchange_calendar", "2026-07-05=exchange_calendar"),
         )
 
         warm = _HistoryService({}, cached=collected)
@@ -465,10 +457,8 @@ class StrictLookbackResolutionTests(unittest.TestCase):
 
     def test_force_refresh_preserves_known_calendar_proof(self) -> None:
         service = _HistoryService({})
-        with mock.patch(
-            "src.history_samples._cached_daily_proves_non_trading", return_value=False
-        ):
-            result = _collect_limitups_for_history_sample(
+        with self.assertRaisesRegex(RuntimeError, "conflicts with trading calendar"):
+            _collect_limitups_for_history_sample(
                 service=service,
                 requested_date="2026-07-10",
                 start_date="2026-07-10",
@@ -479,16 +469,10 @@ class StrictLookbackResolutionTests(unittest.TestCase):
                 strict=True,
             )
         self.assertEqual(service.collect_calls, [])
-        self.assertEqual(
-            result.non_trading_proof_methods,
-            ("2026-07-10=known_calendar",),
-        )
 
     def test_force_refresh_accepts_cached_daily_cross_section_proof(self) -> None:
         service = _HistoryService({})
-        with mock.patch(
-            "src.history_samples._cached_daily_proves_non_trading", return_value=True
-        ):
+        with mock.patch("src.history_samples._cached_daily_proves_non_trading", return_value=True):
             result = _collect_limitups_for_history_sample(
                 service=service,
                 requested_date="2026-07-10",
@@ -498,11 +482,9 @@ class StrictLookbackResolutionTests(unittest.TestCase):
                 workers=1,
                 strict=True,
             )
-        self.assertEqual(service.collect_calls, [])
-        self.assertEqual(
-            result.non_trading_proof_methods,
-            ("2026-07-10=cached_daily_cross_section",),
-        )
+        self.assertEqual(service.collect_calls, ["2026-07-10"])
+        self.assertEqual(result.proven_non_trading_dates, ())
+        self.assertEqual(result.unresolved_dates, ("2026-07-10",))
 
     def test_force_refresh_does_not_treat_ordinary_or_empty_errors_as_non_trading(self) -> None:
         for message in (
@@ -560,9 +542,9 @@ class StrictLookbackResolutionTests(unittest.TestCase):
                         universe_snapshot_mode="create-or-verify",
                     )
             self.assertIn("2026-07-02", service.collect_calls)
-            canonical = config.snapshot_dir / "history_universe" / "2026-07-06" / "canonical"
+            canonical = config.snapshot_dir / CALENDAR_SEMANTICS_VERSION / "history_universe" / "2026-07-06" / "canonical"
             self.assertFalse(canonical.exists())
-            stable = config.reports_dir / "history_samples" / "2026-07-06_2026-07-06"
+            stable = config.reports_dir / "history_samples" / CALENDAR_SEMANTICS_VERSION / "2026-07-06_2026-07-06"
             attempt = next((stable / "attempts").iterdir())
             audit = pd.read_csv(
                 attempt / "history_universe_audit_2026-07-06_2026-07-06.csv"
@@ -628,7 +610,7 @@ class HistoryAttemptIsolationTests(unittest.TestCase):
                 reports_dir=root / "reports",
                 snapshot_dir=root / "snapshots",
             )
-            stable = config.reports_dir / "history_samples" / "2026-07-10_2026-07-10"
+            stable = config.reports_dir / "history_samples" / CALENDAR_SEMANTICS_VERSION / "2026-07-10_2026-07-10"
             stable.mkdir(parents=True)
             names = (
                 "history_candidates_2026-07-10_2026-07-10.csv",
@@ -643,7 +625,8 @@ class HistoryAttemptIsolationTests(unittest.TestCase):
 
             with (
                 mock.patch("src.history_samples.get_data_config", return_value=config),
-                mock.patch("src.history_samples.MarketDataService", return_value=object()),
+                mock.patch("src.history_samples.MarketDataService", return_value=SimpleNamespace(trading_calendar=_FixtureCalendar())),
+                mock.patch("src.history_samples._iter_trading_days", return_value=["2026-07-10"]),
                 mock.patch(
                     "src.history_samples._collect_limitups_for_history_sample",
                     side_effect=RuntimeError("injected generation failure"),
@@ -700,7 +683,7 @@ class HistoryAttemptIsolationTests(unittest.TestCase):
                         ]
                     )
                 self.assertEqual(exit_code, 1)
-                stable = config.reports_dir / "history_samples" / "2026-07-10_2026-07-10"
+                stable = config.reports_dir / "history_samples" / CALENDAR_SEMANTICS_VERSION / "2026-07-10_2026-07-10"
                 self.assertFalse(
                     (stable / "history_universe_manifest_2026-07-10_2026-07-10.json").exists()
                 )

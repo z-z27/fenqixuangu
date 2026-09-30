@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from pathlib import Path
@@ -10,6 +10,7 @@ from unittest import mock
 import pandas as pd
 
 from src.backtester import build_signals_for_pool
+from src.backtester import LISTING_HISTORY_PROOF_METHOD
 from src.config import DataConfig
 from src.history_samples import (
     HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS,
@@ -27,10 +28,21 @@ from src.loaders import (
     _build_quality_report,
     required_daily_trade_days,
 )
+from src.trading_calendar import CALENDAR_SEMANTICS_VERSION
 from src.universe_audit import canonical_rows_sha256, stage_identity
 
 
 SIGNAL_DATE = "2026-06-26"
+
+
+class _FixtureCalendar:
+    """Synthetic sessions used only by these isolated listing-history fixtures."""
+
+    def trading_days(self, start: str, end: str) -> list[str]:
+        return pd.bdate_range(start, end).strftime("%Y-%m-%d").tolist()
+
+    def is_trading_day(self, date_text: str) -> bool:
+        return date_text in self.trading_days(date_text, date_text)
 
 
 def _quality_failure(*failure_codes: str, code: str = "603407") -> dict[str, object]:
@@ -63,7 +75,7 @@ def _excluded_quality(code: str, listing_date: str) -> dict[str, object]:
         "listing_date": listing_date,
         "listing_date_source": "eastmoney_stock_info_f189",
         "maximum_possible_trade_days": maximum,
-        "proof_method": "weekday_upper_bound_v1",
+        "proof_method": LISTING_HISTORY_PROOF_METHOD,
         "required_trade_days": 180,
         "signal_date": SIGNAL_DATE,
     }
@@ -80,7 +92,7 @@ def _excluded_quality(code: str, listing_date: str) -> dict[str, object]:
         "signal_date": SIGNAL_DATE,
         "required_trade_days": 180,
         "maximum_possible_trade_days": maximum,
-        "proof_method": "weekday_upper_bound_v1",
+        "proof_method": LISTING_HISTORY_PROOF_METHOD,
         "exclusion_evidence_json": json.dumps(
             evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ),
@@ -99,6 +111,7 @@ class _FailureService:
         self.quality = quality
         self.metadata = metadata
         self.metadata_calls = 0
+        self.trading_calendar = _FixtureCalendar()
 
     def get_stock_bars(self, *_: object, **__: object) -> object:
         raise DataQualityError("short daily history", dict(self.quality))
@@ -119,6 +132,7 @@ class _OneDateHistoryService:
     def __init__(self, pool: pd.DataFrame) -> None:
         self.pool = pool
         self.limit_up_cache = _FrameCache()
+        self.trading_calendar = _FixtureCalendar()
 
     def collect_limit_ups(self, *_: object, **__: object) -> pd.DataFrame:
         return self.pool.copy()
@@ -150,7 +164,7 @@ class ListingHistoryDecisionTests(unittest.TestCase):
         self.assertEqual(row["exclusion_reason"], "insufficient_listing_history")
         self.assertFalse(row["is_data_quality_error"])
         self.assertLess(int(row["maximum_possible_trade_days"]), 180)
-        self.assertEqual(row["proof_method"], "weekday_upper_bound_v1")
+        self.assertEqual(row["proof_method"], LISTING_HISTORY_PROOF_METHOD)
         self.assertEqual(service.metadata_calls, 1)
 
     def test_old_listing_with_short_data_remains_a_quality_failure(self) -> None:
@@ -347,7 +361,7 @@ class ListingMembershipAndAuditTests(unittest.TestCase):
                 self.assertEqual(int(run_log.iloc[0]["quality_failed"]), 0)
                 self.assertEqual(run_log.iloc[0]["snapshot_status"], expected_snapshot_status)
 
-            stable = config.reports_dir / "history_samples" / f"{SIGNAL_DATE}_{SIGNAL_DATE}"
+            stable = config.reports_dir / "history_samples" / CALENDAR_SEMANTICS_VERSION / f"{SIGNAL_DATE}_{SIGNAL_DATE}"
             membership = pd.read_csv(
                 stable / f"history_universe_membership_{SIGNAL_DATE}_{SIGNAL_DATE}.csv",
                 dtype={"code": str},
@@ -362,7 +376,7 @@ class ListingMembershipAndAuditTests(unittest.TestCase):
             self.assertEqual(signal["signal_date"], SIGNAL_DATE)
             self.assertEqual(int(signal["required_trade_days"]), 180)
             self.assertLess(int(signal["maximum_possible_trade_days"]), 180)
-            self.assertEqual(signal["proof_method"], "weekday_upper_bound_v1")
+            self.assertEqual(signal["proof_method"], LISTING_HISTORY_PROOF_METHOD)
             self.assertEqual(
                 json.loads(signal["exclusion_evidence_json"])["listing_date"],
                 "2026-05-11",
@@ -420,6 +434,7 @@ class ListingMembershipAndAuditTests(unittest.TestCase):
             attempts = (
                 config.reports_dir
                 / "history_samples"
+                / CALENDAR_SEMANTICS_VERSION
                 / f"{SIGNAL_DATE}_{SIGNAL_DATE}"
                 / "attempts"
             )
