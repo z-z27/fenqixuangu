@@ -28,9 +28,17 @@ from src.signal_engine import _count_consecutive_boards, generate_signal
 from src.legacy_calendar_semantics import _LegacyCalendarDayDistance, _legacy_consecutive_boards
 from src.v004a import annotate_v004a_input_eligibility, prepare_v004a_samples
 from src.trading_calendar import (
+    BAOSTOCK_CALENDAR_START,
+    CACHED_DAILY_SOURCE,
+    FROZEN_SNAPSHOT_SOURCE,
+    CalendarFetch,
     NonTradingDayError,
     TradingCalendar,
     TradingCalendarError,
+    _akshare_sina_coverage,
+    _baostock_coverage,
+    load_frozen_calendar_snapshot,
+    write_frozen_calendar_snapshot,
 )
 
 
@@ -52,15 +60,32 @@ def _fake_calendar(
     *,
     source: str = "test_source",
     calls: list[str] | None = None,
+    coverage: tuple[str, str] | None = None,
 ) -> TradingCalendar:
-    def fetcher() -> list[str]:
+    """注入式假源。
+
+    缺省 (``coverage=None``) 返回裸列表, 等价于注入方声明「我枚举了自己返回区间
+    内的每个自然日」—— 这是权威源才有的契约。需要区分「覆盖区间」和「首尾交易
+    日」时显式传 ``coverage`` (C03)。
+    """
+
+    def fetcher() -> object:
         if calls is not None:
             calls.append(source)
         if isinstance(dates, Exception):  # type: ignore[arg-type]
             raise dates  # type: ignore[misc]
-        return list(dates)
+        if coverage is None:
+            return list(dates)
+        return CalendarFetch(dates=tuple(dates), coverage_start=coverage[0], coverage_end=coverage[1])
 
     return TradingCalendar(config, sources=(source,), fetchers={source: fetcher})
+
+
+def _write_daily_caches(config: DataConfig, dates: list[str], count: int = 60) -> None:
+    daily_dir = config.cache_dir / "daily_unadjusted"
+    daily_dir.mkdir(parents=True, exist_ok=True)
+    for index in range(count):
+        pd.DataFrame({"date": list(dates)}).to_pickle(daily_dir / f"{600000 + index}_daily.pkl")
 
 
 class _FakeProvider:
@@ -77,7 +102,12 @@ class _FakeProvider:
         )
 
 
-# 2026-09-25 为中秋节假期, 09-26/09-27 为周末; 09-24 与 09-28 为交易日。
+# 2026 年 9-10 月的真实交易日, 逐个核对过权威 sina 交易日表 (1990-12-19..2026-12-31):
+#   中秋节   09-25 休市 (09-26/09-27 为周末)
+#   国庆节   10-01..10-07 休市, **10-08 是交易日**
+# 夹具必须与权威日历一致: Phase 0 的旧夹具漏掉了 10-08, 于是把 09-30 -> 10-09
+# 记成了「长假后第一个交易日, 距离 1」—— 真实距离是 2, 长假后的第一个交易日是
+# 10-08。夹具写错会让「长假连续性」这类回归用例在错误的前提下通过。
 _Q3_DATES = [
     "2026-09-01",
     "2026-09-02",
@@ -100,9 +130,14 @@ _Q3_DATES = [
     "2026-09-28",
     "2026-09-29",
     "2026-09-30",
+    "2026-10-08",
     "2026-10-09",
+    "2026-10-12",
+    "2026-10-13",
+    "2026-10-14",
+    "2026-10-15",
+    "2026-10-16",
 ]
-
 
 class TradingCalendarTest(unittest.TestCase):
     def test_session_distance_weekend_holidays_and_reverse_contract(self) -> None:
@@ -114,8 +149,10 @@ class TradingCalendarTest(unittest.TestCase):
                 ("2026-09-16", "2026-09-21", 3),
                 ("2026-09-18", "2026-09-22", 2),
                 ("2026-09-24", "2026-09-24", 0),
-                ("2026-09-24", "2026-09-28", 1),  # holiday + weekend
-                ("2026-09-30", "2026-10-09", 1),  # long holiday
+                ("2026-09-24", "2026-09-28", 1),  # 中秋节 + 周末
+                ("2026-09-30", "2026-10-08", 1),  # 国庆长假后第一个交易日
+                ("2026-09-30", "2026-10-09", 2),
+                ("2026-10-08", "2026-10-12", 2),  # 周末
             ):
                 with self.subTest(start=start, end=end):
                     self.assertEqual(calendar.session_distance(start, end), expected)
@@ -166,15 +203,27 @@ class TradingCalendarTest(unittest.TestCase):
                 "2026-09-23", "2026-09-24", "2026-09-28"
             )
             self.assertEqual(_count_consecutive_boards(holiday_pool, "600000", "2026-09-28", calendar), 2)
+            # 国庆长假: 09-30 与长假后第一个交易日 10-08 是连续 session -> 2 板。
             long_holiday_pool = pd.DataFrame({
+                "code": ["600000", "600000"],
+                "trade_date": ["2026-09-30", "2026-10-08"],
+            })
+            long_holiday_pool.attrs["trading_dates_covered"] = (
+                "2026-09-29", "2026-09-30", "2026-10-08"
+            )
+            self.assertEqual(
+                _count_consecutive_boards(long_holiday_pool, "600000", "2026-10-08", calendar), 2
+            )
+            # 中间隔着 10-08: 09-30 与 10-09 不连续, 不能算 2 板。
+            not_consecutive = pd.DataFrame({
                 "code": ["600000", "600000"],
                 "trade_date": ["2026-09-30", "2026-10-09"],
             })
-            long_holiday_pool.attrs["trading_dates_covered"] = (
-                "2026-09-29", "2026-09-30", "2026-10-09"
+            not_consecutive.attrs["trading_dates_covered"] = (
+                "2026-09-29", "2026-09-30", "2026-10-08", "2026-10-09"
             )
             self.assertEqual(
-                _count_consecutive_boards(long_holiday_pool, "600000", "2026-10-09", calendar), 2
+                _count_consecutive_boards(not_consecutive, "600000", "2026-10-09", calendar), 1
             )
             with (
                 mock.patch("src.signal_engine.score_graph_quality", return_value=(50.0, [])),
@@ -329,18 +378,24 @@ class TradingCalendarTest(unittest.TestCase):
     def test_board_history_fetches_prior_sessions_outside_natural_day_pool(self) -> None:
         with TemporaryDirectory() as temp:
             calendar = _fake_calendar(_config(Path(temp)), _Q3_DATES)
+            # 10-09 的 5 自然日窗口是 10-05..10-09, 只装得下 10-08;
+            # 连板链上的 09-30 在窗口之外, 必须按 session 逐个回取。
             current = pd.DataFrame({"trade_date": ["2026-10-09"], "code": ["600000"]})
             current.attrs["trading_dates_covered"] = ("2026-10-09",)
-            previous = pd.DataFrame({"trade_date": ["2026-09-30"], "code": ["600000"]})
+            board = pd.DataFrame({"trade_date": ["2026-10-08"], "code": ["600000"]})
+            pre_holiday_board = pd.DataFrame({"trade_date": ["2026-09-30"], "code": ["600000"]})
             non_board = pd.DataFrame(columns=["trade_date", "code"])
+            by_date = {"2026-10-08": board, "2026-09-30": pre_holiday_board}
             service = mock.Mock(trading_calendar=calendar)
             service.collect_limit_ups.side_effect = lambda trade_date, **kwargs: (
-                previous if trade_date == "2026-09-30" else non_board
+                by_date.get(trade_date, non_board)
             )
             cache = _covered_limit_up_codes(current)
-            self.assertEqual(_exact_consecutive_boards(service, "600000", "2026-10-09", cache), 2)
-            self.assertEqual(_exact_consecutive_boards(service, "600000", "2026-10-09", cache), 2)
-            self.assertEqual(service.collect_limit_ups.call_count, 2)
+            self.assertEqual(_exact_consecutive_boards(service, "600000", "2026-10-09", cache), 3)
+            self.assertEqual(service.collect_limit_ups.call_count, 3)
+            # 同一 (信号日, 起始日) 重算不得重复取数。
+            self.assertEqual(_exact_consecutive_boards(service, "600000", "2026-10-09", cache), 3)
+            self.assertEqual(service.collect_limit_ups.call_count, 3)
 
     def test_explicit_legacy_replay_remains_separate(self) -> None:
         pool = pd.DataFrame({
@@ -359,7 +414,10 @@ class TradingCalendarTest(unittest.TestCase):
             # 09-25 中秋节: weekday()==4, 旧逻辑会误判为交易日
             self.assertFalse(calendar.is_trading_day("2026-09-25"))
             self.assertFalse(calendar.is_trading_day("2026-09-26"))
+            # 10-01..10-07 全部休市; 长假后第一个交易日是 10-08, 不是 10-09。
             self.assertFalse(calendar.is_trading_day("2026-10-01"))
+            self.assertFalse(calendar.is_trading_day("2026-10-07"))
+            self.assertTrue(calendar.is_trading_day("2026-10-08"))
 
     def test_coverage_is_reported_and_cached(self) -> None:
         with TemporaryDirectory() as temp:
@@ -368,7 +426,7 @@ class TradingCalendarTest(unittest.TestCase):
             calendar = _fake_calendar(config, _Q3_DATES, calls=calls)
             calendar.is_trading_day("2026-09-28")
             self.assertEqual(calls, ["test_source"])
-            self.assertEqual(calendar.coverage, ("2026-09-01", "2026-10-09"))
+            self.assertEqual(calendar.coverage, ("2026-09-01", "2026-10-16"))
             self.assertEqual(calendar.last_origin, "fetch")
 
             # 新实例走缓存: 覆盖区间内零取数。
@@ -377,7 +435,7 @@ class TradingCalendarTest(unittest.TestCase):
             self.assertTrue(second.is_trading_day("2026-09-24"))
             self.assertEqual(second_calls, [])
             self.assertEqual(second.last_origin, "cache")
-            self.assertEqual(second.coverage, ("2026-09-01", "2026-10-09"))
+            self.assertEqual(second.coverage, ("2026-09-01", "2026-10-16"))
 
     def test_refetches_when_cache_does_not_cover_request(self) -> None:
         with TemporaryDirectory() as temp:
@@ -442,32 +500,177 @@ class TradingCalendarTest(unittest.TestCase):
             self.assertIn("primary", str(ctx.exception))
             self.assertIn("fallback", str(ctx.exception))
 
-    def test_derived_daily_cross_section_backs_off_when_sample_is_thin(self) -> None:
+    # ------------------------------------------------------------------ C01
+    # 「某日在本地缓存里整体缺席」既可能是休市, 也可能是缓存缺口 / 抓取失败 /
+    # 历史截断。它只能支撑正面 (OPEN) 结论, 永远不能支撑负面 (CLOSED) 结论。
+
+    def test_local_daily_cache_cannot_prove_a_date_closed(self) -> None:
+        with TemporaryDirectory() as temp:
+            config = _config(Path(temp))
+            _write_daily_caches(config, _Q3_DATES)
+            calendar = TradingCalendar(config, sources=(CACHED_DAILY_SOURCE,))
+            for date_text in ("2026-09-24", "2026-09-28", "2026-09-25", "2026-09-26"):
+                with self.subTest(date=date_text):
+                    with self.assertRaises(TradingCalendarError) as ctx:
+                        calendar.is_trading_day(date_text)
+                    self.assertIn(CACHED_DAILY_SOURCE, str(ctx.exception))
+            # 枚举型 API 同样拿不到负面证据。
+            with self.assertRaises(TradingCalendarError):
+                calendar.session_distance("2026-09-24", "2026-09-28")
+
+    def test_local_daily_cache_still_supplies_positive_open_evidence(self) -> None:
+        """C01 不要求删掉这个兜底: 它保留为正面证据 / 诊断。"""
+        with TemporaryDirectory() as temp:
+            config = _config(Path(temp))
+            _write_daily_caches(config, _Q3_DATES)
+            calendar = TradingCalendar(config)
+            self.assertEqual(
+                calendar.cached_daily_open_sessions("2026-09-24", "2026-09-25"),
+                ["2026-09-24"],
+            )
+            # 09-25 缺席 —— 但缺口和休市在这里长得一样, 所以它证明不了任何事。
+            self.assertNotIn(
+                "2026-09-25", calendar.cached_daily_open_sessions("2026-09-24", "2026-09-28")
+            )
+
+    def test_cached_daily_open_sessions_needs_enough_samples(self) -> None:
+        with TemporaryDirectory() as temp:
+            config = _config(Path(temp))
+            _write_daily_caches(config, ["2026-09-24", "2026-09-28"], count=3)
+            calendar = TradingCalendar(config)
+            with self.assertRaises(TradingCalendarError) as ctx:
+                calendar.cached_daily_open_sessions("2026-09-24", "2026-09-28")
+            self.assertIn("样本不足", str(ctx.exception))
+
+    # ------------------------------------------------------------------ C03
+    # 覆盖区间是源声明的**自然日**区间, 不是「首尾交易日」。
+
+    def test_declared_coverage_outlives_the_last_returned_session(self) -> None:
+        with TemporaryDirectory() as temp:
+            config = _config(Path(temp))
+            # 源声明覆盖到 10-11, 但最后一个交易日是 10-09 (10-10/10-11 是周末)。
+            calendar = _fake_calendar(
+                config,
+                ["2026-09-30", "2026-10-09"],
+                coverage=("2026-09-30", "2026-10-11"),
+            )
+            for closed in ("2026-10-10", "2026-10-11"):
+                with self.subTest(date=closed):
+                    self.assertFalse(calendar.is_trading_day(closed))
+            self.assertEqual(calendar.coverage, ("2026-09-30", "2026-10-11"))
+            # 10-12 是真实交易日, 但落在覆盖区间之外: 既不能判 CLOSED, 也不能判 OPEN,
+            # 必须 fail closed —— 覆盖不是拿首尾交易日推出来的。
+            with self.assertRaises(TradingCalendarError):
+                calendar.is_trading_day("2026-10-12")
+
+    def test_coverage_is_not_reconstructed_from_first_and_last_session(self) -> None:
+        """同一批交易日, 不同的覆盖声明 -> 边界行为必须不同。"""
+        dates = ["2026-09-30", "2026-10-09"]
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            narrow = _fake_calendar(_config(root / "a"), dates)
+            wide = _fake_calendar(
+                _config(root / "b"), dates, coverage=("2026-09-30", "2026-10-11")
+            )
+            self.assertTrue(narrow.is_trading_day("2026-09-30"))
+            # 10-10/10-11 在两边都不是交易日; 差别只在覆盖声明。
+            with self.assertRaises(TradingCalendarError):
+                narrow.is_trading_day("2026-10-10")
+            self.assertFalse(wide.is_trading_day("2026-10-10"))
+            self.assertFalse(wide.is_trading_day("2026-10-11"))
+            self.assertEqual(narrow.coverage, ("2026-09-30", "2026-10-09"))
+            self.assertEqual(wide.coverage, ("2026-09-30", "2026-10-11"))
+
+    def test_akshare_coverage_needs_a_forward_published_table(self) -> None:
+        # 2026-12-31 休市, 所以最后一行是 12-30 —— 覆盖仍应声明到 12-31。
+        table = ["2026-09-29", "2026-09-30", "2026-12-29", "2026-12-30"]
+        self.assertEqual(
+            _akshare_sina_coverage(table, today="2026-09-30"),
+            ("2026-09-29", "2026-12-31"),
+        )
+        # 末行不再晚于今天 = 不是按年预发布的表 (旧快照或被截断): 覆盖退回最后一行。
+        self.assertEqual(
+            _akshare_sina_coverage(table, today="2027-03-01"),
+            ("2026-09-29", "2026-12-30"),
+        )
+        # 末行不在 12 月: 无法证明整年枚举过。
+        self.assertEqual(
+            _akshare_sina_coverage(["2026-01-05", "2026-06-30"], today="2026-01-01"),
+            ("2026-01-05", "2026-06-30"),
+        )
+        self.assertIsNone(_akshare_sina_coverage([]))
+
+    def test_akshare_shaped_source_proves_the_year_end_holiday(self) -> None:
+        """C03 的收益: 覆盖声明宽于最后一行 -> 年末休市可被证明, 而不是报错。"""
+        with TemporaryDirectory() as temp:
+            config = _config(Path(temp))
+            calendar = _fake_calendar(
+                config,
+                ["2026-12-29", "2026-12-30"],
+                coverage=("2026-12-29", "2026-12-31"),
+            )
+            self.assertFalse(calendar.is_trading_day("2026-12-31"))
+            self.assertEqual(calendar.trading_days("2026-12-29", "2026-12-31"),
+                             ["2026-12-29", "2026-12-30"])
+
+    def test_baostock_coverage_requires_a_full_calendar_enumeration(self) -> None:
+        end = "2026-09-30"
+        full_days = pd.date_range(BAOSTOCK_CALENDAR_START, end, freq="D").strftime("%Y-%m-%d").tolist()
+        complete = pd.DataFrame(
+            {"calendar_date": full_days, "is_trading_day": ["0"] * len(full_days)}
+        )
+        self.assertEqual(_baostock_coverage(complete, end), (BAOSTOCK_CALENDAR_START, end))
+        # 少一行 -> 约定不成立 -> 覆盖退回它显式返回的那段 (区间外保持不可证明)。
+        truncated = complete[complete["calendar_date"] != end].copy()
+        self.assertEqual(_baostock_coverage(truncated, end), (BAOSTOCK_CALENDAR_START, "2026-09-29"))
+        self.assertIsNone(_baostock_coverage(pd.DataFrame({"calendar_date": []}), end))
+
+    # ------------------------------------------------------------ 冻结快照 §18
+
+    def test_frozen_snapshot_round_trips_and_is_self_verifying(self) -> None:
         with TemporaryDirectory() as temp:
             root = Path(temp)
             config = _config(root)
-            daily_dir = config.cache_dir / "daily_unadjusted"
-            daily_dir.mkdir(parents=True, exist_ok=True)
-            for index in range(3):
-                pd.DataFrame({"date": ["2026-09-24", "2026-09-28"]}).to_pickle(
-                    daily_dir / f"60000{index}_daily.pkl"
-                )
-            calendar = TradingCalendar(config, sources=("cached_daily_cross_section",))
-            with self.assertRaises(TradingCalendarError) as ctx:
-                calendar.is_trading_day("2026-09-25")
-            self.assertIn("样本不足", str(ctx.exception))
+            calendar = _fake_calendar(config, _Q3_DATES)
+            calendar.is_trading_day("2026-09-28")
+            path = root / "verified_calendar.json"
+            written = write_frozen_calendar_snapshot(calendar, path)
 
-    def test_derived_daily_cross_section_proves_holiday(self) -> None:
+            frozen = TradingCalendar(
+                config, sources=("never_called",), fetchers={}, frozen_snapshot=path
+            )
+            self.assertTrue(frozen.is_trading_day("2026-09-24"))
+            self.assertFalse(frozen.is_trading_day("2026-09-25"))
+            self.assertEqual(frozen.source, FROZEN_SNAPSHOT_SOURCE)
+            self.assertEqual(frozen.coverage, ("2026-09-01", "2026-10-16"))
+            self.assertEqual(frozen.snapshot_hash, written.sha256)
+            self.assertEqual(frozen.provenance()["calendar_snapshot_sha256"], written.sha256)
+            self.assertEqual(
+                frozen.provenance()["calendar_semantics_version"], "trading_sessions_v1"
+            )
+            # 同一份日历重复冻结必须得到同一个 hash。
+            self.assertEqual(
+                write_frozen_calendar_snapshot(calendar, root / "again.json").sha256,
+                written.sha256,
+            )
+
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            payload["dates"] = [*payload["dates"], "2026-09-25"]
+            path.write_text(json.dumps(payload), encoding="utf-8")
+            with self.assertRaisesRegex(TradingCalendarError, "SHA-256"):
+                load_frozen_calendar_snapshot(path)
+            with self.assertRaisesRegex(TradingCalendarError, "SHA-256"):
+                TradingCalendar(
+                    config, sources=("never_called",), fetchers={}, frozen_snapshot=path
+                )
+
+    def test_frozen_snapshot_requires_closure_authority(self) -> None:
         with TemporaryDirectory() as temp:
-            config = _config(Path(temp))
-            daily_dir = config.cache_dir / "daily_unadjusted"
-            daily_dir.mkdir(parents=True, exist_ok=True)
-            dates = [d for d in _Q3_DATES]
-            for index in range(60):
-                pd.DataFrame({"date": dates}).to_pickle(daily_dir / f"{600000 + index}_daily.pkl")
-            calendar = TradingCalendar(config, sources=("cached_daily_cross_section",))
-            self.assertTrue(calendar.is_trading_day("2026-09-28"))
-            self.assertFalse(calendar.is_trading_day("2026-09-25"))
+            calendar = TradingCalendar(_config(Path(temp)))
+            with self.assertRaisesRegex(TradingCalendarError, "CLOSED"):
+                write_frozen_calendar_snapshot(calendar, Path(temp) / "snap.json")
+            with self.assertRaisesRegex(TradingCalendarError, "不存在"):
+                load_frozen_calendar_snapshot(Path(temp) / "missing.json")
 
 
 class CollectLimitUpsCalendarTest(unittest.TestCase):

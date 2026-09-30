@@ -212,7 +212,9 @@ def run_full_history_backtest(
                 frame["source_signal_file"] = str(signals_csv)
                 signal_frames.append(frame)
 
-            future_end_date = _future_end_date(actual_date, hold_days)
+            future_end_date = _future_end_date(
+                actual_date, hold_days, service.trading_calendar
+            )
             future_fetch = prefetch_future_bars_for_signals(
                 frame,
                 service=service,
@@ -1539,18 +1541,23 @@ def _signals_to_frame(signals: list[Signal]) -> pd.DataFrame:
     return pd.DataFrame([signal.to_dict() for signal in signals])
 
 
-def _future_end_date(signal_date: str, hold_days: int) -> str:
+def _future_end_date(
+    signal_date: str, hold_days: int,
+    trading_calendar: TradingCalendar | None = None,
+) -> str:
     buffer_days = max(14, int(hold_days * 2.5) + 7)
     raw_end = pd.Timestamp(signal_date) + pd.Timedelta(days=buffer_days)
-    latest_possible = pd.Timestamp(_latest_possible_market_date())
+    latest_possible = pd.Timestamp(_latest_possible_market_date(trading_calendar))
     if latest_possible > pd.Timestamp(signal_date):
         raw_end = min(raw_end, latest_possible)
     return raw_end.strftime("%Y-%m-%d")
 
 
-def _latest_possible_market_date() -> str:
+def _latest_possible_market_date(trading_calendar: TradingCalendar | None = None) -> str:
     today = pd.Timestamp.now().strftime("%Y-%m-%d")
-    calendar = get_trading_calendar()
+    # 注入日历优先: 同一轮生成里的每个日期决策都必须出自**同一份**权威日历,
+    # 否则「今天是不是交易日」会另起一台进程级日历 (还可能触发一次真实取数)。
+    calendar = trading_calendar or get_trading_calendar()
     return today if calendar.is_trading_day(today) else calendar.previous_trading_day(today)
 
 

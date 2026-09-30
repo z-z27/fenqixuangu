@@ -1,0 +1,88 @@
+{
+  "gate_a": {
+    "offline": {
+      "modules": [
+        "tests.test_calendar_semantic_gate",
+        "tests.test_trading_calendar",
+        "tests.test_history_universe_integrity",
+        "tests.test_listing_history_exclusion",
+        "tests.test_signal_date_coverage",
+        "tests.test_baostock_5m_source"
+      ],
+      "ran": 128,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "ok": true,
+      "detail": []
+    },
+    "coverage": {
+      "ok": true,
+      "start": "2026-05-06",
+      "end": "2026-07-31",
+      "session_count": 62,
+      "first_session": "2026-05-06",
+      "last_session": "2026-07-31",
+      "coverage": [
+        "1990-12-19",
+        "2026-12-31"
+      ],
+      "provenance": {
+        "calendar_semantics_version": "trading_sessions_v1",
+        "calendar_source": "akshare_sina_trade_dates",
+        "calendar_coverage_start": "1990-12-19",
+        "calendar_coverage_end": "2026-12-31",
+        "calendar_origin": "cache",
+        "calendar_snapshot_sha256": null
+      },
+      "error": null
+    },
+    "pass": true
+  },
+  "gate_b": {
+    "isolation": {
+      "importers": [
+        "src/v004c_pair_capped7_july_forward.py",
+        "src/v004c_regime_aware_stage1_august_oot.py",
+        "src/v004c_v4a_architecture_transfer.py",
+        "tests/test_calendar_semantic_gate.py",
+        "tests/test_trading_calendar.py"
+      ],
+      "production_importers": [
+        "src/v004c_pair_capped7_july_forward.py",
+        "src/v004c_regime_aware_stage1_august_oot.py",
+        "src/v004c_v4a_architecture_transfer.py"
+      ],
+      "unexpected_importers": [],
+      "invariant": "corrected 生产代码 (src/) 永远不得 import legacy_calendar_semantics",
+      "ok": true
+    },
+    "parity": [
+      {
+        "module": "tests/test_v004c_original_v4a_direct_transfer.py",
+        "returncode": 0,
+        "summary": "8 passed in 5.34s",
+        "ok": true,
+        "output_tail": "........                                                                 [100%]\n8 passed in 5.34s",
+        "frozen_module": "src/v004c_v4a_architecture_transfer.py"
+      },
+      {
+        "module": "tests/test_v004c_pair_capped7_july_forward.py",
+        "returncode": 1,
+        "summary": "5 passed, 5 errors in 46.14s",
+        "ok": false,
+        "output_tail": "        if \"trade_date\" not in minute.columns:\n            minute[\"trade_date\"] = pd.to_datetime(\n                minute[\"datetime\"], errors=\"coerce\"\n            ).dt.strftime(\"%Y-%m-%d\")\n        else:\n            minute[\"trade_date\"] = pd.to_datetime(\n                minute[\"trade_date\"], errors=\"coerce\"\n            ).dt.strftime(\"%Y-%m-%d\")\n        minute = minute.dropna(subset=[\"trade_date\"])\n        minute = minute[minute[\"trade_date\"].le(signal_date)].copy()\n        day = minute[minute[\"trade_date\"].eq(signal_date)]\n        if len(day) != 48:\n>           raise RuntimeError(\n                f\"FATAL: expected 48 canonical D1 bars for {code}@{signal_date}, got {len(day)}\"\n            )\nE           RuntimeError: FATAL: expected 48 canonical D1 bars for 000017@2026-07-01, got 0\n\nsrc\\v004c_pair_capped7_july_forward.py:268: RuntimeError\n=========================== short test summary info ===========================\nERROR tests/test_v004c_pair_capped7_july_forward.py::test_forward_universe_and_prediction_lock\nERROR tests/test_v004c_pair_capped7_july_forward.py::test_training_snapshot_is_mature_and_fitted_once\nERROR tests/test_v004c_pair_capped7_july_forward.py::test_august_is_outcome_only\nERROR tests/test_v004c_pair_capped7_july_forward.py::test_stage2_formula_and_top10_prediction_complete\nERROR tests/test_v004c_pair_capped7_july_forward.py::test_outputs_are_complete_and_deterministic\n5 passed, 5 errors in 46.14s",
+        "frozen_module": "src/v004c_pair_capped7_july_forward.py"
+      },
+      {
+        "module": "tests/test_v004c_regime_aware_stage1_august_oot.py",
+        "returncode": 0,
+        "summary": "5 passed in 1.11s",
+        "ok": true,
+        "output_tail": ".....                                                                    [100%]\n5 passed in 1.11s",
+        "frozen_module": "src/v004c_regime_aware_stage1_august_oot.py"
+      }
+    ],
+    "pass": false
+  }
+}

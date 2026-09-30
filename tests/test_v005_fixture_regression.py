@@ -4,9 +4,11 @@ import json
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
+from unittest import mock
 
 import pandas as pd
 
+from src.config import DataConfig
 from src.daily_ranking import apply_daily_research_ranking
 from src.history_samples import (
     HISTORY_UNIVERSE_MEMBERSHIP_COLUMNS,
@@ -19,6 +21,7 @@ from src.v005_daily_selector import (
     run_v005_daily_selector,
     signals_to_frame,
 )
+from src.trading_calendar import CalendarFetch, TradingCalendar
 from src.universe_audit import canonical_rows_sha256, canonical_scalar_text
 from src.v005_fixed_grid_holdout import _read_history_candidates_csv, run_fixed_grid_holdout
 
@@ -32,6 +35,39 @@ HOLDOUT_FIXTURE = FIXTURES / "v005_holdout_samples_single_date.csv"
 EXPECTED_FINAL_CODES = "000002,000004,000003"
 EXPECTED_V002_CODES = "000001,000002,000003"
 EXPECTED_CUSTOM_V002_CODES = "000008,000007,000006"
+
+# 2026 年 7 月的权威交易日 (sina 交易日表), 供离线日历夹具使用。
+_JULY_2026_SESSIONS = [
+    "2026-07-01", "2026-07-02", "2026-07-03", "2026-07-06", "2026-07-07",
+    "2026-07-08", "2026-07-09", "2026-07-10", "2026-07-13", "2026-07-14",
+    "2026-07-15", "2026-07-16", "2026-07-17", "2026-07-20", "2026-07-21",
+    "2026-07-22", "2026-07-23", "2026-07-24", "2026-07-27", "2026-07-28",
+    "2026-07-29", "2026-07-30", "2026-07-31",
+]
+
+
+def _offline_calendar(root: Path) -> TradingCalendar:
+    """注入式日历: 测试不得依赖真实网络取数 (审计 §12)。
+
+    ``_load_history_universe_context`` 的 corrected 分支会用进程级日历重算
+    requested_dates; 不注入就会在测试里触发一次真实取数。
+    """
+    config = DataConfig(
+        raw_dir=root / "raw",
+        cache_dir=root / "cache",
+        processed_dir=root / "processed",
+        reports_dir=root / "reports",
+        snapshot_dir=root / "snapshots",
+    )
+    config.ensure_directories()
+    payload = CalendarFetch(
+        dates=tuple(_JULY_2026_SESSIONS),
+        coverage_start=_JULY_2026_SESSIONS[0],
+        coverage_end=_JULY_2026_SESSIONS[-1],
+    )
+    return TradingCalendar(
+        config, sources=("fixture",), fetchers={"fixture": lambda: payload}
+    )
 
 
 class V005FixtureRegressionTests(unittest.TestCase):
@@ -538,7 +574,10 @@ class V005FixtureRegressionTests(unittest.TestCase):
         raw = pd.read_csv(HOLDOUT_FIXTURE, dtype={"code": str})
         raw.loc[0, "candidate_d10_max_drawdown_pct"] = float("-4.0015100037749995")
         raw["v004a_scorable_bool"] = True
-        with TemporaryDirectory() as temp:
+        with TemporaryDirectory() as temp, mock.patch(
+            "src.v005_fixed_grid_holdout.get_trading_calendar",
+            return_value=_offline_calendar(Path(temp) / "calendar"),
+        ):
             root = Path(temp)
             history_dir = root / "history"
             history_dir.mkdir()

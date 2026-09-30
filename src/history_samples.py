@@ -538,7 +538,9 @@ def run_history_sample_generation(
                 signal_frame["signal_file_date"] = actual_date
                 signal_frame["source_signal_file"] = str(signals_csv)
 
-            future_end_date = _future_end_date(actual_date, hold_days)
+            future_end_date = _future_end_date(
+                actual_date, hold_days, service.trading_calendar
+            )
             future_fetch = prefetch_future_bars_for_signals(
                 signal_frame,
                 service=service,
@@ -789,6 +791,7 @@ def run_history_sample_generation(
         universe_audit=universe_audit,
         universe_membership=universe_membership,
         completeness=completeness,
+        calendar_provenance=_calendar_provenance(service.trading_calendar),
     )
     published_paths = _publish_history_attempt(
         attempt_root=run_root,
@@ -1608,6 +1611,24 @@ def _write_partial_history_universe_failure(
     )
 
 
+def _calendar_provenance(trading_calendar: Any) -> dict[str, Any]:
+    """日历 provenance; 不支持自述的日历必须**显式标记为不可追溯**, 不能静默省略。
+
+    一份 corrected 样本的价值取决于它能否回答「这些日期是谁判的」。缺了这个字段
+    等于把「不知道」伪装成「没问题」, 所以宁可写 ``attested=False``。
+    """
+    provider = getattr(trading_calendar, "provenance", None)
+    if not callable(provider):
+        return {
+            "calendar_semantics_version": CALENDAR_SEMANTICS_VERSION,
+            "calendar_source": None,
+            "calendar_provenance_attested": False,
+        }
+    provenance = dict(provider())
+    provenance["calendar_provenance_attested"] = True
+    return provenance
+
+
 def _write_history_universe_outputs(
     output_dir: Path,
     start_date: str,
@@ -1623,6 +1644,7 @@ def _write_history_universe_outputs(
     universe_membership: pd.DataFrame,
     published_output_dir: Path | None = None,
     completeness: dict[str, Any] | None = None,
+    calendar_provenance: dict[str, Any] | None = None,
 ) -> tuple[Path, Path, Path]:
     suffix = f"{start_date}_{end_date}"
     audit_path = output_dir / f"history_universe_audit_{suffix}.csv"
@@ -1660,6 +1682,9 @@ def _write_history_universe_outputs(
     public_root = Path(published_output_dir) if published_output_dir is not None else Path(output_dir)
     public_membership_path = public_root / membership_path.name
     manifest = {
+        # 日历来源 / 覆盖区间 / 冻结快照 hash: 让 corrected 样本可以追溯回唯一一份
+        # 权威日历工件, 而不是「当时外部源恰好返回了什么」(审计 §17/§18)。
+        **(calendar_provenance or {}),
         "calendar_semantics_version": CALENDAR_SEMANTICS_VERSION,
         "universe_snapshot_schema_version": UNIVERSE_SNAPSHOT_SCHEMA_VERSION,
         "start_date": str(start_date),
@@ -1927,8 +1952,10 @@ def evaluate_history_candidate_only(
     observed_dates = set(minute["trade_date"].astype(str))
     missing_early_sessions = [date for date in (d2_date, d3_date) if date not in observed_dates]
     if missing_early_sessions:
-        result["label_evaluation_reason"] = (
-            "missing_minute_session:" + ",".join(missing_early_sessions)
+        # 停牌 / 行情缺口同属 censoring, target 仍然为 null; 只在 reason 上区分,
+        # 让 corrected 样本能说清「为什么这一天没有标签」。
+        result["label_evaluation_reason"] = _missing_minute_session_reason(
+            code, service, missing_early_sessions
         )
         return _finalise_targets(result, target_return_pct, secondary_target_return_pct)
     if not future_dates:
@@ -2234,6 +2261,46 @@ def _empty_candidate_metrics() -> dict[str, Any]:
         result[f"{label}_close_return_pct"] = None
         result[f"{label}_max_drawdown_pct"] = None
     return result
+
+
+def _classify_missing_minute_session(
+    code: str, service: MarketDataService, trade_date: str
+) -> str | None:
+    """区分「个股停牌」与「行情/缓存缺口」—— 只改 reason 文案, 不改 target 定义。
+
+    证据方向与日历 C01 同一套: **有证据才下结论**。
+      * 该 session 的日线存在 -> 股票当天在交易, 缺的是分钟线 (provider_gap);
+      * 日线缓存**跨越**了这一天 (前后都有 bar) 却查无此日 -> 当天没有成交 (suspended);
+      * 日线缓存本身没有跨越这一天 -> 证据不足, 返回 ``None``, 不下结论。
+
+    日线缓存不够长时不能把「缓存太短」读成「停牌」, 所以必须有跨越证据。
+    """
+    daily = service.daily_cache.read(code)
+    if daily is None or daily.empty or "date" not in daily.columns:
+        return None
+    dates = pd.to_datetime(daily["date"], errors="coerce").dt.strftime("%Y-%m-%d").dropna()
+    if dates.empty:
+        return None
+    target = str(trade_date)
+    if (dates == target).any():
+        return "provider_gap"
+    if (dates < target).any() and (dates > target).any():
+        return "suspended"
+    return None
+
+
+def _missing_minute_session_reason(
+    code: str, service: MarketDataService, missing_dates: list[str]
+) -> str:
+    """``missing_minute_session:<date>[(provider_gap|suspended)]``。
+
+    无证据的日期不带括号 —— 与修复前的字符串完全一致, 避免下游解析被强制升级。
+    """
+    parts = []
+    for date in missing_dates:
+        label = _classify_missing_minute_session(code, service, date)
+        parts.append(f"{date}({label})" if label else date)
+    return "missing_minute_session:" + ",".join(parts)
 
 
 def _d2open_d3_metrics(
